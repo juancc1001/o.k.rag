@@ -234,7 +234,7 @@ $env:PATH = "$PWD\.venv\Scripts;$env:PATH"   # so okflint is discoverable
 .\.venv\Scripts\python.exe -m pytest tests -q
 ```
 
-70 tests. No credentials and no network needed — the end-to-end test stubs the model and asserts the emitted bundle is conformant, so "one file in, one conformant concept out" is covered offline.
+73 tests. No credentials and no network needed — the end-to-end test stubs the model and asserts the emitted bundle is conformant, so "one file in, one conformant concept out" is covered offline.
 
 | File | Covers |
 |---|---|
@@ -243,7 +243,7 @@ $env:PATH = "$PWD\.venv\Scripts;$env:PATH"   # so okflint is discoverable
 | `tests/test_manifest.py` | manifest keys okflint requires, skip-with-reason behaviour, and cross-checking that okflint agrees with the built-in checks |
 | `tests/test_providers.py` | provider registry and interface, dispatch, schema/required-field enforcement, Gemini credential resolution and decline mapping, non-2xx and transport-failure mapping for both providers, fail-fast pre-flight |
 | `tests/test_env.py` | `.env` loading with and without a BOM, and every `doctor` outcome |
-| `tests/test_encoding.py` | the [encoding policy](#encoding-policy), enforced by AST scan, plus BOM tolerance and LF-only output end to end |
+| `tests/test_encoding.py` | the [encoding policy](#encoding-policy), enforced by AST scan (including the child-process `env` rule), plus BOM tolerance, the piped-child crash reproduced, and LF-only output end to end |
 
 Tests that need okflint skip cleanly when it is not on `PATH`.
 
@@ -253,24 +253,27 @@ Tests that need okflint skip cleanly when it is not on `PATH`.
 
 ## Encoding policy
 
-Four separate bugs shipped during M1, all the same defect: **trusting a platform default at an I/O boundary.** Windows defaults to cp1252, not UTF-8. So the rule is absolute, with no per-call-site judgement:
+Five separate bugs shipped during M1, all the same defect: **trusting a platform default at an I/O boundary.** Windows defaults to cp1252, not UTF-8. So the rule is absolute, with no per-call-site judgement:
 
 | Boundary | Rule | Why |
 |---|---|---|
 | Reading text | `encoding="utf-8-sig"` | Tolerates a BOM; byte-identical without one. Notepad, VS Code and Excel all write BOMs. |
 | Writing text | `encoding="utf-8"`, `newline="\n"` | Byte-stable across platforms, never a BOM |
-| Subprocesses | `encoding="utf-8", errors="replace"` | `text=True` inherits the locale codepage |
+| Subprocesses (our decode) | `encoding="utf-8", errors="replace"` | `text=True` inherits the locale codepage |
+| Subprocesses (their encode) | `PYTHONIOENCODING=utf-8` in `env` | The child's stdout is a pipe, so its own Python picks the codepage |
 | stdout / stderr | reconfigured to UTF-8 at CLI entry | The default is the codepage, so redirecting output crashes |
 | git | `.gitattributes` with `eol=lf` | Otherwise checkout rewrites the bundle to CRLF |
 
 **`tests/test_encoding.py` enforces this statically** — it walks the AST of everything under `src/ragged/` and fails the build if any read, write, or subprocess call deviates. It also contains a meta-test pointing the check at a deliberately bad file, because a guard that always passes guards nothing.
 
-The four bugs, for reference:
+The five bugs, for reference:
 
 1. **`.env`** — python-dotenv reads UTF-8 by default, so a BOM produced a key literally named `﻿GEMINI_API_KEY`. Silent: `.env` reported "found" while the credential reported "missing".
 2. **Passthrough extraction** — a BOM rode into the synthesis prompt as a leading invisible character.
 3. **okflint subprocess** — `text=True` decoded with cp1252, okflint emits characters outside it, the decode raised inside the reader thread and `stdout` came back as `None`.
 4. **Redirected stdout** — `ragged extract x.pdf > out.txt` raised `UnicodeEncodeError` on any character outside cp1252. Deceptive because `acción` and `€` *are* in cp1252, so it only broke on `≥`, `—`, `≈` and curly quotes — exactly what a model writes into titles and descriptions.
+
+5. **okflint's own stdout** — fixing #3 only fixed *our* decode. okflint's stdout is a pipe, so its Python chose cp1252 and raised `UnicodeEncodeError` inside its own `print()` while reporting a finding containing `—`. It died mid-report, so its exit code was non-zero and `ragged build` declared a perfectly conformant bundle "NOT conformant: 0 error(s)". The fix is `PYTHONIOENCODING=utf-8` in the child's `env`.
 
 That fourth one was masked in development: Claude Code sets `PYTHONIOENCODING=utf-8:surrogateescape`, so it could not reproduce until the variable was cleared. If you are testing terminal behaviour, check what your environment sets first.
 

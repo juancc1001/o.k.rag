@@ -8,6 +8,8 @@ The policy, absolute so there is nothing to judge per call site:
   reads   -> encoding="utf-8-sig"          tolerates a BOM, identical without one
   writes  -> encoding="utf-8", newline="\\n"   byte-stable across platforms, no BOM
   procs   -> encoding="utf-8"              never inherit the locale codepage
+  procs   -> PYTHONIOENCODING=utf-8 in env the child's stdout is a pipe, so its
+                                           Python picks the codepage on its own
   stdout  -> reconfigured to UTF-8         the default is the codepage
 
 These are static checks. They are cheap, and they fail the build the moment
@@ -17,6 +19,7 @@ someone writes `path.read_text()` with no encoding.
 from __future__ import annotations
 
 import ast
+import importlib
 import os
 import subprocess
 import sys
@@ -125,6 +128,29 @@ def test_subprocess_never_inherits_the_locale_codepage():
     )
 
 
+def _subprocess_calls():
+    for path, node, name, kw in _calls():
+        if name not in PROC_CALLS:
+            continue
+        func = node.func
+        if isinstance(func, ast.Attribute) and getattr(func.value, "id", "") == "subprocess":
+            yield path, node, kw
+
+
+def test_subprocess_tells_the_child_to_encode_utf8_too():
+    """`encoding=` governs our decode only. The child's stdout is a pipe, so its
+    Python falls back to the locale codepage and crashes on its own output."""
+    offenders = []
+    for path, node, kw in _subprocess_calls():
+        env = kw.get("env")
+        source = ast.unparse(env) if env is not None else "<no env>"
+        if "PYTHONIOENCODING" not in source:
+            offenders.append(f"{_where(path, node)} -> env={source}")
+    assert not offenders, (
+        "subprocess calls must pass PYTHONIOENCODING=utf-8 in env:\n  " + "\n  ".join(offenders)
+    )
+
+
 def test_the_policy_test_actually_finds_offenders(tmp_path, monkeypatch):
     """A guard that always passes guards nothing. Point it at a bad file."""
     bad = tmp_path / "ragged"
@@ -169,6 +195,60 @@ def test_cli_output_survives_a_cp1252_console(tmp_path):
     assert "UnicodeEncodeError" not in (proc.stderr or ""), proc.stderr
     assert proc.returncode == 0, proc.stderr
     assert "Política" in proc.stdout
+
+
+def test_a_piped_child_needs_the_env_to_print_non_cp1252_output():
+    """The okflint crash, minimally: it prints `→` in every finding it reports.
+
+    Its stdout is a pipe, so `encoding='utf-8'` on our side does nothing for it —
+    the child's own Python picks the locale codepage and dies inside print().
+    """
+    code = "print('→ [E1] a.md')"
+    cp1252 = {**os.environ, "PYTHONIOENCODING": "cp1252"}
+
+    crashed = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        encoding="utf-8",
+        errors="replace",
+        env=cp1252,
+    )
+    assert "UnicodeEncodeError" in (crashed.stderr or ""), crashed.stderr
+
+    fixed = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        encoding="utf-8",
+        errors="replace",
+        env={**cp1252, "PYTHONIOENCODING": "utf-8"},
+    )
+    assert fixed.returncode == 0, fixed.stderr
+    assert "→" in fixed.stdout
+
+
+def test_okflint_is_invoked_with_a_utf8_child_encoding(tmp_path, monkeypatch):
+    # okf/__init__ re-exports the `validate` function, shadowing the module name
+    validate_module = importlib.import_module("ragged.okf.validate")
+
+    bundle = tmp_path / "bundle"
+    bundle.mkdir()
+    (tmp_path / validate_module.MANIFEST_NAME).write_text(
+        "version: 1\n", encoding="utf-8", newline="\n"
+    )
+
+    seen: dict = {}
+
+    def fake_run(cmd, **kwargs):
+        seen.update(kwargs)
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(validate_module.shutil, "which", lambda _: "okflint")
+    monkeypatch.setattr(validate_module.subprocess, "run", fake_run)
+    validate_module.validate(bundle)
+
+    assert seen["encoding"] == "utf-8"  # our decode
+    assert seen["env"]["PYTHONIOENCODING"] == "utf-8"  # the child's encode
+    assert "PATH" in seen["env"], "env must extend os.environ, not replace it"
 
 
 def test_a_bom_in_ragged_toml_does_not_break_config_loading(tmp_path):

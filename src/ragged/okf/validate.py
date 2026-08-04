@@ -11,6 +11,7 @@ optional fields, unknown types, unknown keys, broken links, or missing indexes.
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import subprocess
@@ -175,6 +176,10 @@ def _run_okflint(report: Report, bundle_root: Path) -> None:
         # never inherit the Windows locale codepage — okflint emits non-cp1252 bytes
         encoding="utf-8",
         errors="replace",
+        # `encoding` above only governs how *we* decode. okflint's own stdout is a
+        # pipe, so its Python picks the locale codepage and crashes printing the
+        # `→` in its own findings. Tell the child to encode UTF-8 too.
+        env={**os.environ, "PYTHONIOENCODING": "utf-8"},
     )
     report.okflint_exit = proc.returncode
     report.okflint_output = f"{proc.stdout or ''}{proc.stderr or ''}".strip()
