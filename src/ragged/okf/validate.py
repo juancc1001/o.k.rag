@@ -61,7 +61,9 @@ def validate(bundle_root: Path, use_okflint: bool = True) -> Report:
 
     for path in md_files:
         rel = path.relative_to(bundle_root).as_posix()
-        text = path.read_text(encoding="utf-8", errors="replace")
+        # utf-8-sig: concepts may have been hand-edited, and a BOM before the
+        # opening `---` would otherwise read as missing frontmatter (E1)
+        text = path.read_text(encoding="utf-8-sig", errors="replace")
         if path.name == "index.md":
             _check_index(report, rel, text, is_bundle_root=rel == "index.md")
         elif path.name == "log.md":

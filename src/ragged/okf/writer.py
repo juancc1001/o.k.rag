@@ -36,7 +36,8 @@ def write_root_index(bundle_root: Path, okf_version: str, title: str, entries: l
 def append_log(bundle_root: Path, date: str, entries: list[str]) -> Path:
     """Insert entries under an ISO date heading, newest date first."""
     path = bundle_root / "log.md"
-    existing = path.read_text(encoding="utf-8") if path.exists() else f"{LOG_HEADING}\n"
+    # utf-8-sig: log.md may have been hand-edited; a BOM must not survive the rewrite
+    existing = path.read_text(encoding="utf-8-sig") if path.exists() else f"{LOG_HEADING}\n"
     lines = existing.splitlines()
     if LOG_HEADING not in lines:
         lines = [LOG_HEADING, ""] + lines

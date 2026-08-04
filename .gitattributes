@@ -1,0 +1,16 @@
+# Normalise to LF in the repository and on checkout.
+#
+# bundle/ matters most: concepts are written with LF deliberately so a bundle is
+# byte-identical across platforms. Without this, git checkout on Windows rewrites
+# them to CRLF and every content hash and diff shifts for no reason.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.pdf binary
+*.xlsx binary
+*.docx binary
+*.pptx binary
+*.npy binary
