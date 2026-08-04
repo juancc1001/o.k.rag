@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import os
 
-from ..base import ProviderResponse, Refused, SynthError
+from ..base import ProviderHTTPError, ProviderResponse, Refused, SynthError
 
 NAME = "anthropic"
 DEFAULT_MODEL = "claude-opus-5"
@@ -42,19 +42,23 @@ def call(
 ) -> ProviderResponse:
     import anthropic
 
-    response = anthropic.Anthropic().messages.create(
-        model=model,
-        max_tokens=max_tokens,
-        system=[
-            # cached prefix — `system` must stay byte-identical across the run
-            {"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}
-        ],
-        output_config={
-            "effort": effort,
-            "format": {"type": "json_schema", "schema": schema},
-        },
-        messages=[{"role": "user", "content": user}],
-    )
+    try:
+        response = anthropic.Anthropic().messages.create(
+            model=model,
+            max_tokens=max_tokens,
+            system=[
+                # cached prefix — `system` must stay byte-identical across the run
+                {"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}
+            ],
+            output_config={
+                "effort": effort,
+                "format": {"type": "json_schema", "schema": schema},
+            },
+            messages=[{"role": "user", "content": user}],
+        )
+    except anthropic.APIError as exc:
+        # APIStatusError carries the code; connection/timeout errors carry none
+        raise ProviderHTTPError(NAME, getattr(exc, "status_code", None), str(exc)) from exc
 
     if response.stop_reason == "refusal":
         details = response.stop_details

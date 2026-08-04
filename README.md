@@ -118,7 +118,7 @@ discover → extract → synthesize → emit → validate
 |---|---|
 | **discover** | Walk `sources/` against the `include`/`exclude` globs. SHA-256 each file. |
 | **extract** | Bytes → markdown-ish text. `.md`/`.txt`/`.markdown` pass through (read as `utf-8-sig`); everything else goes through markitdown. Results are cached in `.ragged/extracted/<sha256>.json`, so re-runs cost nothing here. An extraction failure is recorded and reported — it does not abort the run. |
-| **synthesize** | One model call per file through the configured provider, with **native schema enforcement** so the result is guaranteed rather than parsed out of prose. The system prompt is a frozen prefix (cached on Anthropic); only the document text varies. A safety decline or a token-cap stop becomes a per-file error, never an aborted run. |
+| **synthesize** | One model call per file through the configured provider, with **native schema enforcement** so the result is guaranteed rather than parsed out of prose. The system prompt is a frozen prefix (cached on Anthropic); only the document text varies. A safety decline, a token-cap stop, or any non-2xx response (429 quota, 5xx, connection failure) becomes a per-file error, never an aborted run. |
 | **emit** | Assemble frontmatter, write the concept, then the bundle-root `index.md` (declaring `okf_version: "0.2"`), append to `log.md` under today's ISO date newest-first, and generate `okf-base.yaml`. All writes are atomic (temp file + rename). |
 | **validate** | Built-in conformance checks, then okflint as the normative gate. |
 
@@ -175,7 +175,7 @@ Broken links are **warnings, not errors** — the spec explicitly permits them, 
 | `src/ragged/extract/__init__.py` | Bytes → text, with the content-hash cache. markitdown plus passthrough. |
 | `src/ragged/synth/prompt.py` | **The synthesis system prompt.** Must stay byte-identical across a run or prompt caching stops working. Tune concept quality here. |
 | `src/ragged/synth/__init__.py` | Provider dispatch plus everything shared: prompt assembly, JSON parsing, required-field checks, footnote repair. |
-| `src/ragged/synth/base.py` | The concept JSON schema, `SynthResult`, and the error types (`Refused`, `MissingCredential`, `SynthError`). |
+| `src/ragged/synth/base.py` | The concept JSON schema, `SynthResult`, and the error types (`Refused`, `ProviderHTTPError`, `MissingCredential`, `SynthError`). |
 | `src/ragged/synth/providers/claude.py` | Anthropic: `output_config.format`, cached system block, `stop_reason` handling. |
 | `src/ragged/synth/providers/gemini.py` | Gemini: `response_json_schema`, `system_instruction`, `finish_reason` / `block_reason` handling. |
 | `src/ragged/okf/concept.py` | The OKF data model. `render` / `parse` round-trip, unknown-key preservation, `slugify`. |
@@ -234,14 +234,14 @@ $env:PATH = "$PWD\.venv\Scripts;$env:PATH"   # so okflint is discoverable
 .\.venv\Scripts\python.exe -m pytest tests -q
 ```
 
-53 tests. No credentials and no network needed — the end-to-end test stubs the model and asserts the emitted bundle is conformant, so "one file in, one conformant concept out" is covered offline.
+70 tests. No credentials and no network needed — the end-to-end test stubs the model and asserts the emitted bundle is conformant, so "one file in, one conformant concept out" is covered offline.
 
 | File | Covers |
 |---|---|
 | `tests/test_okf.py` | render/parse round-trip, extension-key preservation, `E1`/`E2`/`E3`, link resolution (absolute and relative), log ordering and date merging |
-| `tests/test_pipeline.py` | end-to-end with a stubbed model, dry run, extraction-failure isolation, id collisions, new-type reporting, footnote repair |
+| `tests/test_pipeline.py` | end-to-end with a stubbed model, dry run, extraction-failure isolation, non-2xx isolation, interrupted-run finalization, id collisions, new-type reporting, footnote repair |
 | `tests/test_manifest.py` | manifest keys okflint requires, skip-with-reason behaviour, and cross-checking that okflint agrees with the built-in checks |
-| `tests/test_providers.py` | provider registry and interface, dispatch, schema/required-field enforcement, Gemini credential resolution and decline mapping, fail-fast pre-flight |
+| `tests/test_providers.py` | provider registry and interface, dispatch, schema/required-field enforcement, Gemini credential resolution and decline mapping, non-2xx and transport-failure mapping for both providers, fail-fast pre-flight |
 | `tests/test_env.py` | `.env` loading with and without a BOM, and every `doctor` outcome |
 | `tests/test_encoding.py` | the [encoding policy](#encoding-policy), enforced by AST scan, plus BOM tolerance and LF-only output end to end |
 

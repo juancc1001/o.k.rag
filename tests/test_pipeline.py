@@ -6,7 +6,7 @@ import pytest
 
 from ragged import config as config_module
 from ragged import okf, pipeline
-from ragged.synth import SynthResult, ensure_footnote_defs
+from ragged.synth import ProviderHTTPError, SynthResult, ensure_footnote_defs
 
 SAMPLE = """\
 # Revenue Recognition
@@ -107,6 +107,48 @@ def test_extraction_failure_does_not_abort_the_run(project, monkeypatch):
 
     assert [o.uri for o in summary.failed] == ["sources/empty.md"]
     assert [o.concept_id for o in summary.written] == ["revenue-policy"]
+
+
+def test_a_non_200_does_not_abort_the_run(project, monkeypatch):
+    # sorts after revenue-policy.md, so the quota error lands on the second file
+    (project / "sources" / "zz-quota.md").write_text(SAMPLE, encoding="utf-8")
+
+    def quota_exceeded_on_the_second(**kwargs):
+        if kwargs["source_uri"].endswith("zz-quota.md"):
+            raise ProviderHTTPError("gemini", 429, "You exceeded your current quota")
+        return fake_synthesize(**kwargs)
+
+    monkeypatch.setattr(pipeline, "synthesize", quota_exceeded_on_the_second)
+    cfg = config_module.load(project)
+    summary = pipeline.ingest(cfg, dry_run=False)
+
+    assert [o.concept_id for o in summary.written] == ["revenue-policy"]
+    assert [o.uri for o in summary.failed] == ["sources/zz-quota.md"]
+    assert "HTTP 429" in summary.failed[0].error
+
+    # the concept that succeeded is a bundle, not an orphan file
+    assert "revenue-policy.md" in (cfg.bundle_root / "index.md").read_text(encoding="utf-8")
+    assert (cfg.bundle_root / "log.md").exists()
+    assert (cfg.project_root / "okf-base.yaml").exists()
+    assert summary.report is not None and summary.report.ok
+
+
+def test_an_interrupted_run_still_leaves_a_readable_bundle(project, monkeypatch):
+    (project / "sources" / "zz-interrupted.md").write_text(SAMPLE, encoding="utf-8")
+
+    def interrupt_on_the_second(**kwargs):
+        if kwargs["source_uri"].endswith("zz-interrupted.md"):
+            raise KeyboardInterrupt
+        return fake_synthesize(**kwargs)
+
+    monkeypatch.setattr(pipeline, "synthesize", interrupt_on_the_second)
+    cfg = config_module.load(project)
+    with pytest.raises(KeyboardInterrupt):
+        pipeline.ingest(cfg, dry_run=False)
+
+    assert (cfg.bundle_root / "revenue-policy.md").exists()
+    assert "revenue-policy.md" in (cfg.bundle_root / "index.md").read_text(encoding="utf-8")
+    assert okf.validate(cfg.bundle_root).ok
 
 
 def test_colliding_titles_get_distinct_concept_ids(project, monkeypatch):
