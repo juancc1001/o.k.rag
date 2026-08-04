@@ -6,7 +6,14 @@ from types import SimpleNamespace
 import pytest
 
 from ragged import synth
-from ragged.synth import MissingCredential, ProviderResponse, Refused, SynthError
+from ragged.synth import (
+    CONCEPT_SCHEMA,
+    MissingCredential,
+    ProviderHTTPError,
+    ProviderResponse,
+    Refused,
+    SynthError,
+)
 from ragged.synth.providers import claude, gemini, resolve
 
 PAYLOAD = {
@@ -163,6 +170,101 @@ def test_enum_like_finish_reason_is_read_by_name():
     with pytest.raises(Refused) as exc:
         gemini._raise_if_blocked(_response(finish_reason=reason), 100)
     assert exc.value.category == "SAFETY"
+
+
+# --- non-2xx and transport failures ---------------------------------------------
+
+
+def _stub_client(raiser):
+    return SimpleNamespace(models=SimpleNamespace(generate_content=raiser))
+
+
+def _call(impl):
+    return impl.call(
+        system="s", user="u", schema=CONCEPT_SCHEMA, model="m", effort="high", max_tokens=10
+    )
+
+
+def test_gemini_429_becomes_a_provider_http_error(monkeypatch):
+    from google import genai
+    from google.genai import errors
+
+    def quota_exceeded(**_):
+        raise errors.ClientError(
+            429, {"error": {"code": 429, "message": "You exceeded your\n   current quota"}}
+        )
+
+    monkeypatch.setenv("GEMINI_API_KEY", "k")
+    monkeypatch.setattr(genai, "Client", lambda **_: _stub_client(quota_exceeded))
+
+    with pytest.raises(ProviderHTTPError) as exc:
+        _call(gemini)
+    assert exc.value.status == 429
+    assert "gemini HTTP 429" in str(exc.value)
+    # the build summary prints one line per file, so the message must not wrap
+    assert "\n" not in str(exc.value)
+
+
+def test_gemini_5xx_becomes_a_provider_http_error(monkeypatch):
+    from google import genai
+    from google.genai import errors
+
+    def unavailable(**_):
+        raise errors.ServerError(503, {"error": {"code": 503, "message": "overloaded"}})
+
+    monkeypatch.setenv("GEMINI_API_KEY", "k")
+    monkeypatch.setattr(genai, "Client", lambda **_: _stub_client(unavailable))
+
+    with pytest.raises(ProviderHTTPError) as exc:
+        _call(gemini)
+    assert exc.value.status == 503
+
+
+def test_anthropic_429_becomes_a_provider_http_error(monkeypatch):
+    import anthropic
+    import httpx
+
+    request = httpx.Request("POST", "https://api.anthropic.com/v1/messages")
+
+    def rate_limited(**_):
+        raise anthropic.RateLimitError(
+            "rate limited", response=httpx.Response(429, request=request), body=None
+        )
+
+    monkeypatch.setattr(
+        anthropic,
+        "Anthropic",
+        lambda: SimpleNamespace(messages=SimpleNamespace(create=rate_limited)),
+    )
+    with pytest.raises(ProviderHTTPError) as exc:
+        _call(claude)
+    assert exc.value.status == 429
+    assert "anthropic HTTP 429" in str(exc.value)
+
+
+def test_a_transport_failure_with_no_status_is_still_caught(monkeypatch):
+    import anthropic
+    import httpx
+
+    def unreachable(**_):
+        raise anthropic.APIConnectionError(
+            request=httpx.Request("POST", "https://api.anthropic.com/v1/messages")
+        )
+
+    monkeypatch.setattr(
+        anthropic,
+        "Anthropic",
+        lambda: SimpleNamespace(messages=SimpleNamespace(create=unreachable)),
+    )
+    with pytest.raises(ProviderHTTPError) as exc:
+        _call(claude)
+    assert exc.value.status is None
+    assert "no status" in str(exc.value)
+
+
+def test_a_non_200_is_a_syntherror_so_the_pipeline_records_it_per_file():
+    # the whole point: ingest() catches SynthError and keeps going
+    assert issubclass(ProviderHTTPError, SynthError)
 
 
 # --- pipeline pre-flight --------------------------------------------------------

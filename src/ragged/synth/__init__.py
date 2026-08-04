@@ -12,6 +12,7 @@ import json
 from .base import (
     CONCEPT_SCHEMA,
     MissingCredential,
+    ProviderHTTPError,
     ProviderResponse,
     Refused,
     SynthError,
@@ -25,6 +26,7 @@ from .providers import PROVIDERS, resolve
 __all__ = [
     "CONCEPT_SCHEMA",
     "MissingCredential",
+    "ProviderHTTPError",
     "ProviderResponse",
     "Refused",
     "SynthError",

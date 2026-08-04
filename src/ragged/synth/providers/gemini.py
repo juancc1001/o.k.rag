@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import os
 
-from ..base import MissingCredential, ProviderResponse, Refused, SynthError
+from ..base import MissingCredential, ProviderHTTPError, ProviderResponse, Refused, SynthError
 
 NAME = "gemini"
 DEFAULT_MODEL = "gemini-2.5-pro"
@@ -67,19 +67,25 @@ def call(
     max_tokens: int,
 ) -> ProviderResponse:
     from google import genai
-    from google.genai import types
+    from google.genai import errors, types
 
     client = genai.Client(api_key=api_key())
-    response = client.models.generate_content(
-        model=model,
-        contents=user,
-        config=types.GenerateContentConfig(
-            system_instruction=system,
-            response_mime_type="application/json",
-            response_json_schema=schema,
-            max_output_tokens=max_tokens,
-        ),
-    )
+    try:
+        response = client.models.generate_content(
+            model=model,
+            contents=user,
+            config=types.GenerateContentConfig(
+                system_instruction=system,
+                response_mime_type="application/json",
+                response_json_schema=schema,
+                max_output_tokens=max_tokens,
+            ),
+        )
+    except errors.APIError as exc:
+        # ClientError (4xx, incl. 429 RESOURCE_EXHAUSTED) and ServerError (5xx)
+        raise ProviderHTTPError(
+            NAME, getattr(exc, "code", None), getattr(exc, "message", None) or str(exc)
+        ) from exc
 
     _raise_if_blocked(response, max_tokens)
 

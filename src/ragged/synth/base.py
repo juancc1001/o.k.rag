@@ -40,6 +40,24 @@ class Refused(SynthError):
         self.explanation = explanation
 
 
+class ProviderHTTPError(SynthError):
+    """Anything the provider answered that was not a 2xx, plus transport failures.
+
+    A SynthError so the pipeline records it against the file and keeps going:
+    a 429 on file 3 must not discard the concepts already written for 1 and 2.
+    """
+
+    def __init__(self, provider: str, status: int | None, message: str) -> None:
+        super().__init__(f"{provider} HTTP {status or 'no status'}: {_one_line(message)}")
+        self.status = status
+
+
+def _one_line(message: str, limit: int = 300) -> str:
+    """Provider errors arrive multi-line; the build summary prints one line per file."""
+    collapsed = " ".join(str(message).split())
+    return collapsed if len(collapsed) <= limit else collapsed[: limit - 1] + "…"
+
+
 @dataclass
 class ProviderResponse:
     """What a provider returns: the raw JSON payload plus token accounting."""
