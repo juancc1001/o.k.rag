@@ -322,10 +322,7 @@ When okflint is absent, or the manifest is missing, validation reports *why* it 
 
 `okflint audit` takes `--bundle`, not a positional path, and is a separate diagnostic (split candidates, inventory) rather than part of the gate. `okflint index --apply` is **not** used — ragged generates its own `index.md` files in 6.6 with descriptions pulled from frontmatter; `okflint index` stays available as a repair tool for hand-edited bundles.
 
-Two Windows-specific hazards, both hit in practice:
-
-- Subprocess output must be decoded as UTF-8 explicitly. `text=True` inherits the locale codepage (cp1252), and okflint emits characters outside it — the decode raises in the reader thread, leaving `stdout` as `None`.
-- Passthrough extraction reads with `utf-8-sig`, or a BOM rides into the synthesis prompt as a leading invisible character.
+The okflint subprocess must decode as UTF-8 explicitly — `text=True` inherits the locale codepage and okflint emits characters outside cp1252. That is one instance of a project-wide rule: **never trust a platform default at an I/O boundary.** The full policy, and the AST test that enforces it, are in `README.md` → Encoding policy.
 
 ### 6.8 embed
 

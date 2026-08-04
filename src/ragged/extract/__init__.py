@@ -58,7 +58,7 @@ def _read_cache(cache_dir: Path | None, content_sha256: str) -> Extraction | Non
     path = _cache_path(cache_dir, content_sha256)
     if path is None or not path.exists():
         return None
-    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload = json.loads(path.read_text(encoding="utf-8-sig"))
     return Extraction(payload["text"], payload["extractor"])
 
 
@@ -70,4 +70,5 @@ def _write_cache(cache_dir: Path | None, content_sha256: str, result: Extraction
     path.write_text(
         json.dumps({"text": result.text, "extractor": result.extractor}),
         encoding="utf-8",
+        newline="\n",
     )

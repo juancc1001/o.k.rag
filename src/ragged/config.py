@@ -56,7 +56,8 @@ class Config(BaseModel):
 def load(project_root: Path | None = None) -> Config:
     root = (project_root or Path.cwd()).resolve()
     path = root / "ragged.toml"
-    raw = tomllib.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+    # utf-8-sig: hand-edited file, so tolerate a BOM (tomllib would reject it)
+    raw = tomllib.loads(path.read_text(encoding="utf-8-sig")) if path.exists() else {}
     return Config(
         project_root=root,
         bundle=BundleConfig(**raw.get("bundle", {})),

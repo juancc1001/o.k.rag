@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import shutil
+import sys
 from pathlib import Path
 
 import typer
@@ -12,6 +13,25 @@ from .pipeline import IngestSummary, ingest, inspect_extraction
 from .synth import MissingCredential, resolve
 
 app = typer.Typer(add_completion=False, help="Build an OKF v0.2 bundle from a folder of files.")
+
+
+def _force_utf8_output() -> None:
+    """stdout/stderr default to the locale codepage, not UTF-8.
+
+    On Windows that is cp1252, so redirecting output raises UnicodeEncodeError
+    the moment a concept title contains a character outside it (an em dash, a
+    math symbol, a curly quote). Accented Latin text happens to fit in cp1252,
+    which makes the failure look intermittent.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            reconfigure(encoding="utf-8", errors="replace")
+
+
+@app.callback()
+def _main() -> None:
+    _force_utf8_output()
 
 
 def _load() -> Config:

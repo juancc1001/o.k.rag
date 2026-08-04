@@ -243,6 +243,7 @@ $env:PATH = "$PWD\.venv\Scripts;$env:PATH"   # so okflint is discoverable
 | `tests/test_manifest.py` | manifest keys okflint requires, skip-with-reason behaviour, and cross-checking that okflint agrees with the built-in checks |
 | `tests/test_providers.py` | provider registry and interface, dispatch, schema/required-field enforcement, Gemini credential resolution and decline mapping, fail-fast pre-flight |
 | `tests/test_env.py` | `.env` loading with and without a BOM, and every `doctor` outcome |
+| `tests/test_encoding.py` | the [encoding policy](#encoding-policy), enforced by AST scan, plus BOM tolerance and LF-only output end to end |
 
 Tests that need okflint skip cleanly when it is not on `PATH`.
 
@@ -250,11 +251,28 @@ Tests that need okflint skip cleanly when it is not on `PATH`.
 
 ## Platform notes
 
-Three Windows issues hit during development, all fixed and worth knowing if you touch the relevant code. All three are the same underlying trap — Windows defaults that differ from UTF-8:
+## Encoding policy
 
-- **`.env` is read with `utf-8-sig`.** Notepad, VS Code, and PowerShell's `Set-Content -Encoding utf8` all write a BOM, which python-dotenv (UTF-8 by default) turns into a key literally named `﻿GEMINI_API_KEY`. The key is then silently invisible — `.env` reads as "found" while the credential reads as "missing".
-- **Passthrough extraction reads with `utf-8-sig`.** Otherwise a BOM rides into the synthesis prompt as a leading invisible character.
-- **Subprocess output is decoded as UTF-8 explicitly.** `subprocess.run(text=True)` inherits the locale codepage (cp1252); okflint emits characters outside it, the decode raises inside the reader thread, and `stdout` comes back as `None`.
+Four separate bugs shipped during M1, all the same defect: **trusting a platform default at an I/O boundary.** Windows defaults to cp1252, not UTF-8. So the rule is absolute, with no per-call-site judgement:
+
+| Boundary | Rule | Why |
+|---|---|---|
+| Reading text | `encoding="utf-8-sig"` | Tolerates a BOM; byte-identical without one. Notepad, VS Code and Excel all write BOMs. |
+| Writing text | `encoding="utf-8"`, `newline="\n"` | Byte-stable across platforms, never a BOM |
+| Subprocesses | `encoding="utf-8", errors="replace"` | `text=True` inherits the locale codepage |
+| stdout / stderr | reconfigured to UTF-8 at CLI entry | The default is the codepage, so redirecting output crashes |
+| git | `.gitattributes` with `eol=lf` | Otherwise checkout rewrites the bundle to CRLF |
+
+**`tests/test_encoding.py` enforces this statically** — it walks the AST of everything under `src/ragged/` and fails the build if any read, write, or subprocess call deviates. It also contains a meta-test pointing the check at a deliberately bad file, because a guard that always passes guards nothing.
+
+The four bugs, for reference:
+
+1. **`.env`** — python-dotenv reads UTF-8 by default, so a BOM produced a key literally named `﻿GEMINI_API_KEY`. Silent: `.env` reported "found" while the credential reported "missing".
+2. **Passthrough extraction** — a BOM rode into the synthesis prompt as a leading invisible character.
+3. **okflint subprocess** — `text=True` decoded with cp1252, okflint emits characters outside it, the decode raised inside the reader thread and `stdout` came back as `None`.
+4. **Redirected stdout** — `ragged extract x.pdf > out.txt` raised `UnicodeEncodeError` on any character outside cp1252. Deceptive because `acción` and `€` *are* in cp1252, so it only broke on `≥`, `—`, `≈` and curly quotes — exactly what a model writes into titles and descriptions.
+
+That fourth one was masked in development: Claude Code sets `PYTHONIOENCODING=utf-8:surrogateescape`, so it could not reproduce until the variable was cleared. If you are testing terminal behaviour, check what your environment sets first.
 
 ---
 

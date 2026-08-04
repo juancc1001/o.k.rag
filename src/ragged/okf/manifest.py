@@ -37,5 +37,6 @@ def write_manifest(project_root: Path, bundle_dir: str, name: str) -> Path:
     path.write_text(
         yaml.safe_dump(manifest, sort_keys=False, allow_unicode=True),
         encoding="utf-8",
+        newline="\n",
     )
     return path
