@@ -185,8 +185,14 @@ def _print_report(report: okf.Report) -> None:
         typer.secho(
             f"OKF v0.2 conformant: {report.concepts} concept(s), 0 errors", fg="green"
         )
-    else:
+    elif report.errors:
         typer.secho(f"NOT conformant: {len(report.errors)} error(s)", fg="red")
+    else:
+        # don't print "0 error(s)" when okflint is the one objecting
+        typer.secho(
+            f"NOT conformant: built-in checks passed, okflint exited {report.okflint_exit}",
+            fg="red",
+        )
     for finding in report.errors:
         typer.secho(f"  {finding}", fg="red")
     for finding in report.warnings:
