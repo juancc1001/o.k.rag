@@ -535,6 +535,7 @@ random_state = 42
 | **M4** | Agent contract | after M2 |
 | **M3** | Vectors + graph | after M4 |
 | **M5** | Connectors | phase 2 |
+| **M6** | Extract `okf/` as a standalone library | gated — see below |
 
 **M4 and M3 are swapped from the original order.** The objective is that any model *consumes* the bundle, and that is served by the agent contract, not by the graph. The graph is diagnostic; MCP is the product.
 
@@ -556,3 +557,23 @@ Exit criterion: ingest a real 20-file corpus, validate clean, re-run and observe
 **M3 — vectors + graph.** Embed, project, `graph.json`, FastAPI, sigma.js frontend with both edge layers and the τ slider. Where the ghost-edge idea gets its first real test. Note `search` works on index traversal before this lands; embeddings upgrade it rather than enable it.
 
 **M5 — connectors.** `BigQuerySource` (asset family) and `BlobSource` (document family).
+
+**M6 — extract `okf/` as a standalone library.** Gated, not scheduled.
+
+`okf/` is the one part of this codebase with standalone value: it is bound to a published spec rather than to a provider, it has an objective conformance definition, it contains no model call, and nothing equivalent exists in Python today (`okflint` is a linter, not a read/write model). Anyone producing or consuming OKF needs it regardless of how they synthesize.
+
+**Scope.** `concept.py`, `writer.py`, `validate.py`, `manifest.py` — the format layer only.
+
+**Explicitly excluded, and this is the important half:**
+
+- **`synth/` must not be published.** It is a thin protocol over two vendor SDKs that are already good. Shipping it means committing to chase every provider's API drift in exchange for indirection nobody asked for. This is the LangChain failure mode — a horizontal abstraction layer over plumbing — and the reason M6 is "a format library", not "a framework".
+- `pipeline.py`, `cli.py`, `sources/`, `extract/` are application code. They stay here.
+
+**Entry criteria — all of them, or this is premature abstraction:**
+
+1. M2 shipped and a real corpus of ≥100 documents has been ingested and re-ingested.
+2. The frontmatter policy (§4.2) has gone one full milestone without a breaking change. Today it has never met a real document, so it will move.
+3. A second consumer exists that is not this pipeline — the MCP server (M4) counts. One caller is not evidence of a reusable API.
+4. `parse`/`render` round-trip holds on a bundle authored by something other than ragged.
+
+**Note on reach.** For *consumption* the MCP server beats a library: it works from any language and any agent with no import, whereas a Python library only serves Python producers. M6 is about the production side and about not making the next OKF tool reimplement frontmatter parsing — it is not the distribution strategy for the format.
