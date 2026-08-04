@@ -552,6 +552,10 @@ random_state = 42
 
 Exit criterion: ingest a real 20-file corpus, validate clean, re-run and observe zero model calls.
 
+Two prompt changes belong to M2 itself: the existing-concept index must reach the cached prefix (§6.4 already specifies it; the M1 code does not do it), and link-weave needs its own prompt where the wiki framing actually changes a decision.
+
+**Prompt calibration comes after M2, deliberately not before.** Few-shot examples are the strongest signal in a prompt — the model matches their length, tone and structure — but writing them now would bake in guesses: segmentation changes the unit shape, so a "one file, one concept" example would teach the wrong thing. The method after M2 is to take a generated concept a human promoted from `draft` to `stable` and use *that* as the example. It is then calibrated against the real corpus and the owner's judgement rather than against an invented document.
+
 **M4 — agent contract.** Generated `AGENTS.md`, MCP server, `.mcp.json`. Three of the four MCP tools (`search`, `read_concept`, `lint`) are credential-free; only `ingest` inherits the write path's requirement, and the generated `AGENTS.md` must say so. Exit criterion: a session with no credential registers the server, answers a real question from the bundle, and reports lint findings.
 
 **M3 — vectors + graph.** Embed, project, `graph.json`, FastAPI, sigma.js frontend with both edge layers and the τ slider. Where the ghost-edge idea gets its first real test. Note `search` works on index traversal before this lands; embeddings upgrade it rather than enable it.
