@@ -1,0 +1,16 @@
+# derived, rebuildable from sources/ + bundle/
+.ragged/
+
+# secrets — .env.example is the committed template
+.env
+
+# per-user Claude Code config; skills under .claude/ are shared
+.claude/settings.local.json
+
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.pytest_cache/
