@@ -326,7 +326,15 @@ The okflint subprocess must decode as UTF-8 explicitly — `text=True` inherits 
 
 ### 6.8 embed
 
-fastembed + `bge-small-en-v1.5`, 384-dim, ONNX, in-process, offline. Embed at **concept granularity** — one vector per concept file, over `title + description + body`. Concepts longer than the model's window are embedded as mean-pooled chunks; the chunk vectors are discarded, only the concept vector is kept.
+**Nothing in the build path uses embeddings.** They exist for §8 — graph layout and the missing-link lint — so they are needed at M3, which sits behind M4. Concepts are produced, validated and consumed without them.
+
+**Local vs hosted is an open decision, to be made at M3.** The original argument for local (fastembed + `bge-small-en-v1.5`, 384-dim, ONNX, offline) rested partly on the Anthropic API having no embedding model. That reason expired when Gemini became the default provider — it has one, reachable with the key the build already needs. What survives is weaker: rebuilds are free and offline, and embedding a *query* at read time needs no credential. Against local: ~150 MB of `onnxruntime` dependencies for something the existing key already covers.
+
+Note the asymmetry that makes this low-stakes: concept vectors are computed at **build** time, when a credential is present either way, and then stored. Reading them needs no credential regardless of who produced them. Only query embedding would, and `search` falls back to index traversal.
+
+Decide it by measurement: if local `bge-small` produces useful ghost edges on the real corpus, keep it. If the signal is noise, compare against `gemini-embedding-001`. Either way the vectors live in `.ragged/` — swapping providers is deleting `embeddings.npy` and re-embedding, with zero impact on `bundle/`. This is the sidecar rule paying for itself.
+
+Whichever wins: embed at **concept granularity** — one vector per concept file, over `title + description + body`. Concepts longer than the model's window are embedded as mean-pooled chunks; the chunk vectors are discarded, only the concept vector is kept.
 
 Chunk-level vectors are deliberately not stored in phase 1. The retrieval path is progressive disclosure (§7), not chunk RAG; adding a chunk index before there is evidence retrieval quality demands it is building the thing this design argues against.
 
@@ -512,7 +520,7 @@ random_state = 42
 | 1 | **Ghost-edge threshold is uncalibrated.** τ = 0.82 is a guess. A coherent corpus may make everything ≥0.9-similar, drowning the signal. | Live slider in the UI; calibrate on the first real corpus; consider per-type thresholds or rank-based (top-k only) instead of absolute similarity. |
 | 2 | **Extraction quality caps everything downstream.** Garbage text → garbage concepts, and no amount of prompt work fixes it. | Cache extractions and expose them; a `ragged extract --inspect <file>` command so extraction can be debugged independently of synthesis. |
 | 3 | **Synthesis cost on large corpora.** 400 documents × ~3 units × Opus 5 at high effort is real money. | Cached system prefix (~0.1× on the bulk of input tokens), Batches API (50%), hash-based skip on unchanged files. Report estimated cost before a run and require confirmation above a configurable ceiling. |
-| 4 | **Local embeddings are weaker than hosted.** bge-small is good, not great, especially on domain jargon. | The embedding provider is behind an interface; swapping to Voyage or Vertex is a config change plus a full re-embed. Since embeddings are sidecar-only, a re-embed touches nothing in the bundle. |
+| 4 | **Embedding provider is undecided** (§6.8). Local `bge-small` is weaker on domain jargon; hosted costs money and, for query embedding, a credential at read time. | Decide at M3 by measuring ghost-edge quality on the real corpus, not up front. Sidecar-only, so swapping is a re-embed that touches nothing in `bundle/`. |
 | 5 | **Layout instability across ingests.** UMAP with new points added can reshuffle globally even with a fixed seed. | Fixed `random_state`; investigate `umap.transform()` on a persisted fitted model to place new points into an existing layout rather than refitting. Refit only on explicit `ragged reindex --full`. |
 | 6 | **Human edits vs. LLM ownership.** The wiki pattern says the LLM owns layer 2, but a human who verified a concept has a legitimate claim on it. | `human_edited` flag + `verified` detection + `.ragged/proposed/` (§6.4). Never silently overwrite. |
 | 7 | **Sensitive content.** Local phase 1 is fine, but document text goes to the Claude API during synthesis, and phase 2 adds cloud sources. | Document this explicitly before first run. Embeddings stay local by default specifically so the *bulk* re-processing path is offline. Revisit before any cloud connector ships. |
