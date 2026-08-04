@@ -1,0 +1,20 @@
+[bundle]
+root = "bundle"
+okf_version = "0.2"
+actor = "ragged/0.1.0"
+
+[sources.local]
+family = "document"
+path = "sources"
+include = ["**/*.md", "**/*.txt", "**/*.pdf", "**/*.docx", "**/*.xlsx", "**/*.pptx", "**/*.html"]
+exclude = ["**/~$*", "**/.DS_Store"]
+
+[synth]
+provider = "gemini"          # gemini | anthropic
+# model = "gemini-2.5-pro"   # omit for the provider default; `ragged doctor` lists what your key can reach
+effort = "high"              # anthropic only; gemini has no equivalent
+max_tokens = 16000
+
+[types]
+allowed = ["Document", "Concept", "Entity", "Process", "Decision", "Reference"]
+allow_new = true
