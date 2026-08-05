@@ -1,7 +1,7 @@
-"""The pipeline: discover -> extract -> plan -> synthesize -> emit -> validate.
+"""The pipeline: discover -> extract -> plan -> synthesize -> link-weave -> emit
+-> validate.
 
-Deliberately not here yet: link-weave, general per-directory index generation,
-vectors.
+Deliberately not here yet: general per-directory index generation, vectors.
 """
 
 from __future__ import annotations
@@ -26,6 +26,7 @@ from .synth import (
     plan,
     resolve,
     synthesize,
+    weave,
 )
 
 
@@ -43,10 +44,16 @@ class ItemOutcome:
     """Planned sections whose start_marker could not be found in the text."""
     skipped: bool = False
     """Unchanged since the last ingest — reused wholesale, no model call."""
-    protected: list[str] = field(default_factory=list)
-    """Concepts a human owns; the replacement went to .ragged/proposed/ (§6.4)."""
+    protected: dict[str, str] = field(default_factory=dict)
+    """concept_id -> why a human owns it; the replacement went to .ragged/proposed/."""
     removed: list[str] = field(default_factory=list)
     """Concepts the previous run produced for this source and this one did not."""
+    candidates: dict[str, list[str]] = field(default_factory=dict)
+    """concept_id -> ids synthesis thought it relates to. Link-weave's hint."""
+    linked: list[str] = field(default_factory=list)
+    """Concepts the weave pass actually rewrote."""
+    weave_errors: list[str] = field(default_factory=list)
+    """A concept that failed to weave keeps its unlinked body."""
 
     @property
     def concept_count(self) -> int:
@@ -62,6 +69,8 @@ class IngestSummary:
     cache_read_tokens: int = 0
     deprecated: list[str] = field(default_factory=list)
     """Concepts whose source is gone. Marked, not deleted (§6.1)."""
+    invented_links: list[str] = field(default_factory=list)
+    """Weave targets outside the bundle. Unwrapped to plain text, never silent."""
 
     @property
     def written(self) -> list[ItemOutcome]:
@@ -98,6 +107,8 @@ def ingest(config: Config, dry_run: bool = False) -> IngestSummary:
             )
     ledger_path = config.sidecar_root / LEDGER_NAME
     ledger = Ledger() if dry_run else Ledger.load(ledger_path)
+    # snapshotted once: the synthesis prefix has to stay byte-identical all run
+    existing = [] if dry_run else _index(config.bundle_root)
     # every id the last run wrote stays spoken for until its own source releases
     # it, so a source that is skipped this run cannot have its ids stolen
     taken: set[str] = set(ledger.concepts)
@@ -152,6 +163,7 @@ def ingest(config: Config, dry_run: bool = False) -> IngestSummary:
                     outcome=outcome,
                     taken=taken,
                     summary=summary,
+                    existing=existing,
                 )
             except SynthError as exc:
                 outcome.error = str(exc)
@@ -176,6 +188,9 @@ def ingest(config: Config, dry_run: bool = False) -> IngestSummary:
             log_entries.extend(lines)
 
         if not dry_run:
+            # after every concept for the run exists: a link can only point at
+            # a concept that has been written
+            _weave_run(config, ledger, summary)
             _deprecate_vanished(config, ledger, discovered, summary, index_entries, log_entries)
     finally:
         # Concepts are written per file, but only the index, log and ledger make
@@ -199,6 +214,7 @@ def _ingest_single(
     outcome: ItemOutcome,
     taken: set[str],
     summary: IngestSummary,
+    existing: list[tuple[str, str]],
 ) -> tuple[tuple[str, str], list[str]]:
     """Short enough to be one concept (§4.3)."""
     result = synthesize(
@@ -211,11 +227,13 @@ def _ingest_single(
         model=config.synth.model,
         effort=config.synth.effort,
         max_tokens=config.synth.max_tokens,
+        index=existing,
     )
     _account(summary, result)
     _note_new_type(config, outcome, result.type)
 
     concept_id = _claim_id(item.title, taken)
+    outcome.candidates[concept_id] = result.candidate_links
     verb = _write(config, ledger, _build(config, item, result, concept_id, source_id), outcome)
     outcome.concept_id = concept_id
     return (
@@ -234,6 +252,7 @@ def _ingest_segmented(
     outcome: ItemOutcome,
     taken: set[str],
     summary: IngestSummary,
+    existing: list[tuple[str, str]],
 ) -> tuple[tuple[str, str], list[str]]:
     """Plan first, then one call per section, then assemble the parent.
 
@@ -279,6 +298,7 @@ def _ingest_segmented(
                     index=index,
                     total=total,
                 ),
+                index=existing,
             )
         except SynthError as exc:
             outcome.section_errors.append(f"{section.title}: {exc}")
@@ -288,6 +308,7 @@ def _ingest_segmented(
         _note_new_type(config, outcome, result.type)
 
         child_id = _claim_child_id(parent_id, result.title or section.title, taken)
+        outcome.candidates[child_id] = result.candidate_links
         verb = _write(config, ledger, _build(config, item, result, child_id, source_id), outcome)
         # recorded even when a human owns it: the file is still this source's
         # output, and dropping it here would delete it as stale
@@ -324,7 +345,7 @@ def _write(config: Config, ledger: Ledger, concept: Concept, outcome: ItemOutcom
         path = config.sidecar_root / "proposed" / f"{concept_id}.md"
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(okf.render(concept), encoding="utf-8", newline="\n")
-        outcome.protected.append(f"{concept_id}: {why}")
+        outcome.protected[concept_id] = why
         return ""
     existed = (config.bundle_root / f"{concept_id}.md").exists()
     okf.write_concept(config.bundle_root, concept)
@@ -337,6 +358,61 @@ def _log_lines(verb: str, title: str, concept_id: str, uri: str) -> list[str]:
         return []  # nothing changed on disk; the human's copy still stands
     word = "Added" if verb == "Creation" else "Rewrote"
     return [f"**{verb}**: {word} [{title}](/{concept_id}.md) from `{uri}`."]
+
+
+def _index(bundle_root: Path) -> list[tuple[str, str]]:
+    """The bundle's concepts as `(id, description)`, for a prompt prefix."""
+    return [(ref.concept_id, ref.description) for ref in okf.inventory(bundle_root)]
+
+
+def _weave_run(config: Config, ledger: Ledger, summary: IngestSummary) -> None:
+    """Rewrite this run's concepts with cross-links woven into their prose (§6.5).
+
+    Only what this run wrote: a concept that was skipped is unchanged output and
+    rewriting it would cost a model call to produce a file nobody asked for. The
+    consequence is that links point forward from new concepts to old ones and not
+    the other way round until the old one is itself re-ingested.
+    """
+    index = _index(config.bundle_root)
+    if len(index) < 2:
+        return  # nothing to link to
+
+    for outcome in summary.synthesized:
+        for concept_id in [outcome.concept_id, *outcome.child_ids]:
+            if concept_id in outcome.protected:
+                continue
+            path = config.bundle_root / f"{concept_id}.md"
+            try:
+                concept = okf.parse(path.read_text(encoding="utf-8-sig"), concept_id)
+            except (OSError, ValueError):
+                continue
+            try:
+                result = weave(
+                    concept_id=concept_id,
+                    title=concept.title or concept_id,
+                    body=concept.body,
+                    index=index,
+                    parent=concept_id.rsplit("/", 1)[0] if "/" in concept_id else None,
+                    candidates=outcome.candidates.get(concept_id, []),
+                    provider=config.synth.provider,
+                    model=config.synth.model,
+                    effort=config.synth.effort,
+                    max_tokens=config.synth.max_tokens,
+                )
+            except SynthError as exc:
+                # the unwoven concept is still a concept; weaving is an upgrade
+                outcome.weave_errors.append(f"{concept_id}: {exc}")
+                continue
+
+            _account(summary, result)
+            summary.invented_links.extend(result.invented)
+            if result.body_markdown == concept.body:
+                continue
+            concept.body = result.body_markdown
+            okf.write_concept(config.bundle_root, concept)
+            # the post-weave hash, or the next run reads every concept as edited
+            ledger.note_concept(concept_id, outcome.uri, concept.body)
+            outcome.linked.append(concept_id)
 
 
 def _remove_stale(config: Config, ledger: Ledger, stale: set[str]) -> list[str]:

@@ -254,7 +254,7 @@ def test_a_hand_edited_concept_is_not_overwritten(project, monkeypatch):
 
     assert "A human rewrote this by hand." in path.read_text(encoding="utf-8-sig")
     outcome = next(o for o in second.written if o.uri == "sources/revenue-policy.md")
-    assert outcome.protected == ["revenue-policy: edited since ragged last wrote it"]
+    assert outcome.protected == {"revenue-policy": "edited since ragged last wrote it"}
     proposed = cfg.sidecar_root / "proposed" / "revenue-policy.md"
     assert "Revenue is recognized on delivery" in proposed.read_text(encoding="utf-8-sig")
 
@@ -272,7 +272,7 @@ def test_a_verified_concept_is_protected_even_with_no_ledger_record(project, mon
 
     second = pipeline.ingest(cfg, dry_run=False)
     outcome = next(o for o in second.written if o.uri == "sources/revenue-policy.md")
-    assert outcome.protected == ["revenue-policy: carries a `verified` block"]
+    assert outcome.protected == {"revenue-policy": "carries a `verified` block"}
     reread = okf.parse(path.read_text(encoding="utf-8-sig"), "revenue-policy")
     assert reread.verified == [{"by": "human:juan", "at": "2026-08-05T00:00:00Z"}]
 
