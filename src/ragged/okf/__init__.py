@@ -3,7 +3,14 @@
 from .concept import Concept, Source, parse, render, slugify
 from .manifest import MANIFEST_NAME, write_manifest
 from .validate import Finding, Report, validate
-from .writer import append_log, write_child_index, write_concept, write_root_index
+from .writer import (
+    append_log,
+    delete_concept,
+    set_status,
+    write_child_index,
+    write_concept,
+    write_root_index,
+)
 
 __all__ = [
     "Concept",
@@ -17,6 +24,8 @@ __all__ = [
     "Report",
     "validate",
     "append_log",
+    "delete_concept",
+    "set_status",
     "write_child_index",
     "write_concept",
     "write_root_index",

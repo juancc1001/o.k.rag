@@ -1,7 +1,7 @@
-"""M1 pipeline: discover -> extract -> synthesize -> emit -> validate.
+"""The pipeline: discover -> extract -> plan -> synthesize -> emit -> validate.
 
-Deliberately not here yet: segmentation (one concept per source file for now),
-link-weave, per-directory index generation, the manifest, vectors.
+Deliberately not here yet: link-weave, general per-directory index generation,
+vectors.
 """
 
 from __future__ import annotations
@@ -13,6 +13,7 @@ from pathlib import Path
 from . import okf
 from .config import Config
 from .extract import ExtractionError, extract
+from .ledger import LEDGER_NAME, Ledger
 from .okf import Concept, Source
 from .sources import LocalFileSource, SourceItem
 from .synth import (
@@ -40,6 +41,12 @@ class ItemOutcome:
     """A section that failed does not fail the document."""
     dropped_sections: list[str] = field(default_factory=list)
     """Planned sections whose start_marker could not be found in the text."""
+    skipped: bool = False
+    """Unchanged since the last ingest — reused wholesale, no model call."""
+    protected: list[str] = field(default_factory=list)
+    """Concepts a human owns; the replacement went to .ragged/proposed/ (§6.4)."""
+    removed: list[str] = field(default_factory=list)
+    """Concepts the previous run produced for this source and this one did not."""
 
     @property
     def concept_count(self) -> int:
@@ -53,6 +60,8 @@ class IngestSummary:
     input_tokens: int = 0
     output_tokens: int = 0
     cache_read_tokens: int = 0
+    deprecated: list[str] = field(default_factory=list)
+    """Concepts whose source is gone. Marked, not deleted (§6.1)."""
 
     @property
     def written(self) -> list[ItemOutcome]:
@@ -61,6 +70,14 @@ class IngestSummary:
     @property
     def failed(self) -> list[ItemOutcome]:
         return [o for o in self.outcomes if o.error]
+
+    @property
+    def skipped(self) -> list[ItemOutcome]:
+        return [o for o in self.outcomes if o.skipped]
+
+    @property
+    def synthesized(self) -> list[ItemOutcome]:
+        return [o for o in self.outcomes if o.concept_id and not o.skipped]
 
 
 def ingest(config: Config, dry_run: bool = False) -> IngestSummary:
@@ -79,14 +96,32 @@ def ingest(config: Config, dry_run: bool = False) -> IngestSummary:
                 f"no credential for provider {config.synth.provider!r}; "
                 f"set one of {', '.join(impl.ENV_VARS)} in .env or the environment"
             )
-    taken: set[str] = set()
+    ledger_path = config.sidecar_root / LEDGER_NAME
+    ledger = Ledger() if dry_run else Ledger.load(ledger_path)
+    # every id the last run wrote stays spoken for until its own source releases
+    # it, so a source that is skipped this run cannot have its ids stolen
+    taken: set[str] = set(ledger.concepts)
     log_entries: list[str] = []
     index_entries: list[tuple[str, str]] = []
+    discovered: set[str] = set()
 
     try:
         for item in source.discover():
             outcome = ItemOutcome(uri=item.uri)
             summary.outcomes.append(outcome)
+            discovered.add(item.uri)
+
+            record = ledger.unchanged(item.uri, item.content_sha256, config.bundle_root)
+            if record is not None:
+                entry = _entry(config.bundle_root, record.concepts[0])
+                if entry is not None:
+                    outcome.skipped = True
+                    outcome.concept_id = record.concepts[0]
+                    outcome.child_ids = list(record.concepts[1:])
+                    index_entries.append(entry)
+                    continue
+                # its parent no longer parses; rebuild rather than trust the ledger
+
             try:
                 text = extract(
                     config.project_root / item.uri,
@@ -101,11 +136,16 @@ def ingest(config: Config, dry_run: bool = False) -> IngestSummary:
                 outcome.concept_id = _claim_id(item.title, taken)
                 continue
 
+            prior = ledger.sources.get(item.uri)
+            previous = set(prior.concepts) if prior else set()
+            taken -= previous  # a re-ingested source may reuse its own ids
+
             source_id = okf.slugify(item.title) or "source"
             worker = _ingest_segmented if needs_segmenting(text) else _ingest_single
             try:
                 entry, lines = worker(
                     config=config,
+                    ledger=ledger,
                     item=item,
                     text=text,
                     source_id=source_id,
@@ -115,16 +155,34 @@ def ingest(config: Config, dry_run: bool = False) -> IngestSummary:
                 )
             except SynthError as exc:
                 outcome.error = str(exc)
+                taken |= previous  # the last run's concepts are still on disk
                 continue
 
+            produced = [outcome.concept_id, *outcome.child_ids]
+            ledger.note_source(
+                item.uri,
+                content_sha256=item.content_sha256,
+                size_bytes=item.size_bytes,
+                mtime=item.mtime.isoformat(timespec="seconds").replace("+00:00", "Z"),
+                concepts=produced,
+                at=_now(),
+            )
+            outcome.removed = _remove_stale(config, ledger, previous - set(produced))
+            log_entries.extend(
+                f"**Deprecation**: Removed `{cid}`, no longer produced by `{item.uri}`."
+                for cid in outcome.removed
+            )
             index_entries.append(entry)
             log_entries.extend(lines)
+
+        if not dry_run:
+            _deprecate_vanished(config, ledger, discovered, summary, index_entries, log_entries)
     finally:
-        # Concepts are written per file, but only the index, log and manifest make
+        # Concepts are written per file, but only the index, log and ledger make
         # them a bundle. Run on the way out however we leave — a Ctrl-C or an
         # unforeseen crash must not strand the model calls already paid for.
-        if not dry_run and index_entries:
-            _finalize(config, index_entries, log_entries)
+        if not dry_run and (index_entries or log_entries):
+            _finalize(config, index_entries, log_entries, ledger, ledger_path)
 
     if config.bundle_root.exists():
         summary.report = okf.validate(config.bundle_root)
@@ -134,6 +192,7 @@ def ingest(config: Config, dry_run: bool = False) -> IngestSummary:
 def _ingest_single(
     *,
     config: Config,
+    ledger: Ledger,
     item: SourceItem,
     text: str,
     source_id: str,
@@ -141,7 +200,7 @@ def _ingest_single(
     taken: set[str],
     summary: IngestSummary,
 ) -> tuple[tuple[str, str], list[str]]:
-    """Short enough to be one concept (§4.3). The M1 path, unchanged."""
+    """Short enough to be one concept (§4.3)."""
     result = synthesize(
         text=text,
         source_id=source_id,
@@ -157,17 +216,18 @@ def _ingest_single(
     _note_new_type(config, outcome, result.type)
 
     concept_id = _claim_id(item.title, taken)
-    okf.write_concept(config.bundle_root, _build(config, item, result, concept_id, source_id))
+    verb = _write(config, ledger, _build(config, item, result, concept_id, source_id), outcome)
     outcome.concept_id = concept_id
     return (
         (concept_id, result.description),
-        [f"**Creation**: Added [{result.title}](/{concept_id}.md) from `{item.uri}`."],
+        _log_lines(verb, result.title, concept_id, item.uri),
     )
 
 
 def _ingest_segmented(
     *,
     config: Config,
+    ledger: Ledger,
     item: SourceItem,
     text: str,
     source_id: str,
@@ -228,28 +288,107 @@ def _ingest_segmented(
         _note_new_type(config, outcome, result.type)
 
         child_id = _claim_child_id(parent_id, result.title or section.title, taken)
-        okf.write_concept(config.bundle_root, _build(config, item, result, child_id, source_id))
+        verb = _write(config, ledger, _build(config, item, result, child_id, source_id), outcome)
+        # recorded even when a human owns it: the file is still this source's
+        # output, and dropping it here would delete it as stale
         outcome.child_ids.append(child_id)
         children.append((child_id.split("/", 1)[1], result.description))
-        log_lines.append(
-            f"**Creation**: Added [{result.title}](/{child_id}.md) from `{item.uri}`."
-        )
+        log_lines.extend(_log_lines(verb, result.title, child_id, item.uri))
 
     if not children:
         raise SynthError(
             f"all {total} section(s) failed: " + "; ".join(outcome.section_errors)
         )
 
-    okf.write_concept(
-        config.bundle_root,
+    verb = _write(
+        config,
+        ledger,
         _build_parent(config, item, outline, parent_id, source_id, children),
+        outcome,
     )
     okf.write_child_index(config.bundle_root, parent_id, outline.title, children)
     outcome.concept_id = parent_id
-    log_lines.insert(
-        0, f"**Creation**: Added [{outline.title}](/{parent_id}.md) from `{item.uri}`."
-    )
+    log_lines[:0] = _log_lines(verb, outline.title, parent_id, item.uri)
     return (parent_id, outline.description), log_lines
+
+
+def _write(config: Config, ledger: Ledger, concept: Concept, outcome: ItemOutcome) -> str:
+    """Write a concept unless a human owns it (§6.4). Returns the log verb.
+
+    A protected concept's replacement goes to `.ragged/proposed/` for the human
+    to resolve. This is the one place where "the LLM owns layer 2" yields.
+    """
+    concept_id = concept.concept_id
+    why = ledger.protection(config.bundle_root, concept_id)
+    if why is not None:
+        path = config.sidecar_root / "proposed" / f"{concept_id}.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(okf.render(concept), encoding="utf-8", newline="\n")
+        outcome.protected.append(f"{concept_id}: {why}")
+        return ""
+    existed = (config.bundle_root / f"{concept_id}.md").exists()
+    okf.write_concept(config.bundle_root, concept)
+    ledger.note_concept(concept_id, outcome.uri, concept.body)
+    return "Update" if existed else "Creation"
+
+
+def _log_lines(verb: str, title: str, concept_id: str, uri: str) -> list[str]:
+    if not verb:
+        return []  # nothing changed on disk; the human's copy still stands
+    word = "Added" if verb == "Creation" else "Rewrote"
+    return [f"**{verb}**: {word} [{title}](/{concept_id}.md) from `{uri}`."]
+
+
+def _remove_stale(config: Config, ledger: Ledger, stale: set[str]) -> list[str]:
+    """Concepts the previous run produced for this source and this one did not.
+
+    Ids come from model-written titles, so a rebuild renames the tree as a matter
+    of course; without this nothing ever removes what the rename left behind.
+    """
+    removed: list[str] = []
+    for concept_id in sorted(stale):
+        if ledger.protection(config.bundle_root, concept_id) is not None:
+            continue  # a human owns it now; orphaned beats deleted
+        if okf.delete_concept(config.bundle_root, concept_id):
+            removed.append(concept_id)
+            ledger.forget_concept(concept_id)
+    return removed
+
+
+def _deprecate_vanished(
+    config: Config,
+    ledger: Ledger,
+    discovered: set[str],
+    summary: IngestSummary,
+    index_entries: list[tuple[str, str]],
+    log_entries: list[str],
+) -> None:
+    """A source that is gone deprecates its concepts; it does not delete them.
+
+    The spec keeps deprecated concepts for links and history (§6.1) — deletion
+    is an explicit `ragged prune`, never a side effect of removing an input file.
+    """
+    for uri in sorted(set(ledger.sources) - discovered):
+        concepts = ledger.forget_source(uri)
+        for concept_id in concepts:
+            if okf.set_status(config.bundle_root, concept_id, "deprecated"):
+                summary.deprecated.append(concept_id)
+                log_entries.append(
+                    f"**Deprecation**: `{uri}` is gone; "
+                    f"[{concept_id}](/{concept_id}.md) marked deprecated."
+                )
+        entry = _entry(config.bundle_root, concepts[0]) if concepts else None
+        if entry is not None:
+            index_entries.append(entry)
+
+
+def _entry(bundle_root: Path, concept_id: str) -> tuple[str, str] | None:
+    """A root-index entry read back off disk, for a concept this run did not write."""
+    try:
+        text = (bundle_root / f"{concept_id}.md").read_text(encoding="utf-8-sig")
+        return concept_id, okf.parse(text, concept_id).description or ""
+    except (OSError, ValueError):
+        return None
 
 
 def _account(summary: IngestSummary, result) -> None:
@@ -263,19 +402,30 @@ def _note_new_type(config: Config, outcome: ItemOutcome, type_name: str) -> None
         outcome.new_type = type_name
 
 
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
 def _finalize(
     config: Config,
     index_entries: list[tuple[str, str]],
     log_entries: list[str],
+    ledger: Ledger,
+    ledger_path: Path,
 ) -> None:
     title = config.project_root.name.replace("-", " ").replace("_", " ").title()
     okf.write_root_index(config.bundle_root, config.bundle.okf_version, title, index_entries)
-    okf.append_log(
-        config.bundle_root,
-        datetime.now(timezone.utc).date().isoformat(),
-        log_entries,
-    )
+    if log_entries:
+        # a run that changed nothing must not leave an empty date heading behind
+        okf.append_log(
+            config.bundle_root,
+            datetime.now(timezone.utc).date().isoformat(),
+            log_entries,
+        )
     okf.write_manifest(config.project_root, config.bundle.root, title)
+    # last: the ledger is only true once every file it describes has landed
+    ledger.bundle_root = config.bundle.root
+    ledger.save(ledger_path)
 
 
 def _build(
@@ -302,10 +452,7 @@ def _build(
                 last_modified=item.mtime.date().isoformat(),
             )
         ],
-        generated={
-            "by": config.bundle.actor,
-            "at": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
-        },
+        generated={"by": config.bundle.actor, "at": _now()},
         status="draft",
         extra={"x_ragged_source_hash": item.content_sha256},
     )
