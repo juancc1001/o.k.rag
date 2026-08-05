@@ -68,6 +68,14 @@ def test_slugify_keeps_nesting_and_drops_junk():
     assert slugify("Reports/Q3 Summary") == "reports/q3-summary"
 
 
+def test_slugify_folds_accents_instead_of_deleting_them():
+    """Stripping non-ASCII turned `informáticos` into `informticos`."""
+    assert slugify("Delitos informáticos") == "delitos-informaticos"
+    assert slugify("Clasificación y teoría") == "clasificacion-y-teoria"
+    assert slugify("Año, niño, ñandú") == "ano-nino-nandu"
+    assert slugify("Protección/Tipificación") == "proteccion/tipificacion"
+
+
 def test_write_concept_and_root_index(tmp_path):
     bundle = tmp_path / "bundle"
     okf.write_concept(bundle, make_concept())

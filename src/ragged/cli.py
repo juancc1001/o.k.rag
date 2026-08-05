@@ -155,9 +155,17 @@ def _report_path(label: str, path: Path, hint: str) -> None:
 
 def _print_summary(summary: IngestSummary, dry_run: bool) -> None:
     verb = "would write" if dry_run else "wrote"
-    typer.secho(f"\n{verb} {len(summary.written)} concept(s)", fg="green")
+    total = sum(o.concept_count for o in summary.written)
+    noun = f"{total} concept(s) from {len(summary.written)} source(s)"
+    typer.secho(f"\n{verb} {noun}", fg="green")
     for outcome in summary.written:
         typer.echo(f"  {outcome.concept_id:<40} <- {outcome.uri}")
+        for child_id in outcome.child_ids:
+            typer.echo(f"    {child_id}")
+        for dropped in outcome.dropped_sections:
+            typer.secho(f"    dropped section (marker not found): {dropped}", fg="yellow")
+        for failure in outcome.section_errors:
+            typer.secho(f"    FAILED section {failure}", fg="red")
 
     for outcome in summary.failed:
         typer.secho(f"  FAILED {outcome.uri}: {outcome.error}", fg="red")
