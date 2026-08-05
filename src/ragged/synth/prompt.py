@@ -162,8 +162,13 @@ def outline_system_prompt(allowed_types: list[str]) -> str:
     return f"{OUTLINE_SYSTEM}\n{_vocabulary(allowed_types)}"
 
 
-def weave_system_prompt(index: list[tuple[str, str]]) -> str:
-    return f"{WEAVE_SYSTEM}\n{_index(index)}"
+def weave_system_prompt(index: list[tuple[str, str, str]]) -> str:
+    """The weave listing carries titles too: the pass has to pick link labels."""
+    lines = "\n".join(
+        f"- `/{cid}.md` {name!r}" + (f" - {description}" if description else "")
+        for cid, name, description in index
+    ) or "- (the bundle is empty)"
+    return f"{WEAVE_SYSTEM}\n## Concepts in this bundle\n\n{lines}\n"
 
 
 def weave_user_prompt(

@@ -147,6 +147,40 @@ def test_a_ledger_from_a_future_version_is_ignored(tmp_path):
     assert Ledger.load(path).sources == {}
 
 
+def test_a_source_that_lost_a_section_is_retried_not_skipped(segmented, monkeypatch):
+    """A 429 on one section is content missing from the bundle, not a finished file."""
+    from test_pipeline import fake_section_synthesize
+
+    def fail_the_second(**kwargs):
+        section = kwargs.get("section")
+        if section is not None and section.section_title == "Doctrina":
+            raise ProviderHTTPError("gemini", 429, "quota")
+        return fake_section_synthesize(**kwargs)
+
+    monkeypatch.setattr(pipeline, "synthesize", fail_the_second)
+    cfg = config_module.load(segmented)
+    pipeline.ingest(cfg, dry_run=False)
+    assert ledger_of(cfg).sources["sources/tp.md"].complete is False
+
+    monkeypatch.setattr(pipeline, "synthesize", fake_section_synthesize)
+    second = pipeline.ingest(cfg, dry_run=False)
+
+    tp = next(o for o in second.written if o.uri == "sources/tp.md")
+    assert not tp.skipped
+    assert tp.child_ids == ["trabajo-practico/definicion", "trabajo-practico/doctrina"]
+    assert ledger_of(cfg).sources["sources/tp.md"].complete is True
+
+
+def test_a_source_that_fully_succeeded_is_still_skipped(segmented, monkeypatch):
+    cfg = config_module.load(segmented)
+    pipeline.ingest(cfg, dry_run=False)
+    assert ledger_of(cfg).sources["sources/tp.md"].complete is True
+
+    monkeypatch.setattr(pipeline, "plan", no_model)
+    monkeypatch.setattr(pipeline, "synthesize", no_model)
+    assert len(pipeline.ingest(cfg, dry_run=False).skipped) == 2
+
+
 # --- vanished sources ------------------------------------------------------------
 
 

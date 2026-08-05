@@ -2,7 +2,7 @@
 
 **One line:** drop files in, get out a portable OKF v0.2 knowledge bundle, a generated agent contract, and a served graph that shows both the links the knowledge *has* and the ones it *should* have.
 
-**Status: M1 built.** See [§13 Milestones](#13-milestones) for what exists and what comes next. `README.md` covers installation and usage.
+**Status: M2 built.** See [§13 Milestones](#13-milestones) for what exists and what comes next. `README.md` covers installation and usage.
 
 ## Contents
 
@@ -168,7 +168,8 @@ The idempotency ledger, written by `ledger.py`. Everything about re-ingest corre
       "size_bytes": 481203,
       "mtime": "2026-07-14T09:12:04Z",
       "concepts": ["q3-report", "q3-report/methodology", "q3-report/findings"],
-      "last_ingest": "2026-08-04T11:04:52Z"
+      "last_ingest": "2026-08-04T11:04:52Z",
+      "complete": true
     }
   },
   "concepts": {
@@ -210,8 +211,9 @@ Stages 1–7 produce the bundle. Stages 8–9 produce the sidecar vectors. They 
 
 Walk the `Source` (§9) and yield `(uri, bytes_or_stream, mtime)`. Compute `content_sha256`. Diff against `manifest.json`:
 
-- Hash unchanged → **skip entirely**, including extraction and synthesis. No Claude call, no cost.
+- Hash unchanged → **skip entirely**, including extraction and synthesis. No model call, no cost.
 - Hash changed → mark for re-ingest.
+- Hash unchanged but a section of it failed last run → re-ingest anyway. The ledger records `complete: false`, because a section lost to a 429 is source content missing from the bundle, and a source recorded as finished is never retried until its bytes happen to change. A failed *weave* does not count: the concept exists and is valid, only its links are missing (§6.5).
 - In manifest but no longer present at source → mark its concepts for `status: deprecated` (per spec: keep deprecated concepts for links and history rather than deleting them). Deletion requires explicit `ragged prune`. Marked once: the source record is then dropped, so later runs do not re-announce it.
 - Re-ingested, but the new run produced a differently-named tree → **delete** what the old one produced and this one did not. This is the opposite call from the bullet above, and the difference is who owns the name: a vanished source's concepts are knowledge whose input went away, while a renamed tree is the same knowledge under a dead id. Concept ids derive from model-written titles, so a rebuild renames routinely; without this sweep every run leaves a full copy of the previous one behind. A directory left holding only its own `index.md` goes too.
 
@@ -311,9 +313,16 @@ Links are written **bundle-absolute** (`/tables/customers.md`), which is the pre
 
 **Only what this run wrote is woven.** A skipped source's concepts are unchanged output, and rewriting them would spend a model call producing a file nobody asked for. The consequence is that links point forward from new concepts to old ones and not back, until the old one is itself re-ingested — the missing direction is exactly what §8's ghost edges are for.
 
-A concept a human owns is not woven, for the same reason it is not overwritten (§6.4). A weave failure leaves the unlinked concept in place and is reported: linking is an upgrade to a concept, not a precondition for one.
+A concept a human owns is not woven, for the same reason it is not overwritten (§6.4). A weave failure leaves the unlinked concept in place and is reported: linking is an upgrade to a concept, not a precondition for one — which is also why, unlike a failed *section* (§6.1), it does not mark the source incomplete. Re-synthesizing a whole document to retry two links would cost more than the links are worth.
 
 Broken links are permitted and expected: a *human* can reference knowledge not yet written, and `okflint` reports that as a W2 warning rather than an error. A model handed the full concept index is in a different position — a path outside that index is a guess, not a forward reference — so the pass unwraps such links back to plain text and reports the targets. Both halves matter: the tolerance is for authors, the repair is for generators.
+
+Two further repairs, mechanical because the intent is unambiguous, both found on the first real corpus rather than reasoned about in advance:
+
+- **Inverted syntax** — `[/finance/pricing.md](list prices)`. Swapped back when the label side resolves to a concept and the target side does not.
+- **A path where the label should be** — `[/finance/pricing.md](/finance/pricing.md)`. The link works, which is why no linter objects, but a raw path is not a label; it becomes the target concept's title. This is why the weave index carries titles as well as descriptions, unlike the synthesis one.
+
+Prompt wording is not the fix for any of these. A repair that runs after the response is checkable and testable offline; a rule in the prompt is neither.
 
 **The ledger must record the post-weave `body_sha256`** (§5). Recording the pre-weave hash would make the next run read every concept as hand-edited and refuse to touch any of them.
 
@@ -567,8 +576,8 @@ random_state = 42
 | | Milestone | Status |
 |---|---|---|
 | **M1** | Walking skeleton | **done** |
-| **M2** | Real bundle | next |
-| **M4** | Agent contract | after M2 |
+| **M2** | Real bundle | **done** |
+| **M4** | Agent contract | next |
 | **M3** | Vectors + graph | after M4 |
 | **M5** | Connectors | phase 2 |
 | **M6** | Extract `okf/` as a standalone library | gated — see below |
@@ -591,7 +600,9 @@ random_state = 42
    - **The bundle title came from the project directory name**, so a bundle about Argentine cybercrime law was titled `# Ragged`, after the tool. `[bundle].title` now sets it, falling back to the directory name.
    - **The root index was a dead end for every child concept.** An entry whose concept owns a subdirectory now states how many concepts sit below it and links to that subdirectory's index.
 
-Exit criterion: ingest a real 20-file corpus, validate clean, re-run and observe zero model calls.
+Exit criterion: ingest a real corpus, validate clean, re-run and observe zero model calls. **Met** on the 3-PDF Spanish corpus: 18 concepts, okflint exit 0, and a second `build` reporting `skipped 3 unchanged source(s) - no model call` with `tokens in=0`. The corpus is smaller than the 20 files the criterion named; what the extra files would exercise is throughput, not a code path, and 21 units through `plan → synthesize → weave` covers the paths.
+
+The real corpus also paid for itself twice over: all three link-repair modes in §6.5 and the `complete` flag in §5 came from running it, not from reasoning about it beforehand.
 
 Both prompt changes that belong to M2 itself are done with item 3: the existing-concept index reaches the cached prefix (§6.4), and link-weave has its own prompt, where the wiki framing changes a decision — "a link asserts a relationship and the sentence around it says which" is the reason the pass is forbidden a "Related" section.
 

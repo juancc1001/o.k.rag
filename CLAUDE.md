@@ -25,7 +25,7 @@ Tests — okflint must be on `PATH` or the okflint-dependent tests skip:
 
 ```powershell
 $env:PATH = "$PWD\.venv\Scripts;$env:PATH"
-.\.venv\Scripts\python.exe -m pytest tests -q              # 99 tests
+.\.venv\Scripts\python.exe -m pytest tests -q              # 161 tests
 .\.venv\Scripts\python.exe -m pytest tests/test_segment.py -q
 .\.venv\Scripts\python.exe -m pytest tests -q -k "footnote"
 ```
@@ -43,11 +43,11 @@ Three layers plus a sidecar (`DESIGN.md` §2):
 | 3 agent contract | `agent/` | ragged | M4, not built |
 | sidecar | `.ragged/` | ragged | derived, disposable |
 
-**The sidecar rule is the load-bearing constraint: nothing derived ever goes inside `bundle/`.** Extraction cache, content hashes, and later embeddings/index/projection all live in `.ragged/`. A bundle must stay something you can `tar` up and `cat` with no knowledge of ragged — no `embedding:` frontmatter key, no `.faiss` file.
+**The sidecar rule is the load-bearing constraint: nothing derived ever goes inside `bundle/`.** The ledger (`manifest.json`), the extraction cache, proposed replacements for concepts a human owns, and later embeddings/index/projection all live in `.ragged/`. A bundle must stay something you can `tar` up and `cat` with no knowledge of ragged — no `embedding:` frontmatter key, no `.faiss` file.
 
-Pipeline (`pipeline.py::ingest`): `discover → extract → plan → synthesize → emit → validate`.
+Pipeline (`pipeline.py::ingest`): `discover → extract → plan → synthesize → link-weave → emit → validate`.
 
-**Only synthesis calls a model.** `check`, `extract`, and `build --dry-run` are entirely offline, and `build` fails its credential pre-flight *before* extracting the corpus rather than after.
+**Only synthesis and link-weave call a model.** `check`, `extract`, and `build --dry-run` are entirely offline, and `build` fails its credential pre-flight *before* extracting the corpus rather than after.
 
 Module responsibilities:
 
@@ -55,6 +55,7 @@ Module responsibilities:
 - `synth/` — provider dispatch. Everything shared (prompt assembly, JSON parse, required-field checks, footnote repair) lives in `synth/__init__.py` and `synth/base.py` so the provider paths cannot drift. Provider modules stay thin: auth, request shape, decline detection.
 - `sources/base.py` — the `Source` protocol with its `document` vs `asset` family split; phase-2 connectors plug in here.
 - `pipeline.py` — orchestration only; assembles `Concept` objects from synthesis results.
+- `ledger.py` — the idempotency ledger, `.ragged/manifest.json`. Sidecar state, so every read path degrades to "no record" rather than raising. **Not `okf/manifest.py`**, which generates `okf-base.yaml` for okflint.
 
 Adding a provider means one module under `synth/providers/` exposing `NAME`, `DEFAULT_MODEL`, `ENV_VARS`, `credential_present()`, `list_models()`, `call()`, registered in `providers/__init__.py::PROVIDERS`. Both current providers enforce the concept schema natively (Anthropic `output_config.format`, Gemini `response_json_schema`) — output shape is guaranteed, never parsed out of prose.
 
@@ -64,25 +65,25 @@ Adding a provider means one module under `synth/providers/` exposing `NAME`, `DE
 
 **`verified` is never written.** It records a confirmation event that actually happened; writing it because content looks correct forges the human-reviewed trust tier. Concepts are emitted `status: draft` and a human promotes them by editing the file.
 
-**System prompts must stay byte-identical across a run** (`synth/prompt.py`), or Anthropic prompt caching stops working. Section framing goes in the user message, never the system prefix.
+**System prompts must stay byte-identical across a run** (`synth/prompt.py`), or Anthropic prompt caching stops working. Section framing goes in the user message, never the system prefix. The concept index in the prefix is snapshotted *before* discovery for the same reason — letting it grow as concepts land would be more informative and would stop it caching after the first unit.
 
-**Per-unit failures never abort a run.** A refusal, a token-cap stop, or any non-2xx becomes an error recorded against that file or section; the sections that did synthesize are kept. `_finalize` (index, log, manifest) runs in a `finally` so a Ctrl-C cannot strand model calls already paid for. Preserve this when adding stages.
+**Per-unit failures never abort a run.** A refusal, a token-cap stop, or any non-2xx becomes an error recorded against that file or section; the sections that did synthesize are kept. `_finalize` (indexes, log, okflint manifest, ledger) runs in a `finally` so a Ctrl-C cannot strand model calls already paid for. Preserve this when adding stages. One asymmetry to keep: a failed **section** marks the source `complete: false` in the ledger so the next run retries it, because that is source content missing from the bundle; a failed **weave** does not, because the concept is valid and only its links are missing.
 
 **One model call per unit, each with its own `max_tokens`.** A single call returning an array makes every concept share one budget — that is what capped M1 at ~2.5k per concept regardless of source length.
 
 **New `type` values are reported, never silently accepted.** They surface in the build summary for the owner to add to `ragged.toml`.
 
-**Broken cross-links are warnings (`W2`), not errors.** The spec permits pointing at knowledge not yet written.
+**Broken cross-links are warnings (`W2`), not errors.** The spec permits pointing at knowledge not yet written — *by a human*. The link-weave pass is handed the full concept index, so a path outside it is a guess, and `synth/weave.py::prune_links` unwraps it and reports the target. Two other model link errors are repaired there too (inverted syntax, a raw path used as the label). Repairs go in `prune_links`, not in the prompt: a repair is checkable offline, a prompt rule is not.
 
-**`okf-base.yaml` is deliberately minimal** — no `profile` block (it would reject newly proposed types) and no `okf_version` key (okflint 0.3.1 recognises only `0.1`). `okf/manifest.py` documents why each key is present or omitted. Note this is the *okflint* manifest; the planned idempotency ledger (`.ragged/manifest.json`, `DESIGN.md` §5) is a different artifact needing its own module name.
+**`okf-base.yaml` is deliberately minimal** — no `profile` block (it would reject newly proposed types) and no `okf_version` key (okflint 0.3.1 recognises only `0.1`). `okf/manifest.py` documents why each key is present or omitted. Note this is the *okflint* manifest; the idempotency ledger (`.ragged/manifest.json`, `DESIGN.md` §5) is a different artifact and lives in `ledger.py`.
 
 **`bundle/`, `sources/`, `.ragged/`, `okf-base.yaml` and `.env` are all gitignored.** Concept ids derive from model-written titles, so every rebuild renames the whole tree and the diff is unreadable; a bundle worth showing goes under `examples/`, refreshed deliberately.
 
 ## Current state
 
-M1 done. M2 is item 2 of 4 (segmentation) — see `DESIGN.md` §13 for the remaining items in dependency order and their exit criteria. In short: incremental re-ingest (`manifest.json`) blocks the rest, then link-weave, then the general per-directory index pass.
+M1 and M2 done — all four M2 items (segmentation, incremental re-ingest, link-weave, per-directory indexes), verified on the real corpus: conformant bundle, okflint exit 0, and a second `build` making zero model calls. **M4 (agent contract) is next**; see `DESIGN.md` §13.
 
-**Prompt calibration is deliberately deferred until after M2** (§13). Few-shot examples are the strongest signal in a prompt, and writing them now would bake in guesses about a unit shape segmentation just changed. The method afterwards is to use a concept a human promoted from `draft` to `stable` as the example. Don't "improve" prompt wording opportunistically.
+**Prompt calibration was deferred until after M2** (§13) and is now unblocked. Few-shot examples are the strongest signal in a prompt, and writing them before segmentation settled would have baked in guesses about the unit shape. The method is to take a concept a human promoted from `draft` to `stable` and use *that* as the example — so it needs a human to promote one first. Until then, don't "improve" prompt wording opportunistically; a model failure that can be repaired deterministically (see `prune_links`) should be, because a repair is testable and a prompt rule is not.
 
 ## Tests
 
