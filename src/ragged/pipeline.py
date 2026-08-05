@@ -175,6 +175,10 @@ def ingest(config: Config, dry_run: bool = False) -> IngestSummary:
                 mtime=item.mtime.isoformat(timespec="seconds").replace("+00:00", "Z"),
                 concepts=produced,
                 at=_now(),
+                # a section lost to a 429 is source content missing from the
+                # bundle, so the next run redoes this file rather than skipping
+                # it and losing that section until the bytes happen to change
+                complete=not outcome.section_errors,
             )
             outcome.removed = _remove_stale(config, ledger, previous - set(produced))
             log_entries.extend(
@@ -365,7 +369,11 @@ def _weave_run(config: Config, ledger: Ledger, summary: IngestSummary) -> None:
     consequence is that links point forward from new concepts to old ones and not
     the other way round until the old one is itself re-ingested.
     """
-    index = _index(config.bundle_root)
+    # titles as well as descriptions: the pass has to choose link labels, and
+    # prune_links needs a title when the model puts a raw path in the label
+    index = [
+        (ref.concept_id, ref.title, ref.description) for ref in okf.inventory(config.bundle_root)
+    ]
     if len(index) < 2:
         return  # nothing to link to
 

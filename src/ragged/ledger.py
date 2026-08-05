@@ -37,6 +37,9 @@ class SourceRecord:
     concepts: list[str] = field(default_factory=list)
     """Parent first, then children, in emission order."""
     last_ingest: str = ""
+    complete: bool = True
+    """False when a unit of this source failed. The concepts that did land are
+    still tracked, but the source is re-ingested rather than skipped."""
 
 
 @dataclass
@@ -98,6 +101,8 @@ class Ledger:
         record = self.sources.get(uri)
         if record is None or record.content_sha256 != content_sha256 or not record.concepts:
             return None
+        if not record.complete:
+            return None  # a section this source owns is still missing
         if any(not (bundle_root / f"{cid}.md").exists() for cid in record.concepts):
             return None
         return record
@@ -134,6 +139,7 @@ class Ledger:
         mtime: str,
         concepts: list[str],
         at: str,
+        complete: bool = True,
     ) -> None:
         self.sources[uri] = SourceRecord(
             content_sha256=content_sha256,
@@ -141,6 +147,7 @@ class Ledger:
             mtime=mtime,
             concepts=list(concepts),
             last_ingest=at,
+            complete=complete,
         )
 
     def forget_concept(self, concept_id: str) -> None:

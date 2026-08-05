@@ -24,7 +24,7 @@ from test_pipeline import (  # noqa: F401  (project/segmented are used as fixtur
     segmented,
 )
 
-KNOWN = {"finance/revenue-policy", "pricing"}
+KNOWN = {"finance/revenue-policy": "Revenue Recognition Policy", "pricing": "Pricing"}
 
 
 # --- the deterministic repair ----------------------------------------------------
@@ -62,6 +62,39 @@ def test_footnotes_survive_the_repair():
     assert prune_links(body, KNOWN, "pricing") == (body, [])
 
 
+def test_an_inverted_link_is_swapped_back():
+    """Observed on the real corpus: the label and the path change places."""
+    woven, invented = prune_links(
+        "establecida por la [/finance/revenue-policy.md](Ley 26.388), que...",
+        KNOWN,
+        "pricing",
+    )
+    assert woven == "establecida por la [Ley 26.388](/finance/revenue-policy.md), que..."
+    assert invented == []
+
+
+def test_an_inverted_link_to_nothing_is_still_reported():
+    woven, invented = prune_links("the [/finance/tax.md](tax rules).", KNOWN, "pricing")
+    assert woven == "the tax rules."
+    assert invented == ["/finance/tax.md"]
+
+
+def test_prose_in_parentheses_after_a_bracket_is_not_a_link():
+    body = "The rule [see below](not a path at all) applies."
+    assert prune_links(body, KNOWN, "pricing") == (body, [])
+
+
+def test_a_raw_path_used_as_the_label_becomes_the_target_title():
+    """The link works, so no linter objects — but a path is not a label."""
+    woven, invented = prune_links(
+        "detallado en [/finance/revenue-policy.md](/finance/revenue-policy.md).",
+        KNOWN,
+        "pricing",
+    )
+    assert woven == "detallado en [Revenue Recognition Policy](/finance/revenue-policy.md)."
+    assert invented == []
+
+
 # --- the prompts -----------------------------------------------------------------
 
 
@@ -76,7 +109,7 @@ def test_an_empty_bundle_says_so_rather_than_omitting_the_section():
 
 
 def test_the_weave_prefix_holds_the_index_and_the_user_message_holds_the_concept():
-    index = [("pricing", "How list prices are set."), ("tp/uno", "Uno.")]
+    index = [("pricing", "Pricing", "How list prices are set."), ("tp/uno", "Uno", "Uno.")]
     prefix = weave_system_prompt(index)
     user = weave_user_prompt("tp/uno", "Uno", "the body text", parent="tp", candidates=["pricing"])
 
@@ -101,7 +134,7 @@ def weave_via(monkeypatch, text: str, seen: dict | None = None):
         concept_id="pricing",
         title="Pricing",
         body="Original body.",
-        index=[("pricing", "p"), ("finance/revenue-policy", "r")],
+        index=[("pricing", "Pricing", "p"), ("finance/revenue-policy", "Revenue", "r")],
         provider="gemini",
     )
 
@@ -138,7 +171,7 @@ def test_weave_rejects_an_empty_body(monkeypatch):
 def link_to_the_other(**kwargs) -> WeaveResult:
     """Weave a link to whichever concept in the index is not this one."""
     concept_id = kwargs["concept_id"]
-    target = next(cid for cid, _ in kwargs["index"] if cid != concept_id)
+    target = next(cid for cid, *_ in kwargs["index"] if cid != concept_id)
     return WeaveResult(
         body_markdown=f"{kwargs['body']}\n\nSee [the other one](/{target}.md).",
         invented=[],
@@ -209,7 +242,9 @@ def test_an_invented_link_is_unwrapped_and_reported(two_sources, monkeypatch):
     def weave_then_prune(**kwargs):
         result = link_to_nothing(**kwargs)
         body, invented = prune_links(
-            result.body_markdown, {cid for cid, _ in kwargs["index"]}, kwargs["concept_id"]
+            result.body_markdown,
+            {cid: name for cid, name, _ in kwargs["index"]},
+            kwargs["concept_id"],
         )
         return WeaveResult(body_markdown=body, invented=invented)
 
