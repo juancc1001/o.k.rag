@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 # The concept schema. Both providers enforce it natively: Anthropic via
 # output_config.format json_schema, Gemini via response_json_schema.
@@ -13,8 +13,22 @@ CONCEPT_SCHEMA = {
         "description": {"type": "string"},
         "tags": {"type": "array", "items": {"type": "string"}},
         "body_markdown": {"type": "string"},
+        "candidate_links": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "concept_ids this concept likely relates to",
+        },
     },
     "required": ["type", "title", "description", "body_markdown"],
+    "additionalProperties": False,
+}
+
+# Link-weave returns the body and nothing else: everything else about the
+# concept was settled by synthesis and must survive this pass untouched.
+WEAVE_SCHEMA = {
+    "type": "object",
+    "properties": {"body_markdown": {"type": "string"}},
+    "required": ["body_markdown"],
     "additionalProperties": False,
 }
 
@@ -124,6 +138,18 @@ class SynthResult:
     input_tokens: int
     output_tokens: int
     cache_read_tokens: int
+    candidate_links: list[str] = field(default_factory=list)
+    """Ids synthesis thought this relates to. A hint for link-weave (§6.5)."""
+
+
+@dataclass
+class WeaveResult:
+    body_markdown: str
+    invented: list[str]
+    """Link targets that are not concepts. Unwrapped back to plain text."""
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_read_tokens: int = 0
 
 
 def ensure_footnote_defs(body: str, source_id: str, source_title: str) -> str:

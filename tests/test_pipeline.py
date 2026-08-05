@@ -12,6 +12,7 @@ from ragged.synth import (
     ProviderHTTPError,
     Section,
     SynthResult,
+    WeaveResult,
     ensure_footnote_defs,
 )
 
@@ -23,10 +24,20 @@ Annual prepayments are deferred and released monthly.
 """
 
 
+def fake_weave(**kwargs) -> WeaveResult:
+    """A weave pass that finds nothing worth linking — the default everywhere.
+
+    Stubbed in the fixture rather than per test, because an unstubbed weave
+    would reach the network and the suite runs offline.
+    """
+    return WeaveResult(body_markdown=kwargs["body"], invented=[])
+
+
 @pytest.fixture
 def project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     # the default provider is anthropic; satisfy its pre-flight credential check
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key-not-used")
+    monkeypatch.setattr(pipeline, "weave", fake_weave)
     (tmp_path / "sources").mkdir()
     (tmp_path / "sources" / "revenue-policy.md").write_text(SAMPLE, encoding="utf-8")
     (tmp_path / "ragged.toml").write_text(

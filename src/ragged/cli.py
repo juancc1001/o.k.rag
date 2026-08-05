@@ -171,9 +171,15 @@ def _print_summary(summary: IngestSummary, dry_run: bool) -> None:
             typer.secho(f"    FAILED section {failure}", fg="red")
         for concept_id in outcome.removed:
             typer.secho(f"    removed stale {concept_id}", fg="bright_black")
+        for failure in outcome.weave_errors:
+            typer.secho(f"    FAILED to weave links into {failure}", fg="yellow")
 
     for outcome in summary.failed:
         typer.secho(f"  FAILED {outcome.uri}: {outcome.error}", fg="red")
+
+    linked = sum(len(o.linked) for o in summary.outcomes)
+    if linked:
+        typer.secho(f"\nwove cross-links into {linked} concept(s)", fg="green")
 
     if summary.skipped:
         typer.secho(
@@ -181,16 +187,24 @@ def _print_summary(summary: IngestSummary, dry_run: bool) -> None:
             fg="bright_black",
         )
 
-    protected = [p for o in summary.outcomes for p in o.protected]
+    protected = {cid: why for o in summary.outcomes for cid, why in o.protected.items()}
     if protected:
         typer.secho("\nnot overwritten - a human owns these:", fg="yellow")
-        for entry in protected:
-            typer.echo(f"  {entry}")
+        for concept_id, why in protected.items():
+            typer.echo(f"  {concept_id}: {why}")
         typer.secho("  the proposed replacements are in .ragged/proposed/", fg="bright_black")
 
     if summary.deprecated:
         typer.secho(
             f"\nsource gone - marked deprecated: {', '.join(summary.deprecated)}", fg="yellow"
+        )
+
+    if summary.invented_links:
+        unique = sorted(set(summary.invented_links))
+        typer.secho(
+            f"\nlink target(s) that are not concepts, unwrapped to plain text: "
+            f"{', '.join(unique)}",
+            fg="yellow",
         )
 
     new_types = sorted({o.new_type for o in summary.outcomes if o.new_type})
