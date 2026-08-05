@@ -551,12 +551,12 @@ random_state = 42
 
 **M1 — walking skeleton. Done.** `LocalFileSource` + markitdown + single-unit synthesis + emit + okflint + a generated `okf-base.yaml`. Pluggable providers (Anthropic, Gemini). One file in, one conformant concept out. 53 tests. No links, no segmentation, no vectors.
 
-**M2 — real bundle. Next.** In dependency order:
+**M2 — real bundle. In progress: item 2 of 4 done.** In dependency order:
 
-1. **`manifest.json` + idempotent re-ingest.** Highest value: today every `build` re-synthesizes everything and re-pays every model call. Content-hash skip, `status: deprecated` for vanished sources, `human_edited` protection (§6.4).
-2. **Segmentation** (§4.3). Today one concept per file regardless of length, so a long PDF becomes one oversized concept.
-3. **Link-weave** (§6.5) — without it the bundle is a flat set, not a graph.
-4. **Per-directory `index.md`** — progressive disclosure, and it clears the `W4` warnings.
+1. **`manifest.json` + idempotent re-ingest.** *Pending — now the blocking item.* Highest value: today every `build` re-synthesizes everything and re-pays every model call, and segmentation raised that from 1 call per source to N+1. Content-hash skip, `status: deprecated` for vanished sources, `human_edited` protection (§6.4). It also owns **stale-output cleanup**: parent ids derive from model-written titles, so a rebuild can emit a differently-named tree and orphan the previous one, since nothing removes concepts a rerun no longer produces.
+2. **Segmentation** (§4.3). **Done.** Two passes: a planning call returns the parent's identity plus one verbatim `start_marker` per section, code cuts the text at those markers, then one synthesis call per section. Two passes rather than one call returning an array, because an array makes every concept share one `max_tokens` — which is what produced M1's flat ~2.5k-per-concept ceiling regardless of source length. Measured on 86k characters of PDF: retention 9% → 48%. A section that fails is recorded and skipped, so one 503 costs one section rather than the document.
+3. **Link-weave** (§6.5) — *pending.* Parents link down and the subdirectory index links across, but there are no cross-document links, and §4.3's "every child links back to its parent in prose" is not implemented: fabricating that sentence in the writer would be inventing content, so it belongs to this pass.
+4. **Per-directory `index.md`** — *partially done.* Segmentation writes one per parent subdirectory, which is what keeps `W4` clear now that the bundle has subdirectories. A general per-directory pass is still pending.
 
 Exit criterion: ingest a real 20-file corpus, validate clean, re-run and observe zero model calls.
 

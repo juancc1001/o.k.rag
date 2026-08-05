@@ -11,30 +11,44 @@ import json
 
 from .base import (
     CONCEPT_SCHEMA,
+    MAX_CONCEPT_WORDS,
+    MIN_SECTION_WORDS,
+    OUTLINE_SCHEMA,
     MissingCredential,
     ProviderHTTPError,
     ProviderResponse,
     Refused,
+    SectionContext,
     SynthError,
     SynthResult,
     body_defines,
     ensure_footnote_defs,
 )
-from .prompt import system_prompt, user_prompt
+from .prompt import section_user_prompt, system_prompt, user_prompt
 from .providers import PROVIDERS, resolve
+from .segment import Outline, Section, cut, needs_segmenting, plan
 
 __all__ = [
     "CONCEPT_SCHEMA",
+    "MAX_CONCEPT_WORDS",
+    "MIN_SECTION_WORDS",
+    "OUTLINE_SCHEMA",
     "MissingCredential",
+    "Outline",
     "ProviderHTTPError",
     "ProviderResponse",
     "Refused",
+    "Section",
+    "SectionContext",
     "SynthError",
     "SynthResult",
     "PROVIDERS",
     "resolve",
     "body_defines",
+    "cut",
     "ensure_footnote_defs",
+    "needs_segmenting",
+    "plan",
     "synthesize",
 ]
 
@@ -50,11 +64,27 @@ def synthesize(
     model: str | None = None,
     effort: str = "high",
     max_tokens: int = 16000,
+    section: SectionContext | None = None,
 ) -> SynthResult:
     impl = resolve(provider)
+    if section is None:
+        user = user_prompt(source_id, source_uri, source_title, text)
+    else:
+        user = section_user_prompt(
+            source_id,
+            source_uri,
+            source_title,
+            text,
+            document_title=section.document_title,
+            document_overview=section.document_overview,
+            section_title=section.section_title,
+            position=section.position,
+        )
     response = impl.call(
+        # byte-identical across whole-document and per-section calls, so the
+        # cached prefix survives segmentation
         system=system_prompt(allowed_types),
-        user=user_prompt(source_id, source_uri, source_title, text),
+        user=user,
         schema=CONCEPT_SCHEMA,
         model=model or impl.DEFAULT_MODEL,
         effort=effort,

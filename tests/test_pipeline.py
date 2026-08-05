@@ -6,7 +6,14 @@ import pytest
 
 from ragged import config as config_module
 from ragged import okf, pipeline
-from ragged.synth import ProviderHTTPError, SynthResult, ensure_footnote_defs
+from ragged.synth import (
+    MAX_CONCEPT_WORDS,
+    Outline,
+    ProviderHTTPError,
+    Section,
+    SynthResult,
+    ensure_footnote_defs,
+)
 
 SAMPLE = """\
 # Revenue Recognition
@@ -160,6 +167,150 @@ def test_colliding_titles_get_distinct_concept_ids(project, monkeypatch):
 
     ids = sorted(o.concept_id for o in summary.written)
     assert ids == ["revenue-policy", "revenue-policy-2"]
+
+
+# --- segmentation ---------------------------------------------------------------
+
+LONG = "palabra " * (MAX_CONCEPT_WORDS + 100)
+
+
+def fake_plan(**kwargs) -> Outline:
+    return Outline(
+        type="Document",
+        title="Trabajo Practico",
+        description="Un TP que cubre dos temas distintos.",
+        overview="Cubre la definicion doctrinaria y el marco normativo.",
+        tags=["derecho"],
+        sections=[
+            Section("Definicion", "texto de la definicion"),
+            Section("Doctrina", "texto de la doctrina"),
+        ],
+        input_tokens=10,
+        output_tokens=5,
+    )
+
+
+def fake_section_synthesize(**kwargs) -> SynthResult:
+    """Whole-document calls keep the M1 fake; section calls answer per section."""
+    section = kwargs.get("section")
+    if section is None:
+        return fake_synthesize(**kwargs)
+    source_id = kwargs["source_id"]
+    return SynthResult(
+        type="Document",
+        title=section.section_title,
+        description=f"Lo que dice la seccion {section.section_title}.",
+        body_markdown=f"Contenido sustantivo.[^{source_id}]\n\n[^{source_id}]: tp",
+        tags=[],
+        input_tokens=50,
+        output_tokens=25,
+        cache_read_tokens=0,
+    )
+
+
+@pytest.fixture
+def segmented(project: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    (project / "sources" / "tp.md").write_text(LONG, encoding="utf-8")
+    monkeypatch.setattr(pipeline, "plan", fake_plan)
+    monkeypatch.setattr(pipeline, "synthesize", fake_section_synthesize)
+    return project
+
+
+def test_a_long_source_becomes_a_parent_plus_one_concept_per_section(segmented):
+    cfg = config_module.load(segmented)
+    summary = pipeline.ingest(cfg, dry_run=False)
+
+    tp = next(o for o in summary.written if o.uri == "sources/tp.md")
+    assert tp.concept_id == "trabajo-practico"
+    assert tp.child_ids == ["trabajo-practico/definicion", "trabajo-practico/doctrina"]
+    assert tp.concept_count == 3
+    assert (cfg.bundle_root / "trabajo-practico.md").exists()
+    assert (cfg.bundle_root / "trabajo-practico" / "definicion.md").exists()
+    assert (cfg.bundle_root / "trabajo-practico" / "doctrina.md").exists()
+
+
+def test_a_short_source_in_the_same_run_is_still_one_concept(segmented):
+    summary = pipeline.ingest(config_module.load(segmented), dry_run=False)
+    short = next(o for o in summary.written if o.uri == "sources/revenue-policy.md")
+    assert short.concept_id == "revenue-policy"
+    assert short.child_ids == []
+
+
+def test_a_segmented_bundle_is_conformant(segmented):
+    cfg = config_module.load(segmented)
+    summary = pipeline.ingest(cfg, dry_run=False)
+    assert summary.report is not None and summary.report.ok, (
+        [str(f) for f in summary.report.errors] if summary.report else None
+    )
+    # W4 would fire for a subdirectory with no index.md
+    assert not [w for w in summary.report.warnings if w.code == "W4"]
+
+
+def test_the_child_index_carries_no_frontmatter(segmented):
+    cfg = config_module.load(segmented)
+    pipeline.ingest(cfg, dry_run=False)
+    index = (cfg.bundle_root / "trabajo-practico" / "index.md").read_text(encoding="utf-8-sig")
+    assert not index.startswith("---")  # E3: only the bundle root may have frontmatter
+    assert "definicion.md" in index and "doctrina.md" in index
+
+
+def test_the_root_index_lists_the_parent_not_every_child(segmented):
+    cfg = config_module.load(segmented)
+    pipeline.ingest(cfg, dry_run=False)
+    root = (cfg.bundle_root / "index.md").read_text(encoding="utf-8-sig")
+    assert "trabajo-practico.md" in root
+    assert "definicion.md" not in root  # progressive disclosure
+
+
+def test_the_parent_links_down_to_each_child(segmented):
+    cfg = config_module.load(segmented)
+    pipeline.ingest(cfg, dry_run=False)
+    parent = (cfg.bundle_root / "trabajo-practico.md").read_text(encoding="utf-8-sig")
+    assert "/trabajo-practico/definicion.md" in parent
+    assert "/trabajo-practico/doctrina.md" in parent
+
+
+def test_one_failed_section_does_not_lose_the_others(segmented, monkeypatch):
+    def fail_the_second(**kwargs):
+        section = kwargs.get("section")
+        if section is not None and section.section_title == "Doctrina":
+            raise ProviderHTTPError("gemini", 429, "quota")
+        return fake_section_synthesize(**kwargs)
+
+    monkeypatch.setattr(pipeline, "synthesize", fail_the_second)
+    cfg = config_module.load(segmented)
+    summary = pipeline.ingest(cfg, dry_run=False)
+
+    tp = next(o for o in summary.written if o.uri == "sources/tp.md")
+    assert tp.child_ids == ["trabajo-practico/definicion"]
+    assert len(tp.section_errors) == 1 and "Doctrina" in tp.section_errors[0]
+    assert summary.report is not None and summary.report.ok
+
+
+def test_every_section_failing_fails_the_document(segmented, monkeypatch):
+    def fail_all(**kwargs):
+        if kwargs.get("section") is not None:
+            raise ProviderHTTPError("gemini", 429, "quota")
+        return fake_section_synthesize(**kwargs)
+
+    monkeypatch.setattr(pipeline, "synthesize", fail_all)
+    summary = pipeline.ingest(config_module.load(segmented), dry_run=False)
+
+    tp = next(o for o in summary.outcomes if o.uri == "sources/tp.md")
+    assert tp.concept_id is None
+    assert "all 2 section(s) failed" in tp.error
+
+
+def test_an_unmatched_marker_is_surfaced_in_the_summary(segmented, monkeypatch):
+    def plan_with_a_dropped_section(**kwargs):
+        outline = fake_plan(**kwargs)
+        outline.unmatched = ["Bibliografia"]
+        return outline
+
+    monkeypatch.setattr(pipeline, "plan", plan_with_a_dropped_section)
+    summary = pipeline.ingest(config_module.load(segmented), dry_run=False)
+    tp = next(o for o in summary.written if o.uri == "sources/tp.md")
+    assert tp.dropped_sections == ["Bibliografia"]
 
 
 def test_missing_footnote_definition_is_appended():

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from typing import Any
 
 import yaml
@@ -130,6 +131,10 @@ def split(text: str) -> tuple[str | None, str]:
 def slugify(value: str) -> str:
     """Filesystem-safe concept id segment. Preserves `/` so nesting survives."""
     value = value.strip().lower().replace("\\", "/")
+    # fold accents to their base letter before stripping, or `informáticos`
+    # becomes `informticos` instead of `informaticos`
+    value = unicodedata.normalize("NFKD", value)
+    value = "".join(ch for ch in value if not unicodedata.combining(ch))
     value = re.sub(r"[^a-z0-9/\-_. ]+", "", value)
     value = re.sub(r"[\s_]+", "-", value)
     value = re.sub(r"-{2,}", "-", value)

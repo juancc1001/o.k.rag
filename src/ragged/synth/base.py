@@ -18,6 +18,37 @@ CONCEPT_SCHEMA = {
     "additionalProperties": False,
 }
 
+# The outline schema for the planning pass. Sections carry a verbatim search key
+# rather than offsets, which models do not produce reliably.
+OUTLINE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "type": {"type": "string"},
+        "title": {"type": "string"},
+        "description": {"type": "string"},
+        "overview": {"type": "string"},
+        "tags": {"type": "array", "items": {"type": "string"}},
+        "sections": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string"},
+                    "start_marker": {"type": "string"},
+                },
+                "required": ["title", "start_marker"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    "required": ["type", "title", "description", "overview", "sections"],
+    "additionalProperties": False,
+}
+
+# §4.3 granularity bounds, in words of source text.
+MIN_SECTION_WORDS = 150
+MAX_CONCEPT_WORDS = 1200
+
 FOOTNOTE_REF_RE = re.compile(r"\[\^([^\]]+)\]")
 FOOTNOTE_DEF_RE = re.compile(r"^\[\^([^\]]+)\]:", re.MULTILINE)
 
@@ -66,6 +97,21 @@ class ProviderResponse:
     input_tokens: int = 0
     output_tokens: int = 0
     cache_read_tokens: int = 0
+
+
+@dataclass(frozen=True)
+class SectionContext:
+    """Where a section sits in its parent document, for the per-section prompt."""
+
+    document_title: str
+    document_overview: str
+    section_title: str
+    index: int
+    total: int
+
+    @property
+    def position(self) -> str:
+        return f"section {self.index} of {self.total}"
 
 
 @dataclass

@@ -33,6 +33,19 @@ def write_root_index(bundle_root: Path, okf_version: str, title: str, entries: l
     return path
 
 
+def write_child_index(
+    bundle_root: Path, parent_id: str, title: str, entries: list[tuple[str, str]]
+) -> Path:
+    """A subdirectory index.md. Must NOT carry frontmatter — only the bundle root may (E3)."""
+    lines = [f"# {title}", ""]
+    for link, description in entries:
+        suffix = f" - {description}" if description else ""
+        lines.append(f"- [{_label(link)}](./{link}.md){suffix}")
+    path = bundle_root / parent_id / "index.md"
+    _atomic_write(path, "\n".join(lines).rstrip() + "\n")
+    return path
+
+
 def append_log(bundle_root: Path, date: str, entries: list[str]) -> Path:
     """Insert entries under an ISO date heading, newest date first."""
     path = bundle_root / "log.md"

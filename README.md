@@ -2,7 +2,7 @@
 
 Turns a folder of files into a conformant **Open Knowledge Format (OKF) v0.2** bundle — a directory of markdown concepts with YAML frontmatter that agents and humans can both read, with no SDK required.
 
-**Status: M1 (walking skeleton).** One source file becomes one concept. Segmentation, cross-link weaving, per-directory indexes, incremental re-ingest, and the vector graph are not implemented yet — see [Not implemented yet](#not-implemented-yet).
+**Status: M2 in progress — segmentation done (1 of 4 items).** A long source is planned into sections and each becomes its own concept under a parent. Incremental re-ingest, cross-link weaving, and the vector graph are not implemented yet — see [Not implemented yet](#not-implemented-yet).
 
 - Architecture, data model and rationale: [`DESIGN.md`](DESIGN.md)
 - **Roadmap and milestones (M1–M5): [`DESIGN.md` §13](DESIGN.md#13-milestones)**
@@ -107,19 +107,20 @@ Start with two or three files. The first real run is where the synthesis prompt 
 ## How it works
 
 ```
-discover → extract → synthesize → emit → validate
-   │          │           │          │        │
- hash      cached      Claude    atomic    builtin
- files    by hash    (1 call     writes    checks +
-                     per file)             okflint
+discover → extract → plan → synthesize → emit → validate
+   │          │         │         │         │        │
+ hash      cached    sections  1 call    atomic   builtin
+ files    by hash    cut in    per        writes   checks +
+                     code      section             okflint
 ```
 
 | Stage | What happens |
 |---|---|
 | **discover** | Walk `sources/` against the `include`/`exclude` globs. SHA-256 each file. |
 | **extract** | Bytes → markdown-ish text. `.md`/`.txt`/`.markdown` pass through (read as `utf-8-sig`); everything else goes through markitdown. Results are cached in `.ragged/extracted/<sha256>.json`, so re-runs cost nothing here. An extraction failure is recorded and reported — it does not abort the run. |
-| **synthesize** | One model call per file through the configured provider, with **native schema enforcement** so the result is guaranteed rather than parsed out of prose. The system prompt is a frozen prefix (cached on Anthropic); only the document text varies. A safety decline, a token-cap stop, or any non-2xx response (429 quota, 5xx, connection failure) becomes a per-file error, never an aborted run. |
-| **emit** | Assemble frontmatter, write the concept, then the bundle-root `index.md` (declaring `okf_version: "0.2"`), append to `log.md` under today's ISO date newest-first, and generate `okf-base.yaml`. All writes are atomic (temp file + rename). |
+| **plan** | Only for sources over ~1200 words. One model call returns the parent concept's identity plus, per section, a **verbatim quote of its first words**. The text is then cut at those quotes *in code* — models quote reliably but do not count characters reliably. Matching is whitespace-insensitive, because extracted PDF text breaks lines mid-sentence. A quote that cannot be located is reported as a dropped section rather than silently losing text. Sections under ~150 words fold into their neighbour (§4.3). |
+| **synthesize** | One model call per unit — the whole file when short, otherwise one per section, each with its own `max_tokens`. That per-section budget is the point: a single call returning an array makes every concept share one budget, which is what capped M1 at ~2.5k per concept no matter how long the source was. **Native schema enforcement** means the result is guaranteed rather than parsed out of prose. The system prompt is a frozen prefix (cached on Anthropic) and stays byte-identical across whole-document and per-section calls; section framing goes in the user message. A safety decline, a token-cap stop, or any non-2xx response (429 quota, 5xx, connection failure) becomes a per-unit error, never an aborted run — one failed section costs that section, not the document. |
+| **emit** | Assemble frontmatter, write the concept, then the bundle-root `index.md` (declaring `okf_version: "0.2"`), append to `log.md` under today's ISO date newest-first, and generate `okf-base.yaml`. A segmented source also gets a parent concept linking down to its children and a frontmatter-less `index.md` in the children's subdirectory — only the bundle root may carry frontmatter (`E3`). The root index lists parents only, so disclosure stays progressive. All writes are atomic (temp file + rename), and the index, log and manifest are written on the way out even if the run is interrupted. |
 | **validate** | Built-in conformance checks, then okflint as the normative gate. |
 
 ### What gets written into frontmatter
@@ -173,9 +174,10 @@ Broken links are **warnings, not errors** — the spec explicitly permits them, 
 | `src/ragged/sources/base.py` | The `Source` protocol and `SourceItem`. Defines the `document` vs `asset` family split that phase-2 connectors plug into. |
 | `src/ragged/sources/local.py` | `LocalFileSource` — the only implemented source. Globbing and hashing. |
 | `src/ragged/extract/__init__.py` | Bytes → text, with the content-hash cache. markitdown plus passthrough. |
-| `src/ragged/synth/prompt.py` | **The synthesis system prompt.** Must stay byte-identical across a run or prompt caching stops working. Tune concept quality here. |
+| `src/ragged/synth/prompt.py` | **The synthesis and planning system prompts.** Each must stay byte-identical across a run or prompt caching stops working. Tune concept quality here. |
+| `src/ragged/synth/segment.py` | The planning pass and `cut` — marker matching, document-order sorting, short-section folding. `cut` is pure, so segmentation is testable without a model. |
 | `src/ragged/synth/__init__.py` | Provider dispatch plus everything shared: prompt assembly, JSON parsing, required-field checks, footnote repair. |
-| `src/ragged/synth/base.py` | The concept JSON schema, `SynthResult`, and the error types (`Refused`, `ProviderHTTPError`, `MissingCredential`, `SynthError`). |
+| `src/ragged/synth/base.py` | The concept and outline JSON schemas, the §4.3 word bounds, `SynthResult`, `SectionContext`, and the error types (`Refused`, `ProviderHTTPError`, `MissingCredential`, `SynthError`). |
 | `src/ragged/synth/providers/claude.py` | Anthropic: `output_config.format`, cached system block, `stop_reason` handling. |
 | `src/ragged/synth/providers/gemini.py` | Gemini: `response_json_schema`, `system_instruction`, `finish_reason` / `block_reason` handling. |
 | `src/ragged/okf/concept.py` | The OKF data model. `render` / `parse` round-trip, unknown-key preservation, `slugify`. |
@@ -234,12 +236,13 @@ $env:PATH = "$PWD\.venv\Scripts;$env:PATH"   # so okflint is discoverable
 .\.venv\Scripts\python.exe -m pytest tests -q
 ```
 
-73 tests. No credentials and no network needed — the end-to-end test stubs the model and asserts the emitted bundle is conformant, so "one file in, one conformant concept out" is covered offline.
+99 tests. No credentials and no network needed — the end-to-end test stubs the model and asserts the emitted bundle is conformant, so "one file in, one conformant concept out" is covered offline.
 
 | File | Covers |
 |---|---|
 | `tests/test_okf.py` | render/parse round-trip, extension-key preservation, `E1`/`E2`/`E3`, link resolution (absolute and relative), log ordering and date merging |
-| `tests/test_pipeline.py` | end-to-end with a stubbed model, dry run, extraction-failure isolation, non-2xx isolation, interrupted-run finalization, id collisions, new-type reporting, footnote repair |
+| `tests/test_pipeline.py` | end-to-end with a stubbed model, dry run, extraction-failure isolation, non-2xx isolation, interrupted-run finalization, id collisions, new-type reporting, footnote repair, and the segmented path: parent plus children, frontmatter-less child index, parents-only root index, one failed section vs all of them |
+| `tests/test_segment.py` | `cut` against text whose lines break mid-sentence, unfound and out-of-order markers, short-section folding, the split threshold, and the outline call's required fields |
 | `tests/test_manifest.py` | manifest keys okflint requires, skip-with-reason behaviour, and cross-checking that okflint agrees with the built-in checks |
 | `tests/test_providers.py` | provider registry and interface, dispatch, schema/required-field enforcement, Gemini credential resolution and decline mapping, non-2xx and transport-failure mapping for both providers, fail-fast pre-flight |
 | `tests/test_env.py` | `.env` loading with and without a BOM, and every `doctor` outcome |
@@ -281,12 +284,26 @@ That fourth one was masked in development: Claude Code sets `PYTHONIOENCODING=ut
 
 ## Not implemented yet
 
-M1 is the walking skeleton. Full roadmap with exit criteria in [`DESIGN.md` §13](DESIGN.md#13-milestones). Missing, in priority order:
+Full roadmap with exit criteria in [`DESIGN.md` §13](DESIGN.md#13-milestones).
 
-- **Segmentation.** One concept per source file regardless of length, so a long PDF becomes one oversized concept. `DESIGN.md` §4.3 has the intended policy.
-- **`manifest.json` and incremental re-ingest.** Every `build` currently re-synthesizes everything and re-pays every model call. This is the biggest practical gap.
-- **Link weaving.** Concepts are emitted unlinked, so the bundle is a flat set rather than a graph.
-- **Per-directory `index.md`.** Only the bundle-root index is generated (hence `W4` warnings on subdirectories).
+### M2 status — 1 of 4 items done
+
+**Done: segmentation** (§4.3). A source over ~1200 words is planned into sections and each becomes its own concept under a parent. Measured on a 3-PDF corpus of 86k characters, retention went from 9% of the source to 48%.
+
+**Still pending, in the dependency order `DESIGN.md` §13 gives:**
+
+- **`manifest.json` and incremental re-ingest** — the item the design calls *highest value*. Every `build` still re-synthesizes everything and re-pays every model call. Segmentation multiplied that cost: one source is now N+1 calls instead of 1. Also owns `status: deprecated` for vanished sources and stale-output cleanup — today a rebuild leaves the previous run's concepts behind when a title changes, because nothing removes them.
+- **Link weaving** (§6.5) — concepts are still emitted unlinked, so the bundle is a set of small trees rather than a graph. Parents link down to their children and the subdirectory index links across, but there are no cross-document links, and §4.3's "each child links back to its parent in prose" is not done either.
+- **Per-directory `index.md`** — segmentation generates one for each parent's subdirectory (that is what keeps `W4` clear), but there is no general per-directory index pass.
+
+### Beyond M2
+
 - **Human-edit protection.** Nothing yet detects a hand-edited or `verified` concept before overwriting it.
 - **MCP server + generated `AGENTS.md`** (M4) — how a reading session consumes the bundle with no credential. This is the point of the project.
 - **Vectors, graph UI, HTTP API, BigQuery/blob sources.** M3 and M5.
+
+### Known rough edges in segmentation
+
+- **Concept ids get long.** They come from model-written titles, so a parent plus child path can reach ~150 characters. Under Windows `MAX_PATH` that is tight but currently works; deeper nesting or longer titles would not.
+- **Section titles occasionally drift language** on a Spanish corpus. Prompt calibration is deliberately post-M2 (`DESIGN.md` §13) because few-shot examples should come from a human-promoted `stable` concept, not from a guess.
+- **okflint still reports `S202` split candidates** on some children. Segmentation cut the documents; it did not cut them as finely as okflint's cohesion clustering would.
