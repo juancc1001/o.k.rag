@@ -73,6 +73,7 @@ ragged/
 ├─ .ragged/                    # sidecar — gitignored, rebuildable
 │  ├─ manifest.json            # source hash → concept ids; the idempotency ledger
 │  ├─ extracted/               # cached plain-text extractions, keyed by content hash
+│  ├─ proposed/                # replacements for concepts a human owns (§6.4)
 │  ├─ embeddings.npy           # float32 [n_concepts, 384]
 │  ├─ embeddings_meta.json     # row index → concept id, embedded_hash
 │  ├─ layout.json              # 2D projection coordinates
@@ -89,6 +90,7 @@ ragged/
 │  ├─ okf/                     # read, write, validate, index/log generation
 │  ├─ vectors/                 # embed, knn, project
 │  ├─ api/                     # FastAPI app
+│  ├─ ledger.py                # the idempotency ledger (.ragged/manifest.json)
 │  └─ cli.py
 │
 ├─ web/                        # Vite + React + TS + sigma.js
@@ -128,7 +130,7 @@ ragged writes:
 | `verified` | **Never written.** See §4.4. |
 | `status` | `draft` on first synthesis; promoted to `stable` only by a human edit. Absent ⇒ `stable` per spec, so we write it explicitly. |
 | `stale_after` | Only if the config sets a default TTL for a source; computed to an absolute date at write time. |
-| `x_ragged_source_hash` | Extension field. SHA-256 of the source bytes this concept derives from. Producer-defined keys are explicitly allowed; consumers must preserve unknown keys. This is how re-ingest detects staleness without polluting `.ragged/` lookups. |
+| `x_ragged_source_hash` | Extension field. SHA-256 of the source bytes this concept derives from. Producer-defined keys are explicitly allowed; consumers must preserve unknown keys. Re-ingest reads the ledger, not this — the field is here so a bundle handed to someone who has never heard of ragged still records which revision of the source it came from. |
 
 **Type vocabulary.** `type` is a free-form string and the spec forbids imposing a taxonomy. But a *bundle* benefits from internal consistency, so ragged holds a per-bundle vocabulary in `ragged.toml` (`[types] allowed = [...]`). The synthesis pass is shown the current vocabulary and told to reuse an existing value where one fits, or propose a new one. New proposals are appended to the config and reported in the ingest summary — never silently. Defaults for a document corpus: `Document`, `Concept`, `Entity`, `Process`, `Decision`, `Reference`.
 
@@ -154,7 +156,7 @@ Corollary: the re-ingest pass must **preserve** a `verified` block a human added
 
 ### `manifest.json`
 
-The idempotency ledger. Everything about re-ingest correctness lives here.
+The idempotency ledger, written by `ledger.py`. Everything about re-ingest correctness lives here. (Not `okf/manifest.py`, which generates `okf-base.yaml` for okflint — different artifact, different consumer.)
 
 ```json
 {
@@ -165,7 +167,6 @@ The idempotency ledger. Everything about re-ingest correctness lives here.
       "content_sha256": "9f2c…",
       "size_bytes": 481203,
       "mtime": "2026-07-14T09:12:04Z",
-      "extracted_at": "2026-08-04T11:02:31Z",
       "concepts": ["q3-report", "q3-report/methodology", "q3-report/findings"],
       "last_ingest": "2026-08-04T11:04:52Z"
     }
@@ -173,14 +174,17 @@ The idempotency ledger. Everything about re-ingest correctness lives here.
   "concepts": {
     "q3-report/findings": {
       "source": "sources/q3/report.pdf",
-      "body_sha256": "1a77…",
-      "human_edited": false
+      "body_sha256": "1a77…"
     }
   }
 }
 ```
 
-`body_sha256` is the hash of the concept body *as ragged last wrote it*. If the file on disk hashes differently, a human edited it — set `human_edited: true` and treat the concept as protected (§6.4).
+`concepts` is ordered parent-first, so a skipped source can be reported without re-reading its tree. Keys are sorted on write, so a run that changed nothing rewrites a byte-identical file.
+
+`body_sha256` is the hash of the concept body *as ragged last wrote it*. A file on disk that hashes differently was edited by a human, and is protected (§6.4). This is **computed at read time, not stored as a flag**: a stored `human_edited: true` goes stale the moment the human reverts their edit, and a ledger that has to be told the truth twice will eventually be told it once.
+
+Losing the ledger costs a full re-ingest, never correctness — so every read path degrades to "no record" rather than raising, and a skip additionally requires the recorded concept files to still be on disk.
 
 ### `embeddings.npy` + `embeddings_meta.json`
 
@@ -208,7 +212,10 @@ Walk the `Source` (§9) and yield `(uri, bytes_or_stream, mtime)`. Compute `cont
 
 - Hash unchanged → **skip entirely**, including extraction and synthesis. No Claude call, no cost.
 - Hash changed → mark for re-ingest.
-- In manifest but no longer present at source → mark its concepts for `status: deprecated` (per spec: keep deprecated concepts for links and history rather than deleting them). Deletion requires explicit `ragged prune`.
+- In manifest but no longer present at source → mark its concepts for `status: deprecated` (per spec: keep deprecated concepts for links and history rather than deleting them). Deletion requires explicit `ragged prune`. Marked once: the source record is then dropped, so later runs do not re-announce it.
+- Re-ingested, but the new run produced a differently-named tree → **delete** what the old one produced and this one did not. This is the opposite call from the bullet above, and the difference is who owns the name: a vanished source's concepts are knowledge whose input went away, while a renamed tree is the same knowledge under a dead id. Concept ids derive from model-written titles, so a rebuild renames routinely; without this sweep every run leaves a full copy of the previous one behind. A directory left holding only its own `index.md` goes too.
+
+Ids the previous run wrote stay reserved for their own source across the whole run, released only when that source is itself re-ingested. Otherwise a rebuilt source can claim the id of a source that is about to be skipped.
 
 ### 6.2 extract
 
@@ -286,7 +293,11 @@ response = client.messages.create(
 
 For bulk ingests (>50 units), route through the **Batches API** instead: 50% cost reduction, and a 400-file corpus is not latency-sensitive. Same schema, same cached prefix.
 
-**Protected concepts.** If `manifest.concepts[id].human_edited` is true, or the on-disk file carries a `verified` block, synthesis does not overwrite it. Instead it writes the proposed replacement to `.ragged/proposed/<id>.md` and reports it. The human resolves. This is the one place where "the LLM owns layer 2" yields to "the human owns their verification".
+**Protected concepts.** If the on-disk body no longer hashes to `manifest.concepts[id].body_sha256`, or the file carries a `verified` block, synthesis does not overwrite it. Instead it writes the proposed replacement to `.ragged/proposed/<id>.md` and reports it. The human resolves. This is the one place where "the LLM owns layer 2" yields to "the human owns their verification".
+
+With no ledger record at all — a wiped sidecar beside a surviving bundle — only `verified` protects. "We cannot tell" must not mean "never rebuild anything again".
+
+A protected concept is still counted as its source's output, so the stale-output sweep below does not delete it.
 
 ### 6.5 link-weave (Claude)
 
@@ -551,9 +562,9 @@ random_state = 42
 
 **M1 — walking skeleton. Done.** `LocalFileSource` + markitdown + single-unit synthesis + emit + okflint + a generated `okf-base.yaml`. Pluggable providers (Anthropic, Gemini). One file in, one conformant concept out. 53 tests. No links, no segmentation, no vectors.
 
-**M2 — real bundle. In progress: item 2 of 4 done.** In dependency order:
+**M2 — real bundle. In progress: items 1 and 2 of 4 done.** In dependency order:
 
-1. **`manifest.json` + idempotent re-ingest.** *Pending — now the blocking item.* Highest value: today every `build` re-synthesizes everything and re-pays every model call, and segmentation raised that from 1 call per source to N+1. Content-hash skip, `status: deprecated` for vanished sources, `human_edited` protection (§6.4). It also owns **stale-output cleanup**: parent ids derive from model-written titles, so a rebuild can emit a differently-named tree and orphan the previous one, since nothing removes concepts a rerun no longer produces. Observed: two builds over the same three unchanged PDFs produced different parent ids both times, so this is the normal case rather than an edge one. Note `okf/manifest.py` already exists and generates `okf-base.yaml`, the *okflint* manifest — the idempotency ledger is a different artifact, lives in `.ragged/`, and needs its own module name.
+1. **`manifest.json` + idempotent re-ingest.** **Done**, in `ledger.py` (`okf/manifest.py` was taken by the okflint manifest). Content-hash skip so an unchanged source costs nothing — not extraction, not the N+1 model calls segmentation turned one source into. Plus `status: deprecated` for vanished sources, human-edit and `verified` protection via `.ragged/proposed/` (§6.4), and **stale-output cleanup**: parent ids derive from model-written titles, so a rebuild emits a differently-named tree as a matter of course — observed on two builds over the same three unchanged PDFs, different parent ids both times — and nothing else removes what the rename leaves behind.
 2. **Segmentation** (§4.3). **Done.** Two passes: a planning call returns the parent's identity plus one verbatim `start_marker` per section, code cuts the text at those markers, then one synthesis call per section. Two passes rather than one call returning an array, because an array makes every concept share one `max_tokens` — which is what produced M1's flat ~2.5k-per-concept ceiling regardless of source length. Measured on 86k characters of PDF: retention 9% → 48%. A section that fails is recorded and skipped, so one 503 costs one section rather than the document.
 3. **Link-weave** (§6.5) — *pending.* Parents link down and the subdirectory index links across, but there are no cross-document links, and §4.3's "every child links back to its parent in prose" is not implemented: fabricating that sentence in the writer would be inventing content, so it belongs to this pass. It interacts with item 1: weaving rewrites bodies, so the ledger must record the **post-weave** `body_sha256` or the next run reads every concept as human-edited.
 4. **Per-directory `index.md`** — *partially done.* Segmentation writes one per parent subdirectory, which is what keeps `W4` clear now that the bundle has subdirectories. A general per-directory pass is still pending, and three defects in the generated indexes belong to it:

@@ -4,7 +4,7 @@ import os
 import tempfile
 from pathlib import Path
 
-from .concept import Concept, render
+from .concept import Concept, parse, render
 
 LOG_HEADING = "# Update Log"
 
@@ -13,6 +13,43 @@ def write_concept(bundle_root: Path, concept: Concept) -> Path:
     path = bundle_root / f"{concept.concept_id}.md"
     _atomic_write(path, render(concept))
     return path
+
+
+def set_status(bundle_root: Path, concept_id: str, status: str) -> bool:
+    """Rewrite one concept's `status`, leaving the body and every other field.
+
+    Used to mark a concept deprecated when its source disappears: the spec keeps
+    such concepts for links and history rather than deleting them.
+    """
+    path = bundle_root / f"{concept_id}.md"
+    if not path.exists():
+        return False
+    concept = parse(path.read_text(encoding="utf-8-sig"), concept_id)
+    if concept.status == status:
+        return False
+    concept.status = status
+    _atomic_write(path, render(concept))
+    return True
+
+
+def delete_concept(bundle_root: Path, concept_id: str) -> bool:
+    """Remove a concept file, and any directory it leaves with nothing to index."""
+    path = bundle_root / f"{concept_id}.md"
+    if not path.exists():
+        return False
+    path.unlink()
+    _prune_empty(bundle_root, path.parent)
+    return True
+
+
+def _prune_empty(bundle_root: Path, directory: Path) -> None:
+    """A directory holding only its own index.md is no longer a section."""
+    while directory != bundle_root and directory.is_relative_to(bundle_root):
+        if any(p.name != "index.md" for p in directory.iterdir()):
+            return
+        (directory / "index.md").unlink(missing_ok=True)
+        directory.rmdir()
+        directory = directory.parent
 
 
 def write_root_index(bundle_root: Path, okf_version: str, title: str, entries: list[tuple[str, str]]) -> Path:

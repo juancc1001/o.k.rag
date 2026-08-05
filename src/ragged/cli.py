@@ -155,20 +155,43 @@ def _report_path(label: str, path: Path, hint: str) -> None:
 
 def _print_summary(summary: IngestSummary, dry_run: bool) -> None:
     verb = "would write" if dry_run else "wrote"
-    total = sum(o.concept_count for o in summary.written)
-    noun = f"{total} concept(s) from {len(summary.written)} source(s)"
+    total = sum(o.concept_count for o in summary.synthesized)
+    noun = f"{total} concept(s) from {len(summary.synthesized)} source(s)"
     typer.secho(f"\n{verb} {noun}", fg="green")
     for outcome in summary.written:
-        typer.echo(f"  {outcome.concept_id:<40} <- {outcome.uri}")
+        tail = "  (unchanged)" if outcome.skipped else ""
+        typer.echo(f"  {outcome.concept_id:<40} <- {outcome.uri}{tail}")
+        if outcome.skipped:
+            continue
         for child_id in outcome.child_ids:
             typer.echo(f"    {child_id}")
         for dropped in outcome.dropped_sections:
             typer.secho(f"    dropped section (marker not found): {dropped}", fg="yellow")
         for failure in outcome.section_errors:
             typer.secho(f"    FAILED section {failure}", fg="red")
+        for concept_id in outcome.removed:
+            typer.secho(f"    removed stale {concept_id}", fg="bright_black")
 
     for outcome in summary.failed:
         typer.secho(f"  FAILED {outcome.uri}: {outcome.error}", fg="red")
+
+    if summary.skipped:
+        typer.secho(
+            f"\nskipped {len(summary.skipped)} unchanged source(s) - no model call",
+            fg="bright_black",
+        )
+
+    protected = [p for o in summary.outcomes for p in o.protected]
+    if protected:
+        typer.secho("\nnot overwritten - a human owns these:", fg="yellow")
+        for entry in protected:
+            typer.echo(f"  {entry}")
+        typer.secho("  the proposed replacements are in .ragged/proposed/", fg="bright_black")
+
+    if summary.deprecated:
+        typer.secho(
+            f"\nsource gone - marked deprecated: {', '.join(summary.deprecated)}", fg="yellow"
+        )
 
     new_types = sorted({o.new_type for o in summary.outcomes if o.new_type})
     if new_types:
