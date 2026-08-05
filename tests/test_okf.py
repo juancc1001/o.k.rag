@@ -81,10 +81,16 @@ def test_write_concept_and_root_index(tmp_path):
     okf.write_concept(bundle, make_concept())
     assert (bundle / "metrics" / "mrr.md").exists()
 
-    okf.write_root_index(bundle, "0.2", "Test Bundle", [("metrics/mrr", "Monthly revenue.")])
+    okf.write_indexes(bundle, "0.2", "Test Bundle")
     index = (bundle / "index.md").read_text(encoding="utf-8")
     assert index.startswith('---\nokf_version: "0.2"\n---')
-    assert "- [Mrr](./metrics/mrr.md) - Monthly revenue." in index
+    assert "# Test Bundle" in index
+    # the root points at the subdirectory rather than pretending to be the whole map
+    assert "- [Metrics](./metrics/index.md) - 1 concept(s)" in index
+
+    nested = (bundle / "metrics" / "index.md").read_text(encoding="utf-8")
+    assert not nested.startswith("---")  # E3
+    assert "- [Monthly Recurring Revenue](./mrr.md) - Sum of all active" in nested
 
 
 def test_append_log_keeps_dates_newest_first(tmp_path):
@@ -108,7 +114,7 @@ def test_append_log_merges_into_existing_date(tmp_path):
 def _bundle(tmp_path):
     bundle = tmp_path / "bundle"
     okf.write_concept(bundle, make_concept())
-    okf.write_root_index(bundle, "0.2", "T", [("metrics/mrr", "d")])
+    okf.write_indexes(bundle, "0.2", "T")
     okf.append_log(bundle, "2026-08-04", ["**Creation**: x."])
     return bundle
 

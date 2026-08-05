@@ -113,7 +113,6 @@ def ingest(config: Config, dry_run: bool = False) -> IngestSummary:
     # it, so a source that is skipped this run cannot have its ids stolen
     taken: set[str] = set(ledger.concepts)
     log_entries: list[str] = []
-    index_entries: list[tuple[str, str]] = []
     discovered: set[str] = set()
 
     try:
@@ -124,14 +123,12 @@ def ingest(config: Config, dry_run: bool = False) -> IngestSummary:
 
             record = ledger.unchanged(item.uri, item.content_sha256, config.bundle_root)
             if record is not None:
-                entry = _entry(config.bundle_root, record.concepts[0])
-                if entry is not None:
+                if _parses(config.bundle_root, record.concepts[0]):
                     outcome.skipped = True
                     outcome.concept_id = record.concepts[0]
                     outcome.child_ids = list(record.concepts[1:])
-                    index_entries.append(entry)
                     continue
-                # its parent no longer parses; rebuild rather than trust the ledger
+                # its parent no longer reads; rebuild rather than trust the ledger
 
             try:
                 text = extract(
@@ -154,7 +151,7 @@ def ingest(config: Config, dry_run: bool = False) -> IngestSummary:
             source_id = okf.slugify(item.title) or "source"
             worker = _ingest_segmented if needs_segmenting(text) else _ingest_single
             try:
-                entry, lines = worker(
+                lines = worker(
                     config=config,
                     ledger=ledger,
                     item=item,
@@ -184,20 +181,19 @@ def ingest(config: Config, dry_run: bool = False) -> IngestSummary:
                 f"**Deprecation**: Removed `{cid}`, no longer produced by `{item.uri}`."
                 for cid in outcome.removed
             )
-            index_entries.append(entry)
             log_entries.extend(lines)
 
         if not dry_run:
             # after every concept for the run exists: a link can only point at
             # a concept that has been written
             _weave_run(config, ledger, summary)
-            _deprecate_vanished(config, ledger, discovered, summary, index_entries, log_entries)
+            _deprecate_vanished(config, ledger, discovered, summary, log_entries)
     finally:
-        # Concepts are written per file, but only the index, log and ledger make
-        # them a bundle. Run on the way out however we leave — a Ctrl-C or an
-        # unforeseen crash must not strand the model calls already paid for.
-        if not dry_run and (index_entries or log_entries):
-            _finalize(config, index_entries, log_entries, ledger, ledger_path)
+        # Concepts are written per file, but only the indexes, log and ledger
+        # make them a bundle. Run on the way out however we leave — a Ctrl-C or
+        # an unforeseen crash must not strand the model calls already paid for.
+        if not dry_run and config.bundle_root.exists():
+            _finalize(config, log_entries, ledger, ledger_path)
 
     if config.bundle_root.exists():
         summary.report = okf.validate(config.bundle_root)
@@ -215,8 +211,8 @@ def _ingest_single(
     taken: set[str],
     summary: IngestSummary,
     existing: list[tuple[str, str]],
-) -> tuple[tuple[str, str], list[str]]:
-    """Short enough to be one concept (§4.3)."""
+) -> list[str]:
+    """Short enough to be one concept (§4.3). Returns its log lines."""
     result = synthesize(
         text=text,
         source_id=source_id,
@@ -236,10 +232,7 @@ def _ingest_single(
     outcome.candidates[concept_id] = result.candidate_links
     verb = _write(config, ledger, _build(config, item, result, concept_id, source_id), outcome)
     outcome.concept_id = concept_id
-    return (
-        (concept_id, result.description),
-        _log_lines(verb, result.title, concept_id, item.uri),
-    )
+    return _log_lines(verb, result.title, concept_id, item.uri)
 
 
 def _ingest_segmented(
@@ -253,7 +246,7 @@ def _ingest_segmented(
     taken: set[str],
     summary: IngestSummary,
     existing: list[tuple[str, str]],
-) -> tuple[tuple[str, str], list[str]]:
+) -> list[str]:
     """Plan first, then one call per section, then assemble the parent.
 
     A failed section is recorded and skipped: one refusal or one 429 must not
@@ -275,7 +268,7 @@ def _ingest_segmented(
     outcome.dropped_sections = list(outline.unmatched)
 
     parent_id = _claim_id(outline.title or item.title, taken)
-    children: list[tuple[str, str]] = []
+    children: list[tuple[str, str, str]] = []
     log_lines: list[str] = []
     total = len(outline.sections)
 
@@ -313,7 +306,7 @@ def _ingest_segmented(
         # recorded even when a human owns it: the file is still this source's
         # output, and dropping it here would delete it as stale
         outcome.child_ids.append(child_id)
-        children.append((child_id.split("/", 1)[1], result.description))
+        children.append((child_id.split("/", 1)[1], result.title, result.description))
         log_lines.extend(_log_lines(verb, result.title, child_id, item.uri))
 
     if not children:
@@ -327,10 +320,9 @@ def _ingest_segmented(
         _build_parent(config, item, outline, parent_id, source_id, children),
         outcome,
     )
-    okf.write_child_index(config.bundle_root, parent_id, outline.title, children)
     outcome.concept_id = parent_id
     log_lines[:0] = _log_lines(verb, outline.title, parent_id, item.uri)
-    return (parent_id, outline.description), log_lines
+    return log_lines
 
 
 def _write(config: Config, ledger: Ledger, concept: Concept, outcome: ItemOutcome) -> str:
@@ -436,7 +428,6 @@ def _deprecate_vanished(
     ledger: Ledger,
     discovered: set[str],
     summary: IngestSummary,
-    index_entries: list[tuple[str, str]],
     log_entries: list[str],
 ) -> None:
     """A source that is gone deprecates its concepts; it does not delete them.
@@ -445,26 +436,22 @@ def _deprecate_vanished(
     is an explicit `ragged prune`, never a side effect of removing an input file.
     """
     for uri in sorted(set(ledger.sources) - discovered):
-        concepts = ledger.forget_source(uri)
-        for concept_id in concepts:
+        for concept_id in ledger.forget_source(uri):
             if okf.set_status(config.bundle_root, concept_id, "deprecated"):
                 summary.deprecated.append(concept_id)
                 log_entries.append(
                     f"**Deprecation**: `{uri}` is gone; "
                     f"[{concept_id}](/{concept_id}.md) marked deprecated."
                 )
-        entry = _entry(config.bundle_root, concepts[0]) if concepts else None
-        if entry is not None:
-            index_entries.append(entry)
 
 
-def _entry(bundle_root: Path, concept_id: str) -> tuple[str, str] | None:
-    """A root-index entry read back off disk, for a concept this run did not write."""
+def _parses(bundle_root: Path, concept_id: str) -> bool:
+    """A concept whose frontmatter no longer reads is rebuilt, not skipped."""
     try:
-        text = (bundle_root / f"{concept_id}.md").read_text(encoding="utf-8-sig")
-        return concept_id, okf.parse(text, concept_id).description or ""
+        okf.parse((bundle_root / f"{concept_id}.md").read_text(encoding="utf-8-sig"), concept_id)
     except (OSError, ValueError):
-        return None
+        return False
+    return True
 
 
 def _account(summary: IngestSummary, result) -> None:
@@ -484,13 +471,12 @@ def _now() -> str:
 
 def _finalize(
     config: Config,
-    index_entries: list[tuple[str, str]],
     log_entries: list[str],
     ledger: Ledger,
     ledger_path: Path,
 ) -> None:
-    title = config.project_root.name.replace("-", " ").replace("_", " ").title()
-    okf.write_root_index(config.bundle_root, config.bundle.okf_version, title, index_entries)
+    title = config.bundle_title
+    okf.write_indexes(config.bundle_root, config.bundle.okf_version, title)
     if log_entries:
         # a run that changed nothing must not leave an empty date heading behind
         okf.append_log(
@@ -540,18 +526,18 @@ def _build_parent(
     outline: Outline,
     parent_id: str,
     source_id: str,
-    children: list[tuple[str, str]],
+    children: list[tuple[str, str, str]],
 ) -> Concept:
     """The parent's body is the outline's overview plus the way down to the children.
 
-    §4.3 also wants each child to link back in prose. That is link-weave (M2 #3),
-    still pending; fabricating the sentence here would be inventing content.
+    §4.3's "each child links back to its parent in prose" is the other direction
+    and belongs to link-weave (§6.5), which is told the parent — fabricating the
+    sentence here would be inventing content.
     """
     lines = [outline.overview.strip(), "", "# Sections", ""]
-    for slug, description in children:
-        label = slug.rsplit("/", 1)[-1].replace("-", " ").capitalize()
+    for slug, title, description in children:
         suffix = f" - {description}" if description else ""
-        lines.append(f"- [{label}](/{parent_id}/{slug}.md){suffix}")
+        lines.append(f"- [{title}](/{parent_id}/{slug}.md){suffix}")
     # no footnote: `sources` carries provenance, and footnotes are for per-claim
     # attribution (§5.1) — the overview plus a link list makes no specific claim
     body = "\n".join(lines).rstrip() + "\n"

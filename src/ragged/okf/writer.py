@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import os
+import posixpath
 import tempfile
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from .concept import Concept, parse, render
+from .inventory import ConceptRef, inventory
 
 LOG_HEADING = "# Update Log"
 
@@ -52,35 +55,98 @@ def _prune_empty(bundle_root: Path, directory: Path) -> None:
         directory = directory.parent
 
 
-def write_root_index(bundle_root: Path, okf_version: str, title: str, entries: list[tuple[str, str]]) -> Path:
-    """Bundle-root index.md — the only index.md allowed to carry frontmatter."""
-    lines = [
-        "---",
-        f'okf_version: "{okf_version}"',
-        "---",
-        "",
-        f"# {title}",
-        "",
-    ]
-    for link, description in entries:
-        suffix = f" - {description}" if description else ""
-        lines.append(f"- [{_label(link)}](./{link}.md){suffix}")
-    path = bundle_root / "index.md"
-    _atomic_write(path, "\n".join(lines).rstrip() + "\n")
-    return path
+@dataclass
+class _Node:
+    concepts: list[ConceptRef] = field(default_factory=list)
+    subdirs: list[str] = field(default_factory=list)
 
 
-def write_child_index(
-    bundle_root: Path, parent_id: str, title: str, entries: list[tuple[str, str]]
-) -> Path:
-    """A subdirectory index.md. Must NOT carry frontmatter — only the bundle root may (E3)."""
-    lines = [f"# {title}", ""]
-    for link, description in entries:
-        suffix = f" - {description}" if description else ""
-        lines.append(f"- [{_label(link)}](./{link}.md){suffix}")
-    path = bundle_root / parent_id / "index.md"
-    _atomic_write(path, "\n".join(lines).rstrip() + "\n")
-    return path
+def write_indexes(bundle_root: Path, okf_version: str, title: str) -> list[Path]:
+    """Generate `index.md` for every directory in the bundle.
+
+    Read off disk rather than accumulated during the run, so a directory whose
+    concepts were skipped this time is indexed exactly like one that was just
+    written, and an entry can never disagree with the concept it points at:
+    every label and description is the target's own frontmatter.
+
+    Only the bundle root carries frontmatter (E3).
+    """
+    nodes = _tree(inventory(bundle_root))
+    written: list[Path] = []
+    # deepest first (§6.6 bottom-up): a parent entry states what is below it
+    for key in sorted(nodes, key=lambda k: (-k.count("/"), k)):
+        if key and not nodes[key].concepts and not nodes[key].subdirs:
+            continue
+        heading = title if not key else _heading(nodes, key)
+        body = _render_index(nodes, key, heading, okf_version if not key else None)
+        path = bundle_root / key / "index.md" if key else bundle_root / "index.md"
+        _atomic_write(path, body)
+        written.append(path)
+    return written
+
+
+def _tree(refs: list[ConceptRef]) -> dict[str, _Node]:
+    nodes: dict[str, _Node] = {"": _Node()}
+    for ref in refs:
+        directory = posixpath.dirname(ref.concept_id)
+        parts = directory.split("/") if directory else []
+        for depth in range(len(parts) + 1):
+            nodes.setdefault("/".join(parts[:depth]), _Node())
+        nodes[directory].concepts.append(ref)
+    for key in nodes:
+        if key:
+            nodes[posixpath.dirname(key)].subdirs.append(key)
+    for node in nodes.values():
+        node.subdirs.sort()
+    return nodes
+
+
+def _descendants(nodes: dict[str, _Node], key: str) -> int:
+    return len(nodes[key].concepts) + sum(_descendants(nodes, s) for s in nodes[key].subdirs)
+
+
+def _heading(nodes: dict[str, _Node], key: str) -> str:
+    """A subdirectory is named by the concept that owns it, when there is one."""
+    parent = nodes.get(posixpath.dirname(key))
+    if parent is not None:
+        for ref in parent.concepts:
+            if ref.concept_id == key:
+                return ref.title
+    return _label(key)
+
+
+def _render_index(
+    nodes: dict[str, _Node], key: str, heading: str, okf_version: str | None
+) -> str:
+    lines: list[str] = []
+    if okf_version is not None:
+        lines += ["---", f'okf_version: "{okf_version}"', "---", ""]
+    lines += [f"# {heading}", ""]
+
+    node = nodes[key]
+    owned: set[str] = set()
+    for ref in node.concepts:
+        leaf = ref.concept_id.rsplit("/", 1)[-1]
+        entry = f"- [{ref.title}](./{leaf}.md)"
+        if ref.status == "deprecated":
+            entry += " *(deprecated)*"
+        if ref.description:
+            entry += f" - {ref.description}"
+        if ref.concept_id in nodes:
+            # otherwise an agent reading this index alone concludes the bundle
+            # holds one concept here when it holds a whole subtree
+            count = _descendants(nodes, ref.concept_id)
+            entry += f" ([{count} more](./{leaf}/index.md))"
+            owned.add(ref.concept_id)
+        lines.append(entry)
+
+    for sub in node.subdirs:
+        if sub in owned:
+            continue
+        leaf = sub.rsplit("/", 1)[-1]
+        lines.append(f"- [{_label(sub)}](./{leaf}/index.md) - {_descendants(nodes, sub)} concept(s)")
+
+    return "\n".join(lines).rstrip() + "\n"
 
 
 def append_log(bundle_root: Path, date: str, entries: list[str]) -> Path:
@@ -109,7 +175,12 @@ def append_log(bundle_root: Path, date: str, entries: list[str]) -> Path:
 
 
 def _label(concept_id: str) -> str:
-    return concept_id.rsplit("/", 1)[-1].replace("-", " ").title()
+    """Last-resort name for a directory nothing owns. A concept uses its `title`.
+
+    Deriving a label from the slug folds accents away and then applies English
+    title-case, which reads badly in any other language.
+    """
+    return concept_id.rsplit("/", 1)[-1].replace("-", " ").capitalize()
 
 
 def _atomic_write(path: Path, text: str) -> None:
