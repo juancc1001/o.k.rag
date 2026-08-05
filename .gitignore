@@ -1,6 +1,12 @@
 # derived, rebuildable from sources/ + bundle/
 .ragged/
 
+# working output. Not committed because concept ids derive from model-written
+# titles, so every rebuild renames the whole tree and the diff is unreadable.
+# A bundle worth showing goes in examples/ and is refreshed deliberately.
+bundle/
+okf-base.yaml
+
 # secrets — .env.example is the committed template
 .env
 
