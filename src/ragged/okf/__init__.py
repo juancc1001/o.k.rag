@@ -8,9 +8,8 @@ from .writer import (
     append_log,
     delete_concept,
     set_status,
-    write_child_index,
     write_concept,
-    write_root_index,
+    write_indexes,
 )
 
 __all__ = [
@@ -29,7 +28,6 @@ __all__ = [
     "append_log",
     "delete_concept",
     "set_status",
-    "write_child_index",
     "write_concept",
-    "write_root_index",
+    "write_indexes",
 ]

@@ -277,8 +277,9 @@ def test_the_parent_links_down_to_each_child(segmented):
     cfg = config_module.load(segmented)
     pipeline.ingest(cfg, dry_run=False)
     parent = (cfg.bundle_root / "trabajo-practico.md").read_text(encoding="utf-8-sig")
-    assert "/trabajo-practico/definicion.md" in parent
-    assert "/trabajo-practico/doctrina.md" in parent
+    # labelled by the child's title, not by its slug run through title-case
+    assert "[Definicion](/trabajo-practico/definicion.md)" in parent
+    assert "[Doctrina](/trabajo-practico/doctrina.md)" in parent
 
 
 def test_one_failed_section_does_not_lose_the_others(segmented, monkeypatch):

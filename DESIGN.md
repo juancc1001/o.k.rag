@@ -319,7 +319,13 @@ Broken links are permitted and expected: a *human* can reference knowledge not y
 
 ### 6.6 emit
 
-Write concept files, then generate every `index.md` bottom-up (entries carry the linked concept's `description` verbatim), then append to `log.md` under today's ISO date, newest first. Log entries use the conventional bold leading word: `**Creation**`, `**Update**`, `**Deprecation**`.
+Write concept files, then generate every `index.md` bottom-up, then append to `log.md` under today's ISO date, newest first. Log entries use the conventional bold leading word: `**Creation**`, `**Update**`, `**Deprecation**`.
+
+**Indexes are read off the bundle, not accumulated during the run.** A directory whose concepts were all skipped has to be indexed exactly like one just written, and an entry must never disagree with the concept it points at — so every label is the target's own `title` and every line its own `description`, verbatim. Deriving a label from the slug instead folds accents away and then applies English title-case, which reads as damage in any other language.
+
+An entry for a concept that owns a subdirectory states how many concepts are below it and links to that subdirectory's index. Without it the root index is a dead end: a reader concludes the bundle holds three documents when it holds eighteen. A directory no concept owns is listed in its own right. A `status: deprecated` concept is marked as such, since an index that lists it as an equal is the one place the deprecation would be invisible.
+
+The root index's heading comes from `[bundle].title`, falling back to the project directory name — which names the tool rather than the knowledge unless the two happen to agree.
 
 Writes are atomic per file (temp + rename) and the whole emit is transactional at the manifest level: the manifest is updated only after every file lands, so a crash mid-emit leaves the previous manifest and the next run reconciles.
 
@@ -498,6 +504,7 @@ Registering it is a `.mcp.json` entry pointing at the script — which makes any
 root = "bundle"
 okf_version = "0.2"
 actor = "ragged/0.1.0"
+# title = "Derecho Informático"   # omit -> the project directory name
 
 [sources.local]
 family = "document"
@@ -572,17 +579,17 @@ random_state = 42
 
 **M1 — walking skeleton. Done.** `LocalFileSource` + markitdown + single-unit synthesis + emit + okflint + a generated `okf-base.yaml`. Pluggable providers (Anthropic, Gemini). One file in, one conformant concept out. 53 tests. No links, no segmentation, no vectors.
 
-**M2 — real bundle. In progress: items 1, 2 and 3 of 4 done.** In dependency order:
+**M2 — real bundle. All four items done.** In dependency order:
 
 1. **`manifest.json` + idempotent re-ingest.** **Done**, in `ledger.py` (`okf/manifest.py` was taken by the okflint manifest). Content-hash skip so an unchanged source costs nothing — not extraction, not the N+1 model calls segmentation turned one source into. Plus `status: deprecated` for vanished sources, human-edit and `verified` protection via `.ragged/proposed/` (§6.4), and **stale-output cleanup**: parent ids derive from model-written titles, so a rebuild emits a differently-named tree as a matter of course — observed on two builds over the same three unchanged PDFs, different parent ids both times — and nothing else removes what the rename leaves behind.
 2. **Segmentation** (§4.3). **Done.** Two passes: a planning call returns the parent's identity plus one verbatim `start_marker` per section, code cuts the text at those markers, then one synthesis call per section. Two passes rather than one call returning an array, because an array makes every concept share one `max_tokens` — which is what produced M1's flat ~2.5k-per-concept ceiling regardless of source length. Measured on 86k characters of PDF: retention 9% → 48%. A section that fails is recorded and skipped, so one 503 costs one section rather than the document.
 3. **Link-weave** (§6.5). **Done**, in `synth/weave.py`. One call per concept written this run, given the full bundle index and the `candidate_links` synthesis proposed; returns `body_markdown` alone. §4.3's "every child links back to its parent in prose" is served by telling the pass its parent rather than by fabricating the sentence in the writer. Targets outside the index are unwrapped to plain text and reported — the spec's tolerance for broken links is for human authors, not for a generator holding the index. The ledger records the **post-weave** `body_sha256`, or the next run reads every concept as human-edited.
 
    Also done here, and named in the prompt-changes note below: the bundle's existing-concept index now reaches the synthesis cached prefix, snapshotted before discovery so the prefix stays byte-identical for the run.
-4. **Per-directory `index.md`** — *partially done.* Segmentation writes one per parent subdirectory, which is what keeps `W4` clear now that the bundle has subdirectories. A general per-directory pass is still pending, and three defects in the generated indexes belong to it:
-   - **Labels come from the slug, not the `title`.** `_label()` in `okf/writer.py` renders `concept_id.replace("-", " ").title()`, so an index reads `Delitos Informaticos Y Su Marco Legal En Argentina` while the concept's frontmatter says `Delitos Informáticos y su Marco Legal en Argentina` — accents already folded away by the slug, then English title-case applied to Spanish. The writers take `(link, description)`; they should take the title, which is right there in the frontmatter.
-   - **The bundle title comes from the project directory name** (`pipeline.py::_finalize`), so a bundle about Argentine cybercrime law is titled `# Ragged`, after the tool. `[bundle]` needs a `title` key, falling back to the directory name.
-   - **The root index is a dead end for every child concept.** It lists parents only, with no signal that subdirectories exist, so an agent reading `index.md` alone concludes the bundle holds 3 documents when it holds 18. Root entries need to mark that a parent has children.
+4. **Per-directory `index.md`.** **Done**, as `okf.write_indexes` — one pass over the whole bundle read off disk, replacing the entries the pipeline used to accumulate. The three defects it owned are fixed with it:
+   - **Labels came from the slug, not the `title`.** An index read `Delitos Informaticos Y Su Marco Legal En Argentina` while the frontmatter said `Delitos Informáticos y su Marco Legal en Argentina` — accents folded away by the slug, then English title-case applied to Spanish. Entries now carry the target's own `title` and `description`. The same fix applies to the parent concept's own `# Sections` list, which had the defect in a second place.
+   - **The bundle title came from the project directory name**, so a bundle about Argentine cybercrime law was titled `# Ragged`, after the tool. `[bundle].title` now sets it, falling back to the directory name.
+   - **The root index was a dead end for every child concept.** An entry whose concept owns a subdirectory now states how many concepts sit below it and links to that subdirectory's index.
 
 Exit criterion: ingest a real 20-file corpus, validate clean, re-run and observe zero model calls.
 
