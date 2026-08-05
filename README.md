@@ -193,8 +193,8 @@ Broken links are **warnings, not errors** — the spec explicitly permits them, 
 | `.env.example` | yes | Template for the API key. Copy to `.env`. |
 | `.env` | **no** (gitignored) | Your API key. Read only by `build` and `doctor`. |
 | `sources/` | your call | Layer 1 — raw input. **Immutable**; ragged reads, never writes. |
-| `bundle/` | recommended | Layer 2 — the OKF product. The deliverable. Portable with no ragged dependency. |
-| `okf-base.yaml` | yes | Generated okflint manifest. |
+| `bundle/` | **no** (gitignored) | Layer 2 — the OKF product. The deliverable, portable with no ragged dependency — but concept ids derive from model-written titles, so every rebuild renames the whole tree and the diff is unreadable. Commit an example bundle under `examples/` instead, refreshed on purpose. |
+| `okf-base.yaml` | **no** (gitignored) | Generated okflint manifest, rewritten with the bundle. |
 | `.ragged/` | **no** (gitignored) | Sidecar: extraction cache, and later embeddings, index, layout. Entirely derived and rebuildable. |
 | `DESIGN.md` | yes | Architecture, data model, risks, milestones. |
 
