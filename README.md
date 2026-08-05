@@ -9,6 +9,22 @@ Turns a folder of files into a conformant **Open Knowledge Format (OKF) v0.2** b
 
 ---
 
+## Why a bundle *and* an embedding model
+
+A vector database gives you semantic retrieval and nothing a human can read: the meaning lives in float arrays and what comes back is a chunk with no structure around it. A folder of markdown gives you the opposite — portable, readable, diffable — but retrievable only by grep and by whatever links someone remembered to write.
+
+ragged is designed to have both, and what makes that possible is the **sidecar rule** ([`DESIGN.md` §2](DESIGN.md#2-the-three-layer-model)): nothing derived ever goes inside `bundle/`. Embeddings, the ANN index, the 2D projection and the content hashes all live in `.ragged/`, which is disposable and rebuildable. The bundle therefore stays something you can `tar` up and hand to someone who has never heard of ragged, while *also* being the corpus of a vector index — with no `embedding:` frontmatter key and no `.faiss` file anywhere near it. Swapping embedding providers is deleting `embeddings.npy` and re-embedding; `bundle/` does not notice.
+
+What the vectors add on top of the markdown — **M3, not implemented yet**:
+
+- **Semantic search** over concepts. Before M3, `search` traverses the index and the links; embeddings upgrade it rather than enable it.
+- **Node position** in the graph — proximity means semantic similarity rather than connectivity.
+- **Ghost edges** — pairs of concepts that are highly similar with *no* markdown link between them. This is the part links cannot give you: a missing link is not computable from the links you have. It is the lint signal saying two concepts are about the same thing and nobody connected them.
+
+Embeddings sit deliberately outside the build path ([§6.8](DESIGN.md)). Concepts are produced, validated and consumed without them, which is why M3 sits behind the agent contract in the roadmap rather than in front of it.
+
+---
+
 ## Installation
 
 Requires **Python 3.12+** (okflint requires it too).
