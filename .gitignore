@@ -1,6 +1,10 @@
 # derived, rebuildable from sources/ + bundle/
 .ragged/
 
+# your input corpus. Not committed: it is your own material, and a real corpus
+# tends to carry third-party names that do not belong in a permanent history.
+sources/
+
 # working output. Not committed because concept ids derive from model-written
 # titles, so every rebuild renames the whole tree and the diff is unreadable.
 # A bundle worth showing goes in examples/ and is refreshed deliberately.
