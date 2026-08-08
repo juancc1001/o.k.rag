@@ -14,6 +14,7 @@ from .base import (
     MAX_CONCEPT_WORDS,
     MIN_SECTION_WORDS,
     OUTLINE_SCHEMA,
+    WEAVE_SCHEMA,
     MissingCredential,
     ProviderHTTPError,
     ProviderResponse,
@@ -21,18 +22,21 @@ from .base import (
     SectionContext,
     SynthError,
     SynthResult,
+    WeaveResult,
     body_defines,
     ensure_footnote_defs,
 )
 from .prompt import section_user_prompt, system_prompt, user_prompt
 from .providers import PROVIDERS, resolve
 from .segment import Outline, Section, cut, needs_segmenting, plan
+from .weave import prune_links, weave
 
 __all__ = [
     "CONCEPT_SCHEMA",
     "MAX_CONCEPT_WORDS",
     "MIN_SECTION_WORDS",
     "OUTLINE_SCHEMA",
+    "WEAVE_SCHEMA",
     "MissingCredential",
     "Outline",
     "ProviderHTTPError",
@@ -42,6 +46,7 @@ __all__ = [
     "SectionContext",
     "SynthError",
     "SynthResult",
+    "WeaveResult",
     "PROVIDERS",
     "resolve",
     "body_defines",
@@ -49,7 +54,9 @@ __all__ = [
     "ensure_footnote_defs",
     "needs_segmenting",
     "plan",
+    "prune_links",
     "synthesize",
+    "weave",
 ]
 
 
@@ -65,6 +72,7 @@ def synthesize(
     effort: str = "high",
     max_tokens: int = 16000,
     section: SectionContext | None = None,
+    index: list[tuple[str, str]] | None = None,
 ) -> SynthResult:
     impl = resolve(provider)
     if section is None:
@@ -83,7 +91,7 @@ def synthesize(
     response = impl.call(
         # byte-identical across whole-document and per-section calls, so the
         # cached prefix survives segmentation
-        system=system_prompt(allowed_types),
+        system=system_prompt(allowed_types, index),
         user=user,
         schema=CONCEPT_SCHEMA,
         model=model or impl.DEFAULT_MODEL,
@@ -111,4 +119,12 @@ def synthesize(
         input_tokens=response.input_tokens,
         output_tokens=response.output_tokens,
         cache_read_tokens=response.cache_read_tokens,
+        candidate_links=_known_links(data.get("candidate_links"), index),
     )
+
+
+def _known_links(proposed: object, index: list[tuple[str, str]] | None) -> list[str]:
+    """Ids that exist. A hint pointing at nothing would only waste a weave prompt."""
+    known = {cid for cid, _ in index or []}
+    ids = (str(x).strip().strip("/").removesuffix(".md") for x in proposed or [])
+    return [cid for cid in ids if cid in known]

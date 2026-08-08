@@ -51,7 +51,7 @@ def test_okflint_agrees_with_the_builtin_checks(tmp_path):
             generated={"by": "ragged/test", "at": "2026-08-04T00:00:00Z"},
         ),
     )
-    okf.write_root_index(bundle, "0.2", "T", [("a", "d")])
+    okf.write_indexes(bundle, "0.2", "T")
     okf.append_log(bundle, "2026-08-04", ["**Creation**: a."])
     okf.write_manifest(tmp_path, "bundle", "T")
 

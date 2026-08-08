@@ -2,7 +2,7 @@
 
 **One line:** drop files in, get out a portable OKF v0.2 knowledge bundle, a generated agent contract, and a served graph that shows both the links the knowledge *has* and the ones it *should* have.
 
-**Status: M1 built.** See [§13 Milestones](#13-milestones) for what exists and what comes next. `README.md` covers installation and usage.
+**Status: M2 built.** See [§13 Milestones](#13-milestones) for what exists and what comes next. `README.md` covers installation and usage.
 
 ## Contents
 
@@ -73,6 +73,7 @@ ragged/
 ├─ .ragged/                    # sidecar — gitignored, rebuildable
 │  ├─ manifest.json            # source hash → concept ids; the idempotency ledger
 │  ├─ extracted/               # cached plain-text extractions, keyed by content hash
+│  ├─ proposed/                # replacements for concepts a human owns (§6.4)
 │  ├─ embeddings.npy           # float32 [n_concepts, 384]
 │  ├─ embeddings_meta.json     # row index → concept id, embedded_hash
 │  ├─ layout.json              # 2D projection coordinates
@@ -89,6 +90,7 @@ ragged/
 │  ├─ okf/                     # read, write, validate, index/log generation
 │  ├─ vectors/                 # embed, knn, project
 │  ├─ api/                     # FastAPI app
+│  ├─ ledger.py                # the idempotency ledger (.ragged/manifest.json)
 │  └─ cli.py
 │
 ├─ web/                        # Vite + React + TS + sigma.js
@@ -128,7 +130,7 @@ ragged writes:
 | `verified` | **Never written.** See §4.4. |
 | `status` | `draft` on first synthesis; promoted to `stable` only by a human edit. Absent ⇒ `stable` per spec, so we write it explicitly. |
 | `stale_after` | Only if the config sets a default TTL for a source; computed to an absolute date at write time. |
-| `x_ragged_source_hash` | Extension field. SHA-256 of the source bytes this concept derives from. Producer-defined keys are explicitly allowed; consumers must preserve unknown keys. This is how re-ingest detects staleness without polluting `.ragged/` lookups. |
+| `x_ragged_source_hash` | Extension field. SHA-256 of the source bytes this concept derives from. Producer-defined keys are explicitly allowed; consumers must preserve unknown keys. Re-ingest reads the ledger, not this — the field is here so a bundle handed to someone who has never heard of ragged still records which revision of the source it came from. |
 
 **Type vocabulary.** `type` is a free-form string and the spec forbids imposing a taxonomy. But a *bundle* benefits from internal consistency, so ragged holds a per-bundle vocabulary in `ragged.toml` (`[types] allowed = [...]`). The synthesis pass is shown the current vocabulary and told to reuse an existing value where one fits, or propose a new one. New proposals are appended to the config and reported in the ingest summary — never silently. Defaults for a document corpus: `Document`, `Concept`, `Entity`, `Process`, `Decision`, `Reference`.
 
@@ -154,7 +156,7 @@ Corollary: the re-ingest pass must **preserve** a `verified` block a human added
 
 ### `manifest.json`
 
-The idempotency ledger. Everything about re-ingest correctness lives here.
+The idempotency ledger, written by `ledger.py`. Everything about re-ingest correctness lives here. (Not `okf/manifest.py`, which generates `okf-base.yaml` for okflint — different artifact, different consumer.)
 
 ```json
 {
@@ -165,22 +167,25 @@ The idempotency ledger. Everything about re-ingest correctness lives here.
       "content_sha256": "9f2c…",
       "size_bytes": 481203,
       "mtime": "2026-07-14T09:12:04Z",
-      "extracted_at": "2026-08-04T11:02:31Z",
       "concepts": ["q3-report", "q3-report/methodology", "q3-report/findings"],
-      "last_ingest": "2026-08-04T11:04:52Z"
+      "last_ingest": "2026-08-04T11:04:52Z",
+      "complete": true
     }
   },
   "concepts": {
     "q3-report/findings": {
       "source": "sources/q3/report.pdf",
-      "body_sha256": "1a77…",
-      "human_edited": false
+      "body_sha256": "1a77…"
     }
   }
 }
 ```
 
-`body_sha256` is the hash of the concept body *as ragged last wrote it*. If the file on disk hashes differently, a human edited it — set `human_edited: true` and treat the concept as protected (§6.4).
+`concepts` is ordered parent-first, so a skipped source can be reported without re-reading its tree. Keys are sorted on write, so a run that changed nothing rewrites a byte-identical file.
+
+`body_sha256` is the hash of the concept body *as ragged last wrote it*. A file on disk that hashes differently was edited by a human, and is protected (§6.4). This is **computed at read time, not stored as a flag**: a stored `human_edited: true` goes stale the moment the human reverts their edit, and a ledger that has to be told the truth twice will eventually be told it once.
+
+Losing the ledger costs a full re-ingest, never correctness — so every read path degrades to "no record" rather than raising, and a skip additionally requires the recorded concept files to still be on disk.
 
 ### `embeddings.npy` + `embeddings_meta.json`
 
@@ -206,9 +211,13 @@ Stages 1–7 produce the bundle. Stages 8–9 produce the sidecar vectors. They 
 
 Walk the `Source` (§9) and yield `(uri, bytes_or_stream, mtime)`. Compute `content_sha256`. Diff against `manifest.json`:
 
-- Hash unchanged → **skip entirely**, including extraction and synthesis. No Claude call, no cost.
+- Hash unchanged → **skip entirely**, including extraction and synthesis. No model call, no cost.
 - Hash changed → mark for re-ingest.
-- In manifest but no longer present at source → mark its concepts for `status: deprecated` (per spec: keep deprecated concepts for links and history rather than deleting them). Deletion requires explicit `ragged prune`.
+- Hash unchanged but a section of it failed last run → re-ingest anyway. The ledger records `complete: false`, because a section lost to a 429 is source content missing from the bundle, and a source recorded as finished is never retried until its bytes happen to change. A failed *weave* does not count: the concept exists and is valid, only its links are missing (§6.5).
+- In manifest but no longer present at source → mark its concepts for `status: deprecated` (per spec: keep deprecated concepts for links and history rather than deleting them). Deletion requires explicit `ragged prune`. Marked once: the source record is then dropped, so later runs do not re-announce it.
+- Re-ingested, but the new run produced a differently-named tree → **delete** what the old one produced and this one did not. This is the opposite call from the bullet above, and the difference is who owns the name: a vanished source's concepts are knowledge whose input went away, while a renamed tree is the same knowledge under a dead id. Concept ids derive from model-written titles, so a rebuild renames routinely; without this sweep every run leaves a full copy of the previous one behind. A directory left holding only its own `index.md` goes too.
+
+Ids the previous run wrote stay reserved for their own source across the whole run, released only when that source is itself re-ingested. Otherwise a rebuilt source can claim the id of a source that is about to be skipped.
 
 ### 6.2 extract
 
@@ -284,21 +293,48 @@ response = client.messages.create(
 
 `SYNTH_SYSTEM` is a frozen prefix: the OKF v0.2 authoring rules, the current type vocabulary, the bundle's existing concept index (id + description, one line each), and the body conventions. It is byte-identical across every unit in a run, so it caches — one write, N−1 reads at ~0.1×. Opus 5's cacheable minimum is 512 tokens, which this comfortably clears. **The volatile part (the unit text) goes after the breakpoint.** Any drift in the system prefix — a timestamp, a per-file note — silently destroys this; the prefix builder must be pure.
 
+The concept index is therefore **snapshotted once, before discovery**, and describes the bundle as it was when the run started. Letting it grow as concepts land would be more informative and would stop the prefix caching after the first unit. The concepts written during the run are seen by link-weave (§6.5) instead, which is the pass that needs them.
+
 For bulk ingests (>50 units), route through the **Batches API** instead: 50% cost reduction, and a 400-file corpus is not latency-sensitive. Same schema, same cached prefix.
 
-**Protected concepts.** If `manifest.concepts[id].human_edited` is true, or the on-disk file carries a `verified` block, synthesis does not overwrite it. Instead it writes the proposed replacement to `.ragged/proposed/<id>.md` and reports it. The human resolves. This is the one place where "the LLM owns layer 2" yields to "the human owns their verification".
+**Protected concepts.** If the on-disk body no longer hashes to `manifest.concepts[id].body_sha256`, or the file carries a `verified` block, synthesis does not overwrite it. Instead it writes the proposed replacement to `.ragged/proposed/<id>.md` and reports it. The human resolves. This is the one place where "the LLM owns layer 2" yields to "the human owns their verification".
 
-### 6.5 link-weave (Claude)
+With no ledger record at all — a wiped sidecar beside a surviving bundle — only `verified` protects. "We cannot tell" must not mean "never rebuild anything again".
+
+A protected concept is still counted as its source's output, so the stale-output sweep below does not delete it.
+
+### 6.5 link-weave (the model)
 
 A second pass, after all concepts for the run exist. Sees the full concept index and the `candidate_links` from stage 6.4, and rewrites the *bodies* to weave links into natural prose. Per the spec: links assert relationships, and the relationship kind is conveyed by surrounding prose, not syntax — so a standalone "Related" section is wrong and this pass must not create one.
 
+The schema returns `body_markdown` and nothing else, so a pass that wanders cannot change a title, a type or a source. Everything except the body was settled by 6.4.
+
 Links are written **bundle-absolute** (`/tables/customers.md`), which is the preferred form and survives file moves.
 
-Broken links are permitted and expected: a concept can reference knowledge not yet written. `okflint` reports them as W2 warnings, not errors.
+**Only what this run wrote is woven.** A skipped source's concepts are unchanged output, and rewriting them would spend a model call producing a file nobody asked for. The consequence is that links point forward from new concepts to old ones and not back, until the old one is itself re-ingested — the missing direction is exactly what §8's ghost edges are for.
+
+A concept a human owns is not woven, for the same reason it is not overwritten (§6.4). A weave failure leaves the unlinked concept in place and is reported: linking is an upgrade to a concept, not a precondition for one — which is also why, unlike a failed *section* (§6.1), it does not mark the source incomplete. Re-synthesizing a whole document to retry two links would cost more than the links are worth.
+
+Broken links are permitted and expected: a *human* can reference knowledge not yet written, and `okflint` reports that as a W2 warning rather than an error. A model handed the full concept index is in a different position — a path outside that index is a guess, not a forward reference — so the pass unwraps such links back to plain text and reports the targets. Both halves matter: the tolerance is for authors, the repair is for generators.
+
+Two further repairs, mechanical because the intent is unambiguous, both found on the first real corpus rather than reasoned about in advance:
+
+- **Inverted syntax** — `[/finance/pricing.md](list prices)`. Swapped back when the label side resolves to a concept and the target side does not.
+- **A path where the label should be** — `[/finance/pricing.md](/finance/pricing.md)`. The link works, which is why no linter objects, but a raw path is not a label; it becomes the target concept's title. This is why the weave index carries titles as well as descriptions, unlike the synthesis one.
+
+Prompt wording is not the fix for any of these. A repair that runs after the response is checkable and testable offline; a rule in the prompt is neither.
+
+**The ledger must record the post-weave `body_sha256`** (§5). Recording the pre-weave hash would make the next run read every concept as hand-edited and refuse to touch any of them.
 
 ### 6.6 emit
 
-Write concept files, then generate every `index.md` bottom-up (entries carry the linked concept's `description` verbatim), then append to `log.md` under today's ISO date, newest first. Log entries use the conventional bold leading word: `**Creation**`, `**Update**`, `**Deprecation**`.
+Write concept files, then generate every `index.md` bottom-up, then append to `log.md` under today's ISO date, newest first. Log entries use the conventional bold leading word: `**Creation**`, `**Update**`, `**Deprecation**`.
+
+**Indexes are read off the bundle, not accumulated during the run.** A directory whose concepts were all skipped has to be indexed exactly like one just written, and an entry must never disagree with the concept it points at — so every label is the target's own `title` and every line its own `description`, verbatim. Deriving a label from the slug instead folds accents away and then applies English title-case, which reads as damage in any other language.
+
+An entry for a concept that owns a subdirectory states how many concepts are below it and links to that subdirectory's index. Without it the root index is a dead end: a reader concludes the bundle holds three documents when it holds eighteen. A directory no concept owns is listed in its own right. A `status: deprecated` concept is marked as such, since an index that lists it as an equal is the one place the deprecation would be invisible.
+
+The root index's heading comes from `[bundle].title`, falling back to the project directory name — which names the tool rather than the knowledge unless the two happen to agree.
 
 Writes are atomic per file (temp + rename) and the whole emit is transactional at the manifest level: the manifest is updated only after every file lands, so a crash mid-emit leaves the previous manifest and the next run reconciles.
 
@@ -477,6 +513,7 @@ Registering it is a `.mcp.json` entry pointing at the script — which makes any
 root = "bundle"
 okf_version = "0.2"
 actor = "ragged/0.1.0"
+# title = "Derecho Informático"   # omit -> the project directory name
 
 [sources.local]
 family = "document"
@@ -522,7 +559,7 @@ random_state = 42
 | 3 | **Synthesis cost on large corpora.** 400 documents × ~3 units × Opus 5 at high effort is real money. | Cached system prefix (~0.1× on the bulk of input tokens), Batches API (50%), hash-based skip on unchanged files. Report estimated cost before a run and require confirmation above a configurable ceiling. |
 | 4 | **Embedding provider is undecided** (§6.8). Local `bge-small` is weaker on domain jargon; hosted costs money and, for query embedding, a credential at read time. | Decide at M3 by measuring ghost-edge quality on the real corpus, not up front. Sidecar-only, so swapping is a re-embed that touches nothing in `bundle/`. |
 | 5 | **Layout instability across ingests.** UMAP with new points added can reshuffle globally even with a fixed seed. | Fixed `random_state`; investigate `umap.transform()` on a persisted fitted model to place new points into an existing layout rather than refitting. Refit only on explicit `ragged reindex --full`. |
-| 6 | **Human edits vs. LLM ownership.** The wiki pattern says the LLM owns layer 2, but a human who verified a concept has a legitimate claim on it. | `human_edited` flag + `verified` detection + `.ragged/proposed/` (§6.4). Never silently overwrite. |
+| 6 | **Human edits vs. LLM ownership.** The wiki pattern says the LLM owns layer 2, but a human who verified a concept has a legitimate claim on it. | Body-hash comparison + `verified` detection + `.ragged/proposed/` (§6.4). Never silently overwrite. Built in M2. |
 | 7 | **Sensitive content.** Local phase 1 is fine, but document text goes to the Claude API during synthesis, and phase 2 adds cloud sources. | Document this explicitly before first run. Embeddings stay local by default specifically so the *bulk* re-processing path is offline. Revisit before any cloud connector ships. |
 | 8 | **okflint version drift.** It's a young package; its manifest profile format may change. | Pin the version in `pyproject.toml`; keep the built-in three-rule fallback working as a hard floor. |
 
@@ -539,8 +576,8 @@ random_state = 42
 | | Milestone | Status |
 |---|---|---|
 | **M1** | Walking skeleton | **done** |
-| **M2** | Real bundle | next |
-| **M4** | Agent contract | after M2 |
+| **M2** | Real bundle | **done** |
+| **M4** | Agent contract | next |
 | **M3** | Vectors + graph | after M4 |
 | **M5** | Connectors | phase 2 |
 | **M6** | Extract `okf/` as a standalone library | gated — see below |
@@ -551,16 +588,23 @@ random_state = 42
 
 **M1 — walking skeleton. Done.** `LocalFileSource` + markitdown + single-unit synthesis + emit + okflint + a generated `okf-base.yaml`. Pluggable providers (Anthropic, Gemini). One file in, one conformant concept out. 53 tests. No links, no segmentation, no vectors.
 
-**M2 — real bundle. In progress: item 2 of 4 done.** In dependency order:
+**M2 — real bundle. All four items done.** In dependency order:
 
-1. **`manifest.json` + idempotent re-ingest.** *Pending — now the blocking item.* Highest value: today every `build` re-synthesizes everything and re-pays every model call, and segmentation raised that from 1 call per source to N+1. Content-hash skip, `status: deprecated` for vanished sources, `human_edited` protection (§6.4). It also owns **stale-output cleanup**: parent ids derive from model-written titles, so a rebuild can emit a differently-named tree and orphan the previous one, since nothing removes concepts a rerun no longer produces.
+1. **`manifest.json` + idempotent re-ingest.** **Done**, in `ledger.py` (`okf/manifest.py` was taken by the okflint manifest). Content-hash skip so an unchanged source costs nothing — not extraction, not the N+1 model calls segmentation turned one source into. Plus `status: deprecated` for vanished sources, human-edit and `verified` protection via `.ragged/proposed/` (§6.4), and **stale-output cleanup**: parent ids derive from model-written titles, so a rebuild emits a differently-named tree as a matter of course — observed on two builds over the same three unchanged PDFs, different parent ids both times — and nothing else removes what the rename leaves behind.
 2. **Segmentation** (§4.3). **Done.** Two passes: a planning call returns the parent's identity plus one verbatim `start_marker` per section, code cuts the text at those markers, then one synthesis call per section. Two passes rather than one call returning an array, because an array makes every concept share one `max_tokens` — which is what produced M1's flat ~2.5k-per-concept ceiling regardless of source length. Measured on 86k characters of PDF: retention 9% → 48%. A section that fails is recorded and skipped, so one 503 costs one section rather than the document.
-3. **Link-weave** (§6.5) — *pending.* Parents link down and the subdirectory index links across, but there are no cross-document links, and §4.3's "every child links back to its parent in prose" is not implemented: fabricating that sentence in the writer would be inventing content, so it belongs to this pass.
-4. **Per-directory `index.md`** — *partially done.* Segmentation writes one per parent subdirectory, which is what keeps `W4` clear now that the bundle has subdirectories. A general per-directory pass is still pending.
+3. **Link-weave** (§6.5). **Done**, in `synth/weave.py`. One call per concept written this run, given the full bundle index and the `candidate_links` synthesis proposed; returns `body_markdown` alone. §4.3's "every child links back to its parent in prose" is served by telling the pass its parent rather than by fabricating the sentence in the writer. Targets outside the index are unwrapped to plain text and reported — the spec's tolerance for broken links is for human authors, not for a generator holding the index. The ledger records the **post-weave** `body_sha256`, or the next run reads every concept as human-edited.
 
-Exit criterion: ingest a real 20-file corpus, validate clean, re-run and observe zero model calls.
+   Also done here, and named in the prompt-changes note below: the bundle's existing-concept index now reaches the synthesis cached prefix, snapshotted before discovery so the prefix stays byte-identical for the run.
+4. **Per-directory `index.md`.** **Done**, as `okf.write_indexes` — one pass over the whole bundle read off disk, replacing the entries the pipeline used to accumulate. The three defects it owned are fixed with it:
+   - **Labels came from the slug, not the `title`.** An index read `Delitos Informaticos Y Su Marco Legal En Argentina` while the frontmatter said `Delitos Informáticos y su Marco Legal en Argentina` — accents folded away by the slug, then English title-case applied to Spanish. Entries now carry the target's own `title` and `description`. The same fix applies to the parent concept's own `# Sections` list, which had the defect in a second place.
+   - **The bundle title came from the project directory name**, so a bundle about Argentine cybercrime law was titled `# Ragged`, after the tool. `[bundle].title` now sets it, falling back to the directory name.
+   - **The root index was a dead end for every child concept.** An entry whose concept owns a subdirectory now states how many concepts sit below it and links to that subdirectory's index.
 
-Two prompt changes belong to M2 itself: the existing-concept index must reach the cached prefix (§6.4 already specifies it; the M1 code does not do it), and link-weave needs its own prompt where the wiki framing actually changes a decision.
+Exit criterion: ingest a real corpus, validate clean, re-run and observe zero model calls. **Met** on the 3-PDF Spanish corpus: 18 concepts, okflint exit 0, and a second `build` reporting `skipped 3 unchanged source(s) - no model call` with `tokens in=0`. The corpus is smaller than the 20 files the criterion named; what the extra files would exercise is throughput, not a code path, and 21 units through `plan → synthesize → weave` covers the paths.
+
+The real corpus also paid for itself twice over: all three link-repair modes in §6.5 and the `complete` flag in §5 came from running it, not from reasoning about it beforehand.
+
+Both prompt changes that belong to M2 itself are done with item 3: the existing-concept index reaches the cached prefix (§6.4), and link-weave has its own prompt, where the wiki framing changes a decision — "a link asserts a relationship and the sentence around it says which" is the reason the pass is forbidden a "Related" section.
 
 **Prompt calibration comes after M2, deliberately not before.** Few-shot examples are the strongest signal in a prompt — the model matches their length, tone and structure — but writing them now would bake in guesses: segmentation changes the unit shape, so a "one file, one concept" example would teach the wrong thing. The method after M2 is to take a generated concept a human promoted from `draft` to `stable` and use *that* as the example. It is then calibrated against the real corpus and the owner's judgement rather than against an invented document.
 

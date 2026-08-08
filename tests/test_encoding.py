@@ -293,7 +293,7 @@ def test_written_concepts_use_lf_only(tmp_path):
         bundle,
         okf.Concept(concept_id="a", type="Document", title="A", description="d", body="x\ny"),
     )
-    okf.write_root_index(bundle, "0.2", "T", [("a", "d")])
+    okf.write_indexes(bundle, "0.2", "T")
     okf.append_log(bundle, "2026-08-04", ["**Creation**: x."])
     okf.write_manifest(tmp_path, "bundle", "T")
 

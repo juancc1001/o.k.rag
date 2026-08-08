@@ -2,6 +2,8 @@
 root = "bundle"
 okf_version = "0.2"
 actor = "ragged/0.1.0"
+# title = "..."   # heading of the root index.md; omit and it is the project
+                  # directory name, which names the tool, not the knowledge
 
 [sources.local]
 family = "document"

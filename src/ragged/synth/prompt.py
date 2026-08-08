@@ -1,8 +1,8 @@
-"""The synthesis system prompt.
+"""The synthesis, planning and link-weave system prompts.
 
-This string is the cached prefix: it MUST be byte-identical across every unit in
-a run or prompt caching silently stops working. Nothing dynamic goes in here
-except the type vocabulary, which is stable for the run.
+Each is a cached prefix: it MUST be byte-identical across every unit in its pass
+or prompt caching silently stops working. The only things that vary are the type
+vocabulary and the bundle's concept index, both snapshotted once per run.
 """
 
 from __future__ import annotations
@@ -46,6 +46,11 @@ document from it.
 
 6. `tags` — cross-cutting categories only. Omit rather than emit a tag that
    would apply to exactly one concept in the bundle.
+
+7. `candidate_links` — ids from the bundle index below that this concept
+   genuinely relates to. A later pass weaves them into the prose, so name only
+   what a reader of *this* concept would want to follow. Omit rather than guess,
+   and never name an id that is not in the index.
 
 ## Hard constraints
 
@@ -110,14 +115,108 @@ sections that will each become one child concept.
 """
 
 
-def system_prompt(allowed_types: list[str]) -> str:
-    vocabulary = "\n".join(f"- {t}" for t in allowed_types) or "- (none yet)"
-    return f"{SYSTEM}\n## Type vocabulary\n\n{vocabulary}\n"
+WEAVE_SYSTEM = """\
+You add cross-links to one concept document in an Open Knowledge Format (OKF)
+bundle.
+
+A bundle is a wiki, and what makes it more than a folder of files is that a
+reader who meets a term can follow a link to the concept that explains it. Every
+concept has already been written. Your only job is the links between them.
+
+## Rules
+
+1. Link where a reader would want to follow: a term this body uses and another
+   concept defines, a document it refers to, a process it is one step of.
+
+2. Links go **inline, in the prose, on the words that already carry the
+   meaning** — `deferred under the [revenue recognition
+   policy](/finance/revenue-policy.md)`. A link asserts a relationship and the
+   surrounding sentence is what says which relationship it is. A trailing
+   "Related" or "See also" list says nothing, so do not add one.
+
+3. Write every link bundle-absolute: leading `/`, trailing `.md`, spelled
+   exactly as the concept index gives the id. That form survives a file move.
+
+4. Only link to an id in the index. Never invent a path, never link a concept to
+   itself, and do not link the same target more than once or twice.
+
+5. Leave links the body already has exactly as they are.
+
+## Hard constraints
+
+- **Change nothing except the links.** Do not add facts, rewrite sentences to
+  manufacture a linking opportunity, reorder or retitle sections, or shorten
+  anything. Placing a link may need a few words reworded around it; more than
+  that is out of scope.
+- Keep every footnote reference and every footnote definition untouched.
+- A concept with nothing worth linking to comes back unchanged. That is a
+  correct answer, not a failure.
+"""
+
+
+def system_prompt(allowed_types: list[str], index: list[tuple[str, str]] | None = None) -> str:
+    return f"{SYSTEM}\n{_vocabulary(allowed_types)}\n{_index(index)}"
 
 
 def outline_system_prompt(allowed_types: list[str]) -> str:
-    vocabulary = "\n".join(f"- {t}" for t in allowed_types) or "- (none yet)"
-    return f"{OUTLINE_SYSTEM}\n## Type vocabulary\n\n{vocabulary}\n"
+    return f"{OUTLINE_SYSTEM}\n{_vocabulary(allowed_types)}"
+
+
+def weave_system_prompt(index: list[tuple[str, str, str]]) -> str:
+    """The weave listing carries titles too: the pass has to pick link labels."""
+    lines = "\n".join(
+        f"- `/{cid}.md` {name!r}" + (f" - {description}" if description else "")
+        for cid, name, description in index
+    ) or "- (the bundle is empty)"
+    return f"{WEAVE_SYSTEM}\n## Concepts in this bundle\n\n{lines}\n"
+
+
+def weave_user_prompt(
+    concept_id: str,
+    title: str,
+    body: str,
+    *,
+    parent: str | None,
+    candidates: list[str],
+) -> str:
+    """One concept's framing. Kept out of the prefix so the prefix stays cached."""
+    lines = [
+        f"Rewrite the body of `/{concept_id}.md` ({title!r}) with links woven in.",
+        "Do not link it to itself.",
+    ]
+    if parent is not None:
+        lines.append(
+            f"This concept is one section of `/{parent}.md`. Link back to the parent "
+            f"in prose where it fits naturally."
+        )
+    if candidates:
+        named = ", ".join(f"`/{c}.md`" for c in candidates)
+        lines.append(
+            f"While writing this concept the author noted it relates to: {named}. "
+            f"That is a hint, not an instruction — link them only where the prose "
+            f"actually supports it."
+        )
+    return "\n".join(lines) + f"\n\n--- body ---\n{body}"
+
+
+def _vocabulary(allowed_types: list[str]) -> str:
+    listing = "\n".join(f"- {t}" for t in allowed_types) or "- (none yet)"
+    return f"## Type vocabulary\n\n{listing}\n"
+
+
+def _index(index: list[tuple[str, str]] | None) -> str:
+    """The bundle's existing concepts, one line each (§6.4).
+
+    Snapshotted once per run by the caller — anything that moves during a run
+    would break the cached prefix.
+    """
+    if not index:
+        return "## Concepts already in this bundle\n\n- (the bundle is empty)\n"
+    lines = "\n".join(
+        f"- `/{cid}.md` - {description}" if description else f"- `/{cid}.md`"
+        for cid, description in index
+    )
+    return f"## Concepts already in this bundle\n\n{lines}\n"
 
 
 def user_prompt(source_id: str, source_uri: str, source_title: str, text: str) -> str:

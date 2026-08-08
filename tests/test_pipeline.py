@@ -12,6 +12,7 @@ from ragged.synth import (
     ProviderHTTPError,
     Section,
     SynthResult,
+    WeaveResult,
     ensure_footnote_defs,
 )
 
@@ -23,10 +24,20 @@ Annual prepayments are deferred and released monthly.
 """
 
 
+def fake_weave(**kwargs) -> WeaveResult:
+    """A weave pass that finds nothing worth linking — the default everywhere.
+
+    Stubbed in the fixture rather than per test, because an unstubbed weave
+    would reach the network and the suite runs offline.
+    """
+    return WeaveResult(body_markdown=kwargs["body"], invented=[])
+
+
 @pytest.fixture
 def project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     # the default provider is anthropic; satisfy its pre-flight credential check
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key-not-used")
+    monkeypatch.setattr(pipeline, "weave", fake_weave)
     (tmp_path / "sources").mkdir()
     (tmp_path / "sources" / "revenue-policy.md").write_text(SAMPLE, encoding="utf-8")
     (tmp_path / "ragged.toml").write_text(
@@ -266,8 +277,9 @@ def test_the_parent_links_down_to_each_child(segmented):
     cfg = config_module.load(segmented)
     pipeline.ingest(cfg, dry_run=False)
     parent = (cfg.bundle_root / "trabajo-practico.md").read_text(encoding="utf-8-sig")
-    assert "/trabajo-practico/definicion.md" in parent
-    assert "/trabajo-practico/doctrina.md" in parent
+    # labelled by the child's title, not by its slug run through title-case
+    assert "[Definicion](/trabajo-practico/definicion.md)" in parent
+    assert "[Doctrina](/trabajo-practico/doctrina.md)" in parent
 
 
 def test_one_failed_section_does_not_lose_the_others(segmented, monkeypatch):

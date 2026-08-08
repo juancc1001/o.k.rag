@@ -1,13 +1,22 @@
 """OKF v0.2 read/write. Conformance rules live in `validate`."""
 
 from .concept import Concept, Source, parse, render, slugify
+from .inventory import ConceptRef, inventory
 from .manifest import MANIFEST_NAME, write_manifest
 from .validate import Finding, Report, validate
-from .writer import append_log, write_child_index, write_concept, write_root_index
+from .writer import (
+    append_log,
+    delete_concept,
+    set_status,
+    write_concept,
+    write_indexes,
+)
 
 __all__ = [
     "Concept",
+    "ConceptRef",
     "Source",
+    "inventory",
     "parse",
     "render",
     "slugify",
@@ -17,7 +26,8 @@ __all__ = [
     "Report",
     "validate",
     "append_log",
-    "write_child_index",
+    "delete_concept",
+    "set_status",
     "write_concept",
-    "write_root_index",
+    "write_indexes",
 ]

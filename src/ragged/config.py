@@ -10,6 +10,9 @@ class BundleConfig(BaseModel):
     root: str = "bundle"
     okf_version: str = "0.2"
     actor: str = "ragged/0.1.0"
+    title: str | None = None
+    """Heading of the root index.md. None -> the project directory name, which
+    names the tool rather than the knowledge unless the two happen to agree."""
 
 
 class LocalSourceConfig(BaseModel):
@@ -51,6 +54,12 @@ class Config(BaseModel):
     @property
     def sidecar_root(self) -> Path:
         return self.project_root / ".ragged"
+
+    @property
+    def bundle_title(self) -> str:
+        if self.bundle.title:
+            return self.bundle.title
+        return self.project_root.name.replace("-", " ").replace("_", " ").title()
 
 
 def load(project_root: Path | None = None) -> Config:
