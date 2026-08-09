@@ -7,10 +7,11 @@ from pathlib import Path
 import typer
 
 from . import config as config_module
-from . import okf
+from . import okf, vectors
 from .config import Config
 from .pipeline import IngestSummary, ingest, inspect_extraction
 from .synth import MissingCredential, resolve
+from .vectors import MissingEmbedCredential
 
 app = typer.Typer(add_completion=False, help="Build an OKF v0.2 bundle from a folder of files.")
 
@@ -77,6 +78,22 @@ def check() -> None:
     report = okf.validate(cfg.bundle_root)
     _print_report(report)
     raise typer.Exit(0 if report.ok else 1)
+
+
+@app.command()
+def index() -> None:
+    """Embed the bundle, project it to 2D, write graph.json. Sidecar only."""
+    cfg = _load()
+    if not cfg.bundle_root.exists():
+        typer.secho(f"no bundle at {cfg.bundle_root}", fg="red")
+        raise typer.Exit(2)
+    try:
+        summary = vectors.index(cfg)
+    except MissingEmbedCredential as exc:
+        typer.secho(str(exc), fg="red")
+        raise typer.Exit(2) from None
+    _print_index(summary)
+    raise typer.Exit(1 if summary.embed.errors else 0)
 
 
 @app.command()
@@ -222,6 +239,34 @@ def _print_summary(summary: IngestSummary, dry_run: bool) -> None:
 
     if summary.report:
         _print_report(summary.report)
+
+
+def _print_index(summary: vectors.IndexSummary) -> None:
+    embedded = summary.embed
+    typer.secho(
+        f"\nembedded {len(embedded.embedded)} concept(s) with "
+        f"{embedded.provider}/{embedded.model} at {embedded.dim} dims",
+        fg="green",
+    )
+    if embedded.reused:
+        typer.secho(
+            f"  reused {len(embedded.reused)} unchanged vector(s) - no call",
+            fg="bright_black",
+        )
+    if embedded.dropped:
+        typer.secho(f"  dropped {len(embedded.dropped)} vector(s) with no concept", fg="bright_black")
+    for concept_id, why in embedded.errors.items():
+        typer.secho(f"  FAILED {concept_id}: {why}", fg="red")
+
+    stats = summary.stats
+    typer.echo(f"\nprojection     {summary.method}")
+    typer.echo(
+        f"graph          {stats.get('concepts', 0)} node(s), "
+        f"{stats.get('links', 0)} link(s), {stats.get('ghosts', 0)} ghost(s), "
+        f"{stats.get('broken_links', 0)} broken link(s)"
+    )
+    for path in summary.written:
+        typer.secho(f"  {path}", fg="bright_black")
 
 
 def _print_report(report: okf.Report) -> None:

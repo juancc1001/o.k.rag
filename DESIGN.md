@@ -2,7 +2,7 @@
 
 **One line:** drop files in, get out a portable OKF v0.2 knowledge bundle, a generated agent contract, and a served graph that shows both the links the knowledge *has* and the ones it *should* have.
 
-**Status: M2 built.** See [§13 Milestones](#13-milestones) for what exists and what comes next. `README.md` covers installation and usage.
+**Status: M2 built, plus M3's offline core** — `embed`, `project` and `graph.json`, behind `ragged index`. The HTTP API and the browser frontend are not built. See [§13 Milestones](#13-milestones) for what exists and what comes next. `README.md` covers installation and usage.
 
 ## Contents
 
@@ -74,8 +74,8 @@ ragged/
 │  ├─ manifest.json            # source hash → concept ids; the idempotency ledger
 │  ├─ extracted/               # cached plain-text extractions, keyed by content hash
 │  ├─ proposed/                # replacements for concepts a human owns (§6.4)
-│  ├─ embeddings.npy           # float32 [n_concepts, 384]
-│  ├─ embeddings_meta.json     # row index → concept id, embedded_hash
+│  ├─ embeddings.npy           # float32 [n_concepts, dim], L2-normalized
+│  ├─ embeddings_meta.json     # provider, model, dim + row → concept id, embedded hash
 │  ├─ layout.json              # 2D projection coordinates
 │  └─ graph.json               # what the frontend fetches (nodes + both edge sets)
 │
@@ -189,7 +189,11 @@ Losing the ledger costs a full re-ingest, never correctness — so every read pa
 
 ### `embeddings.npy` + `embeddings_meta.json`
 
-`float32[n, 384]`, L2-normalized at write time so cosine similarity is a dot product. Meta maps row → `{concept_id, embedded_body_sha256}`; a concept whose body hash differs from `embedded_body_sha256` is re-embedded.
+`float32[n, dim]`, L2-normalized at write time so cosine similarity is a dot product. Meta maps row → `{concept_id, embedded_body_sha256}`; a concept whose body hash differs from `embedded_body_sha256` is re-embedded.
+
+Meta also records the `provider`, `model` and `dim` the matrix was produced with. Not a second opinion about configuration — it is what makes "swap the provider" (§6.8) safe to do by editing `ragged.toml` rather than only by deleting the file: vectors from a different model are not comparable, and at a different width they are not even stackable, so a mismatch discards the matrix and re-embeds instead of mixing two spaces in one file.
+
+A concept that fails to embed keeps whatever vector it already had, recorded against the *old* body hash. The node still has a position, and the stale hash is what makes the next run retry it.
 
 ### `graph.json`
 
@@ -202,10 +206,10 @@ Precomputed server-side, fetched whole by the frontend. See §8.
 ```
 discover → extract → segment → synthesize → link-weave → emit → validate → embed → project → serve
               │                     │            │                  │          │
-           (cached)             (Claude)     (Claude)          (okflint)   (local ONNX)
+           (cached)             (Claude)     (Claude)          (okflint)   (embed provider)
 ```
 
-Stages 1–7 produce the bundle. Stages 8–9 produce the sidecar vectors. They are separable: `ragged ingest` runs 1–7, `ragged index` runs 8–9, `ragged serve` runs the API + web.
+Stages 1–7 produce the bundle. Stages 8–9 produce the sidecar vectors. They are separable, and that separation is a command boundary: `ragged build` runs 1–7, `ragged index` runs 8–9, `ragged serve` will run the API + web. `build` never embeds — nothing in the build path uses a vector.
 
 ### 6.1 discover
 
@@ -364,11 +368,13 @@ The okflint subprocess must decode as UTF-8 explicitly — `text=True` inherits 
 
 **Nothing in the build path uses embeddings.** They exist for §8 — graph layout and the missing-link lint — so they are needed at M3, which sits behind M4. Concepts are produced, validated and consumed without them.
 
-**Local vs hosted is an open decision, to be made at M3.** The original argument for local (fastembed + `bge-small-en-v1.5`, 384-dim, ONNX, offline) rested partly on the Anthropic API having no embedding model. That reason expired when Gemini became the default provider — it has one, reachable with the key the build already needs. What survives is weaker: rebuilds are free and offline, and embedding a *query* at read time needs no credential. Against local: ~150 MB of `onnxruntime` dependencies for something the existing key already covers.
+**Local vs hosted is still an open decision.** The original argument for local (fastembed + `bge-small-en-v1.5`, 384-dim, ONNX, offline) rested partly on the Anthropic API having no embedding model. That reason expired when Gemini became the default provider — it has one, reachable with the key the build already needs. What survives is weaker: rebuilds are free and offline, and embedding a *query* at read time needs no credential. Against local: ~150 MB of `onnxruntime` dependencies for something the existing key already covers.
 
 Note the asymmetry that makes this low-stakes: concept vectors are computed at **build** time, when a credential is present either way, and then stored. Reading them needs no credential regardless of who produced them. Only query embedding would, and `search` falls back to index traversal.
 
 Decide it by measurement: if local `bge-small` produces useful ghost edges on the real corpus, keep it. If the signal is noise, compare against `gemini-embedding-001`. Either way the vectors live in `.ragged/` — swapping providers is deleting `embeddings.npy` and re-embedding, with zero impact on `bundle/`. This is the sidecar rule paying for itself.
+
+**What is built is therefore the pluggable interface, not the answer.** `vectors/providers/` mirrors `synth/providers/` exactly — one thin module per backend exposing `NAME`, `DEFAULT_MODEL`, `ENV_VARS`, `WINDOW_CHARS`, `credential_present()` and `embed()`, registered in `PROVIDERS` and selected by `[vectors].provider`. Both are implemented: `gemini` (`gemini-embedding-001`) because the build already requires that credential, and `fastembed` (`bge-small-en-v1.5`) behind an optional extra so the default install does not carry onnxruntime for a question nobody has answered yet. Chunking is per-provider (`WINDOW_CHARS`) rather than global, because the window is a property of the model.
 
 Whichever wins: embed at **concept granularity** — one vector per concept file, over `title + description + body`. Concepts longer than the model's window are embedded as mean-pooled chunks; the chunk vectors are discarded, only the concept vector is kept.
 
@@ -376,11 +382,15 @@ Chunk-level vectors are deliberately not stored in phase 1. The retrieval path i
 
 Only concepts whose `body_sha256` changed are re-embedded.
 
+A failure to embed one concept is an error recorded against that concept, never an aborted run — the same rule as a failed synthesis unit (§6.4). The bundle is unaffected either way: `embed` reads it and writes nothing into it.
+
 ### 6.9 project
 
-Embeddings → 2D. **UMAP** (`umap-learn`) with a fixed `random_state` so the layout is stable across runs — a graph that reshuffles on every ingest is unusable. Falls back to PCA when `n_concepts < 15` (UMAP is unstable at that size) or when `umap-learn` is unavailable (it pulls numba, which is a heavy dependency; it is an optional extra).
+Embeddings → 2D. **UMAP** (`umap-learn`) with a fixed `random_state` so the layout is stable across runs — a graph that reshuffles on every ingest is unusable. Falls back to PCA when `n_concepts < 15` (UMAP is unstable at that size) or when `umap-learn` is unavailable (it pulls numba, which is a heavy dependency; it is an optional extra). PCA is plain NumPy — centre, SVD, first two components — rather than a scikit-learn import, so the fallback carries no dependency of its own. The coordinates are written to `layout.json` as well as into `graph.json`, so the projection stage has an output of its own.
 
-kNN is brute-force cosine over the normalized matrix — `n × 384` float32 is 1.5 MB at 1000 concepts, 76 MB at 50k. NumPy handles this in milliseconds and the code is twenty lines. Swap to `hnswlib` only if a real corpus crosses ~100k concepts.
+The seed only fixes the *fit*. Refitting with new points can still move the whole layout, which is Risk 5 and is not solved here; the fix is `umap.transform()` against a persisted fitted model, which needs the model pickled into the sidecar and an explicit `reindex --full` to refit. Neither is built.
+
+kNN is brute-force cosine over the normalized matrix — `n × dim` float32 is 1.5 MB at 1000 concepts and 384 dims. NumPy handles this in milliseconds and the code is twenty lines. Swap to `hnswlib` only if a real corpus crosses ~100k concepts; the full similarity matrix is `n²`, which is what will run out first.
 
 ---
 
@@ -423,7 +433,13 @@ Rendering only the first gives you what the Google reference agent's `visualize`
 }
 ```
 
-**Ghost edge definition:** pair `(a, b)` such that `cos(a, b) ≥ τ` (default `τ = 0.82`, configurable), `b` is in `a`'s top-k neighbours (default `k = 8`), and there is **no** markdown link between them in either direction. Ghosts are computed only on the upper triangle to avoid duplicates.
+**Ghost edge definition:** pair `(a, b)` such that `cos(a, b) ≥ τ` (default `τ = 0.82`, configurable), `b` is in `a`'s top-k neighbours (default `k = 8`), and there is **no** markdown link between them in either direction. Ghosts are computed only on the upper triangle to avoid duplicates — so the top-k condition is satisfied by *either* end, since a pair reachable from one direction is the same pair.
+
+Three details the schema does not show:
+
+- **`trust` is derived, never stored.** It is read off the concept's `verified` block per the spec's tier rules — a `human:` actor makes it `human-reviewed`, any other verifier `machine-confirmed`, none `unverified`. Writing it back into the concept would forge the tier (§4.4), so the graph computes it on every build.
+- **Every concept is a node**, including one that failed to embed. It has no vector, so it has no position and sits at the origin, and it takes part in no ghost edge — but its authored links are still in the graph. Dropping the node instead would make the graph silently under-report the bundle.
+- **`stats.broken_links`** counts link targets that resolve to no concept — the same condition as the `W2` warning, counted rather than listed.
 
 τ needs calibration against a real corpus. A too-low threshold buries the signal in noise (everything in a coherent bundle is somewhat similar to everything else); a too-high one finds nothing. The UI exposes τ as a live slider, and the config default is set from whatever the slider converges on in practice.
 
@@ -438,6 +454,8 @@ Rendering only the first gives you what the Google reference agent's `visualize`
 - **Node opacity** — reduced when `status: deprecated` or `today >= stale_after`.
 
 ### Stack
+
+**Not built.** `graph.json` is produced by `ragged index`; the API (§11) and the frontend below are the remaining half of M3.
 
 **sigma.js v3 + graphology**, WebGL. d3-force is nicer to style but degrades past ~1–2k nodes, and a document corpus of any size will exceed that. Positions come precomputed from UMAP, so no force simulation runs in the browser — sigma is used as a renderer, not a layout engine. Layout is therefore deterministic and instant.
 
@@ -538,15 +556,18 @@ allowed = ["Document", "Concept", "Entity", "Process", "Decision", "Reference"]
 allow_new = true            # new types are appended and reported, never silent
 
 [vectors]
-model = "BAAI/bge-small-en-v1.5"
-dim = 384
+provider = "gemini"         # gemini | fastembed (fastembed is an optional extra)
+# model = "gemini-embedding-001"   # omit for the provider default
+dim = 768                   # requested output width; fastembed's 384 is fixed
 knn_k = 8
-ghost_threshold = 0.82
+ghost_threshold = 0.82      # τ
 
 [projection]
-method = "umap"             # umap | pca
+method = "umap"             # umap | pca; umap-learn is an optional extra
 random_state = 42
 ```
+
+`[vectors].provider` having a default is not Risk 4 being decided (§6.8). `gemini` is the one that costs no extra credential and no extra dependency, which makes it the right thing to start measuring *from*.
 
 ---
 
@@ -554,11 +575,11 @@ random_state = 42
 
 | # | Risk | Mitigation |
 |---|---|---|
-| 1 | **Ghost-edge threshold is uncalibrated.** τ = 0.82 is a guess. A coherent corpus may make everything ≥0.9-similar, drowning the signal. | Live slider in the UI; calibrate on the first real corpus; consider per-type thresholds or rank-based (top-k only) instead of absolute similarity. |
+| 1 | **Ghost-edge threshold is uncalibrated.** τ = 0.82 is a guess. A coherent corpus may make everything ≥0.9-similar, drowning the signal. | τ and k are both config, so recomputing the graph at another threshold costs no model call — only the last stage reruns. Live slider once the UI exists; calibrate on the first real corpus; consider per-type thresholds or rank-based (top-k only) instead of absolute similarity. |
 | 2 | **Extraction quality caps everything downstream.** Garbage text → garbage concepts, and no amount of prompt work fixes it. | Cache extractions and expose them; a `ragged extract --inspect <file>` command so extraction can be debugged independently of synthesis. |
 | 3 | **Synthesis cost on large corpora.** 400 documents × ~3 units × Opus 5 at high effort is real money. | Cached system prefix (~0.1× on the bulk of input tokens), Batches API (50%), hash-based skip on unchanged files. Report estimated cost before a run and require confirmation above a configurable ceiling. |
-| 4 | **Embedding provider is undecided** (§6.8). Local `bge-small` is weaker on domain jargon; hosted costs money and, for query embedding, a credential at read time. | Decide at M3 by measuring ghost-edge quality on the real corpus, not up front. Sidecar-only, so swapping is a re-embed that touches nothing in `bundle/`. |
-| 5 | **Layout instability across ingests.** UMAP with new points added can reshuffle globally even with a fixed seed. | Fixed `random_state`; investigate `umap.transform()` on a persisted fitted model to place new points into an existing layout rather than refitting. Refit only on explicit `ragged reindex --full`. |
+| 4 | **Embedding provider is undecided** (§6.8). Local `bge-small` is weaker on domain jargon; hosted costs money and, for query embedding, a credential at read time. | **Still open, deliberately.** What is built is the pluggable interface with both backends registered, selected by config; the answer comes from measuring ghost-edge quality on the real corpus. Sidecar-only, so swapping is a re-embed that touches nothing in `bundle/`, and `embeddings_meta.json` records the provider so a swap re-embeds rather than mixing two vector spaces. |
+| 5 | **Layout instability across ingests.** UMAP with new points added can reshuffle globally even with a fixed seed. | Fixed `random_state` — **done**, and it is only half the mitigation: it makes a run reproducible, not a refit stable. `umap.transform()` on a persisted fitted model would place new points into the existing layout, but it needs the fitted model pickled into the sidecar and an explicit `ragged reindex --full` to refit. Not built. |
 | 6 | **Human edits vs. LLM ownership.** The wiki pattern says the LLM owns layer 2, but a human who verified a concept has a legitimate claim on it. | Body-hash comparison + `verified` detection + `.ragged/proposed/` (§6.4). Never silently overwrite. Built in M2. |
 | 7 | **Sensitive content.** Local phase 1 is fine, but document text goes to the Claude API during synthesis, and phase 2 adds cloud sources. | Document this explicitly before first run. Embeddings stay local by default specifically so the *bulk* re-processing path is offline. Revisit before any cloud connector ships. |
 | 8 | **okflint version drift.** It's a young package; its manifest profile format may change. | Pin the version in `pyproject.toml`; keep the built-in three-rule fallback working as a hard floor. |
@@ -577,12 +598,14 @@ random_state = 42
 |---|---|---|
 | **M1** | Walking skeleton | **done** |
 | **M2** | Real bundle | **done** |
+| **M3** | Vectors + graph | offline core done; API + frontend after M4 |
 | **M4** | Agent contract | next |
-| **M3** | Vectors + graph | after M4 |
 | **M5** | Connectors | phase 2 |
 | **M6** | Extract `okf/` as a standalone library | gated — see below |
 
-**M4 and M3 are swapped from the original order.** The objective is that any model *consumes* the bundle, and that is served by the agent contract, not by the graph. The graph is diagnostic; MCP is the product.
+**M3 and M4 were deliberately swapped, and then the execution went the other way.** The reason for the swap still stands: the objective is that any model *consumes* the bundle, and that is served by the agent contract, not by the graph. The graph is diagnostic; MCP is the product.
+
+M3's offline core was nevertheless built first. It cost nothing to take out of order, because `ragged index` is a separate command writing only into `.ragged/` — no build path, no `bundle/`, no dependency from `okf/` — so M4 begins from the same place it would have. What taking it early did *not* buy is the thing M3 exists for: τ stays a guess until something renders ghost edges against a real corpus. **M4 is still next**, and the remaining half of M3 follows it.
 
 ---
 
@@ -608,9 +631,19 @@ Both prompt changes that belong to M2 itself are done with item 3: the existing-
 
 **Prompt calibration comes after M2, deliberately not before.** Few-shot examples are the strongest signal in a prompt — the model matches their length, tone and structure — but writing them now would bake in guesses: segmentation changes the unit shape, so a "one file, one concept" example would teach the wrong thing. The method after M2 is to take a generated concept a human promoted from `draft` to `stable` and use *that* as the example. It is then calibrated against the real corpus and the owner's judgement rather than against an invented document.
 
-**M4 — agent contract.** Generated `AGENTS.md`, MCP server, `.mcp.json`. Three of the four MCP tools (`search`, `read_concept`, `lint`) are credential-free; only `ingest` inherits the write path's requirement, and the generated `AGENTS.md` must say so. Exit criterion: a session with no credential registers the server, answers a real question from the bundle, and reports lint findings.
-
 **M3 — vectors + graph.** Embed, project, `graph.json`, FastAPI, sigma.js frontend with both edge layers and the τ slider. Where the ghost-edge idea gets its first real test. Note `search` works on index traversal before this lands; embeddings upgrade it rather than enable it.
+
+**The offline core is built**, as `ragged index` (§6.8, §6.9, §8):
+
+- **`embed`** — `vectors/providers/` mirroring `synth/providers/`, with `gemini` and `fastembed` registered and neither one anointed (Risk 4 stays open). One vector per concept over `title + description + body`, mean-pooled over chunks past the provider's window, only the concept vector stored. A body whose hash matches `embedded_body_sha256` is not re-embedded, and one concept failing costs that concept alone.
+- **`project`** — UMAP with a fixed `random_state`, PCA below 15 concepts or without `umap-learn`. Both extras (`umap-learn`, `fastembed`) are optional: numba and onnxruntime are not something a default install should carry to produce a bundle that never reads a vector.
+- **`graph.json`** — nodes with derived `trust`, both edge sets, and the ghost rule of §8 over brute-force cosine kNN in NumPy.
+
+Everything it writes is in `.ragged/`: `embeddings.npy`, `embeddings_meta.json`, `layout.json`, `graph.json`. `build` does not call it and the bundle does not know it ran.
+
+**Not built:** the FastAPI app (§11) and the sigma.js frontend, which is where τ gets calibrated against a real corpus and where Risk 1 is actually answered.
+
+**M4 — agent contract.** Generated `AGENTS.md`, MCP server, `.mcp.json`. Three of the four MCP tools (`search`, `read_concept`, `lint`) are credential-free; only `ingest` inherits the write path's requirement, and the generated `AGENTS.md` must say so. Exit criterion: a session with no credential registers the server, answers a real question from the bundle, and reports lint findings.
 
 **M5 — connectors.** `BigQuerySource` (asset family) and `BlobSource` (document family).
 

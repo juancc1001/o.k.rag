@@ -7,6 +7,7 @@ dependencies = [
     "anthropic>=0.69",
     "google-genai>=1.0",
     "markitdown[all]>=0.1",
+    "numpy>=1.26",
     "pydantic>=2.7",
     "python-dotenv>=1.0",
     "pyyaml>=6.0",
@@ -15,6 +16,10 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "okflint>=0.3.1"]
+# both deliberately optional: umap-learn pulls numba, fastembed pulls ~150 MB of
+# onnxruntime, and neither is needed to produce or validate a bundle
+umap = ["umap-learn>=0.5"]
+fastembed = ["fastembed>=0.4"]
 
 [project.scripts]
 ragged = "ragged.cli:app"

@@ -128,8 +128,14 @@ def _check_log(report: Report, rel: str, text: str) -> None:
         report.warnings.append(Finding("W5", rel, "date headings not newest-first"))
 
 
-def _broken_links(body: str, rel: str, concept_ids: set[str]) -> list[str]:
-    broken = []
+def cross_links(body: str, rel: str) -> list[tuple[str, str]]:
+    """`(target as written, concept id it resolves to)` for every in-bundle link.
+
+    `rel` is the linking file's path relative to the bundle root, suffix included.
+    Says nothing about whether the id exists — that is the caller's question,
+    and both a broken-link warning and a link graph ask it of the same answer.
+    """
+    links = []
     here = Path(rel).parent
     for target in LINK_RE.findall(body):
         if "://" in target or target.startswith(("#", "mailto:")):
@@ -150,9 +156,12 @@ def _broken_links(body: str, rel: str, concept_ids: set[str]) -> list[str]:
                     parts.pop()
             elif seg not in ("", "."):
                 parts.append(seg)
-        if "/".join(parts) not in concept_ids:
-            broken.append(target)
-    return broken
+        links.append((target, "/".join(parts)))
+    return links
+
+
+def _broken_links(body: str, rel: str, concept_ids: set[str]) -> list[str]:
+    return [target for target, cid in cross_links(body, rel) if cid not in concept_ids]
 
 
 def _run_okflint(report: Report, bundle_root: Path) -> None:

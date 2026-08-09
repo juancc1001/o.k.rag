@@ -36,12 +36,32 @@ class TypesConfig(BaseModel):
     allow_new: bool = True
 
 
+class VectorsConfig(BaseModel):
+    provider: str = "gemini"
+    """Not DESIGN §12 Risk 4's answer — that is measured on a real corpus. This is
+    the one that needs no extra credential and no extra dependency."""
+    model: str | None = None
+    """None -> the provider's DEFAULT_MODEL."""
+    dim: int = 768
+    """Requested output width. Providers with a fixed width ignore it."""
+    knn_k: int = 8
+    ghost_threshold: float = 0.82
+
+
+class ProjectionConfig(BaseModel):
+    method: str = "umap"
+    """umap | pca. UMAP falls back to PCA below 15 concepts or without umap-learn."""
+    random_state: int = 42
+
+
 class Config(BaseModel):
     project_root: Path
     bundle: BundleConfig = Field(default_factory=BundleConfig)
     local: LocalSourceConfig = Field(default_factory=LocalSourceConfig)
     synth: SynthConfig = Field(default_factory=SynthConfig)
     types: TypesConfig = Field(default_factory=TypesConfig)
+    vectors: VectorsConfig = Field(default_factory=VectorsConfig)
+    projection: ProjectionConfig = Field(default_factory=ProjectionConfig)
 
     @property
     def bundle_root(self) -> Path:
@@ -73,4 +93,6 @@ def load(project_root: Path | None = None) -> Config:
         local=LocalSourceConfig(**raw.get("sources", {}).get("local", {})),
         synth=SynthConfig(**raw.get("synth", {})),
         types=TypesConfig(**raw.get("types", {})),
+        vectors=VectorsConfig(**raw.get("vectors", {})),
+        projection=ProjectionConfig(**raw.get("projection", {})),
     )
