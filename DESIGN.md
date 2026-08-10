@@ -2,7 +2,7 @@
 
 **One line:** drop files in, get out a portable OKF v0.2 knowledge bundle, a generated agent contract, and a served graph that shows both the links the knowledge *has* and the ones it *should* have.
 
-**Status: M2 built, plus M3's offline core** — `embed`, `project` and `graph.json`, behind `ragged index`. The HTTP API and the browser frontend are not built. See [§13 Milestones](#13-milestones) for what exists and what comes next. `README.md` covers installation and usage.
+**Status: M2 and M4 built, plus M3's offline core** — `embed`, `project` and `graph.json` behind `ragged index`, and the agent contract (`agent/AGENTS.md` + the stdio MCP server) behind `ragged agent`. The HTTP API and the browser frontend are not built. See [§13 Milestones](#13-milestones) for what exists and what comes next. `README.md` covers installation and usage.
 
 ## Contents
 
@@ -89,6 +89,7 @@ ragged/
 │  ├─ synth/                   # text → OKF concepts (Claude)
 │  ├─ okf/                     # read, write, validate, index/log generation
 │  ├─ vectors/                 # embed, knn, project
+│  ├─ agent/                   # layer 3: search/lint, the contract, the MCP server
 │  ├─ api/                     # FastAPI app
 │  ├─ ledger.py                # the idempotency ledger (.ragged/manifest.json)
 │  └─ cli.py
@@ -492,9 +493,13 @@ BigQuery specifically: `INFORMATION_SCHEMA.COLUMNS` + `TABLES` + table descripti
 
 ## 10. Agent contract
 
+**Built** (M4), as `src/ragged/agent/`. `pipeline._finalize` regenerates the whole contract on every ingest, and `ragged agent` regenerates it offline from an existing bundle.
+
 ### `agent/AGENTS.md` (generated)
 
 The layer-3 schema doc, regenerated on each ingest. Contains: the bundle's directory structure, the current type vocabulary with counts, the three operations (ingest / query / lint) and how to invoke each, the trust-tier convention, and an explicit instruction that the query path is *read `index.md` first, then read whole concept files* — not "search for chunks".
+
+It carries no timestamp, deliberately: the same bundle must regenerate to the same bytes, or a contract that is read as documentation churns on every build.
 
 ### `agent/mcp_server.py`
 
@@ -502,12 +507,21 @@ stdio MCP server. Four tools:
 
 | Tool | Signature | Notes |
 |---|---|---|
-| `search` | `(query: str, k: int = 8) -> list[{concept_id, title, description, score}]` | Embedding kNN. Returns pointers, never bodies — the agent decides what to read. |
+| `search` | `(query: str, k: int = 8) -> list[{concept_id, title, description, score}]` | Embedding kNN, or index traversal without a credential. Returns pointers, never bodies — the agent decides what to read. |
 | `read_concept` | `(concept_id: str) -> str` | Raw file contents, frontmatter included. |
 | `ingest` | `(paths: list[str] \| None) -> IngestSummary` | Runs the pipeline. `None` = full sweep. |
 | `lint` | `() -> LintReport` | okflint results + ghost edges + stale concepts + orphans. |
 
 Registering it is a `.mcp.json` entry pointing at the script — which makes any MCP-capable agent, Claude Code included, a consumer of the bundle with no ragged-specific code.
+
+**Three of the four tools take no credential, and `search` is the one that has to work for it.** Concept vectors are computed at build time and stored, but embedding a *query* is a read-time model call (§6.8). So `search` has two paths behind one result shape: kNN over `embeddings.npy` when the matrix exists and an embedding credential is present, and otherwise a traversal ranking over what the bundle already says about itself — titles and descriptions (which are what the indexes are made of, verbatim), the bodies at lower weight, and one hop along the authored links, so a concept the bundle links to a hit surfaces behind it. The result names which path answered, and the traversal path says why the other one did not. This is a ranking, not a retrieval framework: §7 keeps retrieval strategy out of scope, and the traversal ranking is deliberately simple enough to explain in a sentence and test without a model.
+
+Two consequences of the layering worth keeping:
+
+- **`search` returns pointers and `read_concept` returns whole files.** That is progressive disclosure (§7) expressed as a tool boundary — an agent cannot accidentally be handed chunks, because no tool returns one.
+- **`ingest` goes through `pipeline.ingest`, not around it.** Its `_finalize` runs in a `finally`, so a client that disconnects mid-run cannot strand model calls already paid for. A `paths` subset additionally suppresses the vanished-source sweep (§6.1): a partial run never looked at the other sources, so their absence is not evidence that they are gone.
+
+Nothing in this layer writes to the bundle, and nothing writes a `verified` block (§4.4) — the contract *explains* the trust tiers so that a consuming agent does not try to write one either. The MCP SDK is an optional extra: it pulls starlette, uvicorn and opentelemetry for a server that speaks over a pipe, and none of that is needed to produce or validate a bundle.
 
 ---
 
@@ -598,14 +612,14 @@ random_state = 42
 |---|---|---|
 | **M1** | Walking skeleton | **done** |
 | **M2** | Real bundle | **done** |
-| **M3** | Vectors + graph | offline core done; API + frontend after M4 |
-| **M4** | Agent contract | next |
+| **M3** | Vectors + graph | offline core done; API + frontend remain |
+| **M4** | Agent contract | **done** |
 | **M5** | Connectors | phase 2 |
 | **M6** | Extract `okf/` as a standalone library | gated — see below |
 
 **M3 and M4 were deliberately swapped, and then the execution went the other way.** The reason for the swap still stands: the objective is that any model *consumes* the bundle, and that is served by the agent contract, not by the graph. The graph is diagnostic; MCP is the product.
 
-M3's offline core was nevertheless built first. It cost nothing to take out of order, because `ragged index` is a separate command writing only into `.ragged/` — no build path, no `bundle/`, no dependency from `okf/` — so M4 begins from the same place it would have. What taking it early did *not* buy is the thing M3 exists for: τ stays a guess until something renders ghost edges against a real corpus. **M4 is still next**, and the remaining half of M3 follows it.
+M3's offline core was nevertheless built first. It cost nothing to take out of order, because `ragged index` is a separate command writing only into `.ragged/` — no build path, no `bundle/`, no dependency from `okf/` — so M4 begins from the same place it would have. What taking it early did *not* buy is the thing M3 exists for: τ stays a guess until something renders ghost edges against a real corpus. **M4 came next**, and the remaining half of M3 follows it.
 
 ---
 
@@ -643,7 +657,13 @@ Everything it writes is in `.ragged/`: `embeddings.npy`, `embeddings_meta.json`,
 
 **Not built:** the FastAPI app (§11) and the sigma.js frontend, which is where τ gets calibrated against a real corpus and where Risk 1 is actually answered.
 
-**M4 — agent contract.** Generated `AGENTS.md`, MCP server, `.mcp.json`. Three of the four MCP tools (`search`, `read_concept`, `lint`) are credential-free; only `ingest` inherits the write path's requirement, and the generated `AGENTS.md` must say so. Exit criterion: a session with no credential registers the server, answers a real question from the bundle, and reports lint findings.
+**M4 — agent contract. Done**, in `src/ragged/agent/` (§10). Generated `AGENTS.md`, the stdio MCP server, and a `.mcp.json` entry that registers it — merged into whatever else is already registered rather than written over it. Three of the four tools (`search`, `read_concept`, `lint`) are credential-free; only `ingest` inherits the write path's requirement, and the generated `AGENTS.md` says so.
+
+The credential-free requirement is what shaped `search`: it falls back from embedding kNN to a traversal ranking over the indexes, the bodies and the link graph, and reports which path answered. That fallback is not a stub — it is the path the exit criterion exercises, and on the real corpus it is the only one available, because `ragged index` needs the same credential.
+
+The contract is regenerated by `pipeline._finalize`, so it can never describe a bundle that no longer exists, and by `ragged agent` for a bundle that was built elsewhere. It is generated *beside* `bundle/`, never inside it — layer 3 is a sibling of layer 2, and the sidecar rule (§2) is why.
+
+Exit criterion: a session with no credential registers the server, answers a real question from the bundle, and reports lint findings. **Met** on the same 3-PDF Spanish corpus, driving the generated `agent/mcp_server.py` over stdio exactly as the `.mcp.json` entry spawns it: `search` answered a question about Ley 26.388 by traversal (reporting `no stored embeddings for this provider; run ragged index`) with the right concept first, `read_concept` returned it whole, and `lint` reported 18 concepts, okflint exit 0, no orphans, and no ghost edges *because the index has not run* rather than because there are none.
 
 **M5 — connectors.** `BigQuerySource` (asset family) and `BlobSource` (document family).
 

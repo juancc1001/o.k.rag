@@ -22,7 +22,7 @@ from ..config import Config
 from .base import EmbedError, MissingEmbedCredential
 from .embed import EmbedSummary, chunk, embed_bundle, embedding_text
 from .graph import GRAPH_NAME, LAYOUT_NAME, build_graph, is_stale, trust, write_graph, write_layout
-from .knn import similarities, top_k
+from .knn import nearest, similarities, top_k
 from .project import MIN_UMAP_CONCEPTS, project
 from .providers import PROVIDERS, resolve
 from .store import MATRIX_NAME, META_NAME, Store
@@ -47,6 +47,7 @@ __all__ = [
     "index",
     "is_stale",
     "load_store",
+    "nearest",
     "project",
     "resolve",
     "similarities",

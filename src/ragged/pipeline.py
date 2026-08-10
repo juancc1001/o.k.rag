@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import okf
+from .agent import write_contract
 from .config import Config
 from .extract import ExtractionError, extract
 from .ledger import LEDGER_NAME, Ledger
@@ -89,7 +90,10 @@ class IngestSummary:
         return [o for o in self.outcomes if o.concept_id and not o.skipped]
 
 
-def ingest(config: Config, dry_run: bool = False) -> IngestSummary:
+def ingest(
+    config: Config, dry_run: bool = False, only: list[str] | None = None
+) -> IngestSummary:
+    selected = _selected(config, only)
     source = LocalFileSource(
         root=config.sources_root,
         include=config.local.include,
@@ -117,6 +121,8 @@ def ingest(config: Config, dry_run: bool = False) -> IngestSummary:
 
     try:
         for item in source.discover():
+            if selected is not None and item.uri not in selected:
+                continue
             outcome = ItemOutcome(uri=item.uri)
             summary.outcomes.append(outcome)
             discovered.add(item.uri)
@@ -191,7 +197,10 @@ def ingest(config: Config, dry_run: bool = False) -> IngestSummary:
             # after every concept for the run exists: a link can only point at
             # a concept that has been written
             _weave_run(config, ledger, summary)
-            _deprecate_vanished(config, ledger, discovered, summary, log_entries)
+            if selected is None:
+                # a partial run never looked at the other sources, so their
+                # absence from `discovered` is not evidence that they are gone
+                _deprecate_vanished(config, ledger, discovered, summary, log_entries)
     finally:
         # Concepts are written per file, but only the indexes, log and ledger
         # make them a bundle. Run on the way out however we leave — a Ctrl-C or
@@ -356,6 +365,22 @@ def _log_lines(verb: str, title: str, concept_id: str, uri: str) -> list[str]:
     return [f"**{verb}**: {word} [{title}](/{concept_id}.md) from `{uri}`."]
 
 
+def _selected(config: Config, only: list[str] | None) -> set[str] | None:
+    """The source uris a partial ingest is limited to. None means every source."""
+    if only is None:
+        return None
+    root = config.project_root.resolve()
+    uris: set[str] = set()
+    for raw in only:
+        path = Path(raw)
+        path = path if path.is_absolute() else config.project_root / path
+        try:
+            uris.add(path.resolve().relative_to(root).as_posix())
+        except ValueError:
+            raise ValueError(f"{raw!r} is outside the project") from None
+    return uris
+
+
 def _index(bundle_root: Path) -> list[tuple[str, str]]:
     """The bundle's concepts as `(id, description)`, for a prompt prefix."""
     return [(ref.concept_id, ref.description) for ref in okf.inventory(bundle_root)]
@@ -493,6 +518,9 @@ def _finalize(
             log_entries,
         )
     okf.write_manifest(config.project_root, config.bundle.root, title)
+    # layer 3 describes layer 2, so it is regenerated from the bundle that just
+    # landed rather than from what this run happened to write (§10)
+    write_contract(config)
     # last: the ledger is only true once every file it describes has landed
     ledger.bundle_root = config.bundle.root
     ledger.save(ledger_path)

@@ -15,11 +15,15 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0", "okflint>=0.3.1"]
-# both deliberately optional: umap-learn pulls numba, fastembed pulls ~150 MB of
-# onnxruntime, and neither is needed to produce or validate a bundle
+# mcp is in dev for the same reason okflint is: without it the tests that need it
+# skip, and a suite that quietly skips its server tests is not a passing suite
+dev = ["pytest>=8.0", "okflint>=0.3.1", "mcp>=2.0"]
+# all three deliberately optional: umap-learn pulls numba, fastembed pulls ~150 MB
+# of onnxruntime, and the MCP SDK pulls starlette, uvicorn and opentelemetry for a
+# server that speaks over a pipe. None is needed to produce or validate a bundle.
 umap = ["umap-learn>=0.5"]
 fastembed = ["fastembed>=0.4"]
+mcp = ["mcp>=2.0"]
 
 [project.scripts]
 ragged = "ragged.cli:app"
