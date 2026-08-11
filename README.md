@@ -437,6 +437,7 @@ All four items in [`DESIGN.md` §13](DESIGN.md#13-milestones):
 ### Next
 
 - **The rest of M3**: the FastAPI app and the sigma.js graph view with the τ slider. `graph.json` exists but nothing renders it yet, so τ = 0.82 is still a guess.
+- **Grounded answers** (M7, proposed). `search` normalizes by the best hit, so its top result always scores `1.000` — including for a question the bundle cannot answer. Absolute confidence with an abstention floor, offline citation checking, and trust tiers carried into results.
 - **BigQuery/blob sources.** M5.
 
 ### Known rough edges in segmentation

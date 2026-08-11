@@ -616,6 +616,7 @@ random_state = 42
 | **M4** | Agent contract | **done** |
 | **M5** | Connectors | phase 2 |
 | **M6** | Extract `okf/` as a standalone library | gated — see below |
+| **M7** | Grounded answers | proposed |
 
 **M3 and M4 were deliberately swapped, and then the execution went the other way.** The reason for the swap still stands: the objective is that any model *consumes* the bundle, and that is served by the agent contract, not by the graph. The graph is diagnostic; MCP is the product.
 
@@ -686,3 +687,23 @@ Exit criterion: a session with no credential registers the server, answers a rea
 4. `parse`/`render` round-trip holds on a bundle authored by something other than ragged.
 
 **Note on reach.** For *consumption* the MCP server beats a library: it works from any language and any agent with no import, whereas a Python library only serves Python producers. M6 is about the production side and about not making the next OKF tool reimplement frontmatter parsing — it is not the distribution strategy for the format.
+
+---
+
+**M7 — grounded answers. Proposed.**
+
+M4 made the bundle consumable. It did not make an *answer about* the bundle checkable, and those are different problems. `agent/AGENTS.md` says read `index.md` first, cite what you read, never write `verified` — but it is prose handed to a model, which makes every line of it a request. The bundle is verifiable; a sentence claiming to come from the bundle is not.
+
+This is the same asymmetry §6.5 already resolved once. A model link error that can be repaired deterministically is repaired in `prune_links`, not asked for in the prompt, **because a repair is testable and a prompt rule is not**. M7 applies that to answers.
+
+Three items, in dependency order:
+
+1. **Report confidence, not rank.** `search` normalizes by the best hit, so the top result always scores `1.000`. Measured against the Spanish corpus: `"ley de gravedad de newton"` returns a cybercrime concept at `1.000`, indistinguishable from a correct query's top hit. A query with no term overlap does correctly return nothing, but any incidental overlap — `ley`, `argentina` — produces a perfect-looking score for an irrelevant concept. An agent handed `1.000` has no basis on which to abstain. Return the absolute score alongside the normalized one, and a floor below which `search` abstains with a reason instead of returning the least-bad match.
+
+2. **Validate citations offline.** Given an answer and the concept ids it cites, check that each id exists in the bundle and that each quoted span actually occurs in the concept it is attributed to. No model call, no network — the `prune_links` pattern, applied one level up. `search` already returns pointers rather than bodies, so a grounded answer has to pass through `read_concept` and leaves a trail to check.
+
+3. **Carry provenance into the hit.** Every result already knows its concept's `status` and trust tier (§4.4). Surfacing them lets an answer say it rests on a `draft` nobody has confirmed — which is the honest reading of most of a fresh bundle.
+
+**Exit criterion.** On a question the bundle cannot answer, `search` abstains rather than returning a `1.000`-scored hit; and an answer citing a concept that does not exist, or quoting text absent from the concept it cites, is rejected by an offline check with no model call.
+
+**Non-goals, and they matter here.** This does not stop a model answering from what it already knows — nothing in a retrieval design can, and pretending otherwise is how ungrounded answers get a trust tier they did not earn. It does not add a chat UI (§1). It does not settle retrieval strategy (§7). What it buys is narrower and worth more: when an answer *claims* the bundle as its source, that claim becomes checkable.
