@@ -2,7 +2,7 @@
 
 Turns a folder of files into a conformant **Open Knowledge Format (OKF) v0.2** bundle — a directory of markdown concepts with YAML frontmatter that agents and humans can both read, with no SDK required.
 
-**Status: M2 done.** A long source is planned into sections and each becomes its own concept under a parent, a second pass weaves cross-links into the prose, every directory gets an `index.md`, and a rebuild only touches the sources that changed. The agent contract (M4) and the vector graph (M3) are next — see [Not implemented yet](#not-implemented-yet).
+**Status: M2 done, plus M3's offline core.** A long source is planned into sections and each becomes its own concept under a parent, a second pass weaves cross-links into the prose, every directory gets an `index.md`, and a rebuild only touches the sources that changed. `ragged index` then embeds the bundle, projects it to 2D and writes a `graph.json` with both edge layers — the graph UI and the HTTP API that consume it are not built. The agent contract (M4) is next — see [Not implemented yet](#not-implemented-yet).
 
 - Architecture, data model and rationale: [`DESIGN.md`](DESIGN.md)
 - **Roadmap and milestones (M1–M5): [`DESIGN.md` §13](DESIGN.md#13-milestones)**
@@ -15,13 +15,13 @@ A vector database gives you semantic retrieval and nothing a human can read: the
 
 ragged is designed to have both, and what makes that possible is the **sidecar rule** ([`DESIGN.md` §2](DESIGN.md#2-the-three-layer-model)): nothing derived ever goes inside `bundle/`. Embeddings, the ANN index, the 2D projection and the content hashes all live in `.ragged/`, which is disposable and rebuildable. The bundle therefore stays something you can `tar` up and hand to someone who has never heard of ragged, while *also* being the corpus of a vector index — with no `embedding:` frontmatter key and no `.faiss` file anywhere near it. Swapping embedding providers is deleting `embeddings.npy` and re-embedding; `bundle/` does not notice.
 
-What the vectors add on top of the markdown — **M3, not implemented yet**:
+What the vectors add on top of the markdown:
 
-- **Semantic search** over concepts. Before M3, `search` traverses the index and the links; embeddings upgrade it rather than enable it.
-- **Node position** in the graph — proximity means semantic similarity rather than connectivity.
-- **Ghost edges** — pairs of concepts that are highly similar with *no* markdown link between them. This is the part links cannot give you: a missing link is not computable from the links you have. It is the lint signal saying two concepts are about the same thing and nobody connected them.
+- **Node position** in the graph — proximity means semantic similarity rather than connectivity. **Computed** by `ragged index`.
+- **Ghost edges** — pairs of concepts that are highly similar with *no* markdown link between them. This is the part links cannot give you: a missing link is not computable from the links you have. It is the lint signal saying two concepts are about the same thing and nobody connected them. **Computed** by `ragged index`; the browser view that makes them explorable is not built.
+- **Semantic search** over concepts. Not wired up: `search` arrives with the MCP server (M4) and traverses the index and the links; embeddings upgrade it rather than enable it.
 
-Embeddings sit deliberately outside the build path ([§6.8](DESIGN.md)). Concepts are produced, validated and consumed without them, which is why M3 sits behind the agent contract in the roadmap rather than in front of it.
+Embeddings sit deliberately outside the build path ([§6.8](DESIGN.md)). Concepts are produced, validated and consumed without them, which is why `build` never calls an embedding model and `index` is a separate command.
 
 ---
 
@@ -40,7 +40,16 @@ python3 -m venv .venv
 ./.venv/bin/python -m pip install -e ".[dev]"
 ```
 
-This installs the `ragged` console script plus `okflint` (the OKF linter) and `pytest`. Runtime dependencies: `anthropic`, `google-genai`, `markitdown[all]`, `pydantic`, `python-dotenv`, `pyyaml`, `typer`.
+This installs the `ragged` console script plus `okflint` (the OKF linter) and `pytest`. Runtime dependencies: `anthropic`, `google-genai`, `markitdown[all]`, `numpy`, `pydantic`, `python-dotenv`, `pyyaml`, `typer`.
+
+Two extras are deliberately *not* installed by default, because neither is needed to produce or validate a bundle and both are heavy:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -e ".[umap]"        # umap-learn; pulls numba
+.\.venv\Scripts\python.exe -m pip install -e ".[fastembed]"   # local embeddings; ~150 MB of onnxruntime
+```
+
+Without `umap`, `ragged index` projects with PCA and says so. Without `fastembed`, the local embedding provider reports the extra rather than an import error.
 
 `markitdown[all]` prints a `Couldn't find ffmpeg` warning on import. It only affects audio extraction and is safe to ignore.
 
@@ -62,7 +71,7 @@ Verify everything at once:
 
 ### Providers
 
-Only one pipeline stage — synthesis — calls a model. Set which one in `ragged.toml`:
+Two stages of `ragged build` call a model — synthesis and link-weave — and both use the same provider. Set which one in `ragged.toml`:
 
 ```toml
 [synth]
@@ -81,7 +90,16 @@ Two provider-specific notes:
 - `[synth].effort` applies to **Anthropic only**. Gemini has no equivalent, so its thinking depth stays at the model default.
 - Model IDs change. If `doctor` says your configured model is unavailable, set `[synth].model` to one of the names it lists.
 
-Without a credential, `ragged build --dry-run`, `ragged extract`, and `ragged check` all still work — they never call a model. `ragged build` fails immediately with a pointer to `.env` rather than after extracting your whole corpus.
+`ragged index` has its own provider, set separately in `[vectors]`, because the embedding question is genuinely open ([`DESIGN.md` §12](DESIGN.md#12-risks-and-open-questions) Risk 4) and is meant to be settled by measuring ghost-edge quality on a real corpus:
+
+| Provider | Credential | Model | Notes |
+|---|---|---|---|
+| `gemini` | `GEMINI_API_KEY` or `GOOGLE_API_KEY` | `gemini-embedding-001` | The default. Same key the build already needs, no extra dependency. |
+| `fastembed` | none | `BAAI/bge-small-en-v1.5` | Local ONNX, offline, free to re-run. Optional extra — `pip install -e ".[fastembed]"`. |
+
+Swapping between them is a config edit: `embeddings_meta.json` records which provider and model produced the matrix, so a change re-embeds rather than mixing two vector spaces in one file. `bundle/` is untouched either way.
+
+Without a credential, `ragged build --dry-run`, `ragged extract`, and `ragged check` all still work — they never call a model. `ragged build` fails immediately with a pointer to `.env` rather than after extracting your whole corpus, and so does `ragged index`.
 
 `.env` is gitignored; `.env.example` is the committed template.
 
@@ -93,6 +111,7 @@ Without a credential, `ragged build --dry-run`, `ragged extract`, and `ragged ch
 ragged doctor                # config, credential, provider reachability, model availability
 ragged build --dry-run       # extract + report only. No model calls, no writes.
 ragged build                 # full pipeline -> bundle/ + okf-base.yaml
+ragged index                 # embed + project + graph.json -> .ragged/ only
 ragged check                 # validate an existing bundle without rebuilding
 ragged extract <file>        # print extracted text for one file (offline, for debugging)
 ```
@@ -115,6 +134,7 @@ Start with two or three files. The first real run is where the synthesis prompt 
 |---|---|---|---|
 | `doctor` | provider reachable, model available | no credential, unreachable, or model unavailable | unknown provider name |
 | `build` | all files synthesized, bundle conformant | a file failed, or the bundle is not conformant | no `sources/` directory, or no credential |
+| `index` | every concept embedded, graph written | a concept failed to embed | no `bundle/` directory, or no credential |
 | `check` | bundle conformant | not conformant | no `bundle/` directory |
 | `extract` | printed | — | file not found |
 
@@ -140,6 +160,27 @@ discover → extract → plan → synthesize → link-weave → emit → validat
 | **link-weave** | Once every concept for the run exists, one model call per concept rewrites its body with cross-links woven into the prose. The schema returns the body and nothing else, so the pass cannot change a title, a type or a source. Links are bundle-absolute (`/finance/revenue-policy.md`) and inline — a link asserts a relationship and the sentence around it is what says which, so there is deliberately no "Related" section. A child is told its parent so it can link back (§4.3). Three things the model gets wrong are repaired mechanically rather than prompted against, all three found on a real corpus: an inverted `[/path.md](label)` is swapped back, a raw path used as the label becomes the target's title, and a target that is not a concept is unwrapped to plain text and reported — broken links are spec-legal when a human writes one forward, but a model holding the full index that emits a path outside it guessed. Only concepts this run wrote are woven, so an unchanged corpus still costs nothing. |
 | **emit** | Assemble frontmatter and write the concept, then generate an `index.md` for **every** directory in the bundle, append to `log.md` under today's ISO date newest-first, and generate `okf-base.yaml`. Indexes are read off the bundle rather than accumulated during the run, so a directory whose concepts were all skipped is indexed like one just written, and every entry carries its target's own `title` and `description` — an index can never disagree with the concept it points at. An entry whose concept owns a subdirectory says how many concepts are below it and links to that subdirectory's index, so the root is a map rather than a dead end while disclosure stays progressive. Only the bundle root carries frontmatter (`E3`). Concepts the previous run produced for this source and this one did not are deleted; ids come from model-written titles, so a rebuild renames the tree routinely. A concept a human edited or `verified` is never overwritten — the replacement goes to `.ragged/proposed/` and is reported. All writes are atomic (temp file + rename), and the indexes, log and ledger are written on the way out even if the run is interrupted. |
 | **validate** | Built-in conformance checks, then okflint as the normative gate. |
+
+### The graph — `ragged index`
+
+A separate command, because nothing in the build path uses a vector. `build` produces the bundle; `index` reads that bundle and writes four files into `.ragged/` and nothing anywhere else.
+
+```
+embed → project → graph.json
+  │        │          │
+one       UMAP     nodes + authored links + ghost edges
+vector    (PCA
+per       under 15
+concept   concepts)
+```
+
+| Stage | What happens |
+|---|---|
+| **embed** | One vector per concept, over `title + description + body`. A concept longer than the provider's window is embedded as chunks and mean-pooled into a single vector — the chunk vectors are never stored, because the retrieval path is progressive disclosure, not chunk RAG. Vectors are L2-normalized on write, so cosine similarity is a dot product. A concept whose body still hashes to the recorded `embedded_body_sha256` is **not** re-embedded, so a second `index` over an unchanged bundle makes no API call. One concept failing is an error against that concept: it keeps whatever vector it had, the rest still land, and the stale hash makes the next run retry it. |
+| **project** | Embeddings → 2D. UMAP with a fixed `random_state`, so the layout does not reshuffle on every run; PCA below 15 concepts (UMAP is unstable that small) or when `umap-learn` is not installed. The coordinates go to `layout.json` as well as into the graph. |
+| **graph.json** | `nodes`, `links`, `ghosts`, `stats`. A **link** is an authored markdown cross-link that resolves to a concept. A **ghost** is a pair whose cosine similarity is at least τ (`ghost_threshold`, default 0.82), that is in each other's top-k neighbours (`knn_k`, default 8), and that has **no** markdown link between them in either direction — the work queue: two concepts about the same thing that nobody connected. Node `trust` is *derived* from the concept's `verified` block per the spec's tier rules and never written back. Every concept is a node, including one that failed to embed — it just has no position. |
+
+τ is a guess until it meets a corpus ([`DESIGN.md` §12](DESIGN.md#12-risks-and-open-questions) Risk 1). Changing it and re-running `index` costs nothing: the vectors are reused and only the graph is recomputed.
 
 ### What gets written into frontmatter
 
@@ -205,6 +246,14 @@ Broken links are **warnings, not errors** — the spec explicitly permits them, 
 | `src/ragged/okf/writer.py` | Atomic concept writes, the per-directory `index.md` pass, `log.md` date-section insertion, deprecation and stale-concept removal. |
 | `src/ragged/okf/validate.py` | Conformance checks and the okflint subprocess. |
 | `src/ragged/okf/manifest.py` | Generates `okf-base.yaml`. Documents why each key is present or omitted. |
+| `src/ragged/vectors/__init__.py` | `index(config)`: embed → project → graph, and the only place the three stages are wired together. |
+| `src/ragged/vectors/embed.py` | One vector per concept: chunking, mean-pooling, hash-based reuse, per-concept failure isolation. |
+| `src/ragged/vectors/store.py` | `embeddings.npy` + `embeddings_meta.json`. Sidecar state, so a read degrades to "nothing stored"; a provider or model change discards the matrix rather than mixing vector spaces. |
+| `src/ragged/vectors/project.py` | UMAP with a fixed seed, PCA fallback in plain NumPy. Notes what Risk 5 would actually take to fix. |
+| `src/ragged/vectors/knn.py` | Brute-force cosine kNN over the normalized matrix. Twenty lines, and enough until ~100k concepts. |
+| `src/ragged/vectors/graph.py` | `graph.json`: the ghost-edge rule, derived trust tiers, node degree, stats. |
+| `src/ragged/vectors/providers/gemini.py` | `gemini-embedding-001`. Same shape as a `synth` provider: `NAME`, `DEFAULT_MODEL`, `ENV_VARS`, `credential_present()`, `embed()`. |
+| `src/ragged/vectors/providers/fastembed.py` | Local `bge-small-en-v1.5`, behind an optional extra. Registered but not chosen — see `DESIGN.md` §12 Risk 4. |
 
 ### Config and output
 
@@ -216,7 +265,7 @@ Broken links are **warnings, not errors** — the spec explicitly permits them, 
 | `sources/` | **no** (gitignored) | Layer 1 — raw input, yours to supply. **Immutable**; ragged reads, never writes. Not committed: a real corpus is your own material and tends to carry third-party names that do not belong in a permanent history. |
 | `bundle/` | **no** (gitignored) | Layer 2 — the OKF product. The deliverable, portable with no ragged dependency — but concept ids derive from model-written titles, so every rebuild renames the whole tree and the diff is unreadable. Commit an example bundle under `examples/` instead, refreshed on purpose. |
 | `okf-base.yaml` | **no** (gitignored) | Generated okflint manifest, rewritten with the bundle. |
-| `.ragged/` | **no** (gitignored) | Sidecar: the ledger (`manifest.json`), the extraction cache, replacements for concepts a human owns (`proposed/`), and later embeddings, index, layout. Entirely derived and rebuildable — deleting it costs a full re-ingest, nothing more. |
+| `.ragged/` | **no** (gitignored) | Sidecar: the ledger (`manifest.json`), the extraction cache, replacements for concepts a human owns (`proposed/`), and the vectors — `embeddings.npy`, `embeddings_meta.json`, `layout.json`, `graph.json`. Entirely derived and rebuildable — deleting it costs a full re-ingest and a re-embed, nothing more. |
 | `DESIGN.md` | yes | Architecture, data model, risks, milestones. |
 
 The separation matters: **nothing derived ever goes inside `bundle/`.** A bundle must stay something you can zip up, hand to someone who has never heard of ragged, and read with `cat`. That portability is the whole point of OKF, and an embeddings file or an `embedding:` frontmatter key would destroy it.
@@ -246,6 +295,17 @@ max_tokens = 16000
 [types]
 allowed = ["Document", "Concept", "Entity", "Process", "Decision", "Reference"]
 allow_new = true           # new types are reported in the summary, never silent
+
+[vectors]                  # ragged index only; build never reads these
+provider = "gemini"        # gemini | fastembed (fastembed is an optional extra)
+# model = "gemini-embedding-001"
+dim = 768                  # requested output width; fastembed's 384 is fixed
+knn_k = 8                  # a ghost edge must be in one end's top k
+ghost_threshold = 0.82     # tau; a guess until it meets a corpus
+
+[projection]
+method = "umap"            # umap | pca; umap-learn is an optional extra
+random_state = 42          # fixed, or the layout reshuffles every run
 ```
 
 `type` is a free-form string in OKF and the spec forbids imposing a taxonomy, so this vocabulary is per-bundle consistency rather than a standard. If your corpus has a domain, replacing these defaults up front produces a much better bundle than discovering types file by file.
@@ -259,7 +319,7 @@ $env:PATH = "$PWD\.venv\Scripts;$env:PATH"   # so okflint is discoverable
 .\.venv\Scripts\python.exe -m pytest tests -q
 ```
 
-161 tests. No credentials and no network needed — the end-to-end test stubs the model and asserts the emitted bundle is conformant, so "one file in, one conformant concept out" is covered offline.
+195 tests. No credentials and no network needed — the end-to-end test stubs the model and asserts the emitted bundle is conformant, so "one file in, one conformant concept out" is covered offline. The embedding provider is stubbed the same way, in a three-dimensional toy space, so what two concepts are "similar" is something the test states rather than something a model decides.
 
 | File | Covers |
 |---|---|
@@ -271,6 +331,7 @@ $env:PATH = "$PWD\.venv\Scripts;$env:PATH"   # so okflint is discoverable
 | `tests/test_weave.py` | `prune_links` against all three repair modes plus self-links, relative links, URLs and footnotes; the prefix/user-message split that keeps caching working; the pass itself linking two concepts, telling each child its parent, recording the post-weave hash, surviving a failure, and skipping a concept a human owns |
 | `tests/test_manifest.py` | manifest keys okflint requires, skip-with-reason behaviour, and cross-checking that okflint agrees with the built-in checks |
 | `tests/test_providers.py` | provider registry and interface, dispatch, schema/required-field enforcement, Gemini credential resolution and decline mapping, non-2xx and transport-failure mapping for both providers, fail-fast pre-flight |
+| `tests/test_vectors.py` | the embedding provider registry, hash-based reuse and per-concept failure isolation, mean-pooling past the window with no chunk vector stored, L2 normalization, a model change re-embedding instead of mixing widths, the PCA fallback and its determinism, the ghost rule (τ, top-k, a link in either direction), derived trust tiers, graph stats, and that `index` writes nothing into `bundle/` |
 | `tests/test_env.py` | `.env` loading with and without a BOM, and every `doctor` outcome |
 | `tests/test_encoding.py` | the [encoding policy](#encoding-policy), enforced by AST scan (including the child-process `env` rule), plus BOM tolerance, the piped-child crash reproduced, and LF-only output end to end |
 
@@ -321,10 +382,15 @@ All four items in [`DESIGN.md` §13](DESIGN.md#13-milestones):
 - **Link weaving** (§6.5). The bundle is a graph rather than a set of small trees. Note that links point forward from concepts written this run to concepts that already existed, and not back — a skipped source's concepts are not rewritten, because that would spend a model call producing a file nobody asked for. The missing direction is what M3's ghost edges are for.
 - **Per-directory `index.md`** (§6.6), read off the bundle rather than accumulated during the run.
 
+### M3 — offline core done
+
+`ragged index` writes `embeddings.npy`, `embeddings_meta.json`, `layout.json` and `graph.json`, all into `.ragged/`. The embedding provider is pluggable and **deliberately undecided** ([`DESIGN.md` §12](DESIGN.md#12-risks-and-open-questions) Risk 4): `gemini` and `fastembed` are both registered, the choice is config, and it is meant to be settled by measuring ghost-edge quality on a real corpus rather than argued up front.
+
 ### Next
 
 - **MCP server + generated `AGENTS.md`** (M4) — how a reading session consumes the bundle with no credential. This is the point of the project.
-- **Vectors, graph UI, HTTP API, BigQuery/blob sources.** M3 and M5.
+- **The rest of M3**: the FastAPI app and the sigma.js graph view with the τ slider. `graph.json` exists but nothing renders it yet, so τ = 0.82 is still a guess.
+- **BigQuery/blob sources.** M5.
 
 ### Known rough edges in segmentation
 

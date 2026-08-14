@@ -20,3 +20,14 @@ max_tokens = 16000
 [types]
 allowed = ["Document", "Concept", "Entity", "Process", "Decision", "Reference"]
 allow_new = true
+
+[vectors]
+provider = "gemini"          # gemini | fastembed (fastembed is an optional extra)
+# model = "gemini-embedding-001"   # omit for the provider default
+dim = 768                    # requested output width; fastembed's 384 is fixed
+knn_k = 8
+ghost_threshold = 0.82       # tau; uncalibrated, see DESIGN.md §12 Risk 1
+
+[projection]
+method = "umap"              # umap | pca; umap-learn is an optional extra
+random_state = 42            # fixed, or the layout reshuffles every ingest

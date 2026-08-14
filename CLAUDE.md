@@ -17,6 +17,7 @@ python -m venv .venv
 .\.venv\Scripts\ragged doctor          # provider, credential, reachability, model availability
 .\.venv\Scripts\ragged build --dry-run # discover + extract only; no model calls, no writes
 .\.venv\Scripts\ragged build           # full pipeline -> bundle/ + okf-base.yaml
+.\.venv\Scripts\ragged index           # embed + project + graph.json -> .ragged/ only
 .\.venv\Scripts\ragged check           # validate an existing bundle without rebuilding
 .\.venv\Scripts\ragged extract <file>  # print extracted text for one file (offline)
 ```
@@ -25,7 +26,7 @@ Tests — okflint must be on `PATH` or the okflint-dependent tests skip:
 
 ```powershell
 $env:PATH = "$PWD\.venv\Scripts;$env:PATH"
-.\.venv\Scripts\python.exe -m pytest tests -q              # 161 tests
+.\.venv\Scripts\python.exe -m pytest tests -q              # 195 tests
 .\.venv\Scripts\python.exe -m pytest tests/test_segment.py -q
 .\.venv\Scripts\python.exe -m pytest tests -q -k "footnote"
 ```
@@ -45,9 +46,9 @@ Three layers plus a sidecar (`DESIGN.md` §2):
 
 **The sidecar rule is the load-bearing constraint: nothing derived ever goes inside `bundle/`.** The ledger (`manifest.json`), the extraction cache, proposed replacements for concepts a human owns, and later embeddings/index/projection all live in `.ragged/`. A bundle must stay something you can `tar` up and `cat` with no knowledge of ragged — no `embedding:` frontmatter key, no `.faiss` file.
 
-Pipeline (`pipeline.py::ingest`): `discover → extract → plan → synthesize → link-weave → emit → validate`.
+Pipeline (`pipeline.py::ingest`): `discover → extract → plan → synthesize → link-weave → emit → validate`. Then, as a separate command, `vectors.index`: `embed → project → graph`.
 
-**Only synthesis and link-weave call a model.** `check`, `extract`, and `build --dry-run` are entirely offline, and `build` fails its credential pre-flight *before* extracting the corpus rather than after.
+**In `build`, only synthesis and link-weave call a model.** `check`, `extract`, and `build --dry-run` are entirely offline, and `build` fails its credential pre-flight *before* extracting the corpus rather than after. `index` calls an *embedding* provider, configured separately in `[vectors]`, and `build` never calls it — nothing in the build path uses a vector.
 
 Module responsibilities:
 
@@ -56,6 +57,7 @@ Module responsibilities:
 - `sources/base.py` — the `Source` protocol with its `document` vs `asset` family split; phase-2 connectors plug in here.
 - `pipeline.py` — orchestration only; assembles `Concept` objects from synthesis results.
 - `ledger.py` — the idempotency ledger, `.ragged/manifest.json`. Sidecar state, so every read path degrades to "no record" rather than raising. **Not `okf/manifest.py`**, which generates `okf-base.yaml` for okflint.
+- `vectors/` — embed, project, kNN, `graph.json`. Writes only into `.ragged/`, and `okf/` must not depend on it any more than it depends on `synth/`. `vectors/providers/` mirrors `synth/providers/` module for module; which embedding provider is right is **an open question** (`DESIGN.md` §12 Risk 4) and both registered ones stay registered until a real corpus answers it.
 
 Adding a provider means one module under `synth/providers/` exposing `NAME`, `DEFAULT_MODEL`, `ENV_VARS`, `credential_present()`, `list_models()`, `call()`, registered in `providers/__init__.py::PROVIDERS`. Both current providers enforce the concept schema natively (Anthropic `output_config.format`, Gemini `response_json_schema`) — output shape is guaranteed, never parsed out of prose.
 
@@ -81,7 +83,9 @@ Adding a provider means one module under `synth/providers/` exposing `NAME`, `DE
 
 ## Current state
 
-M1 and M2 done — all four M2 items (segmentation, incremental re-ingest, link-weave, per-directory indexes), verified on the real corpus: conformant bundle, okflint exit 0, and a second `build` making zero model calls. **M4 (agent contract) is next**; see `DESIGN.md` §13.
+M1 and M2 done — all four M2 items (segmentation, incremental re-ingest, link-weave, per-directory indexes), verified on the real corpus: conformant bundle, okflint exit 0, and a second `build` making zero model calls.
+
+**M3's offline core is also built** — `embed`, `project` and `graph.json` behind `ragged index`, with the ghost-edge rule of §8. Its API and frontend are not, so τ = 0.82 has still never met a corpus. **M4 (agent contract) is next**; see `DESIGN.md` §13, which now lists M3 before M4 because that is the order the work happened in, not because the reason for the original swap stopped holding.
 
 **Prompt calibration was deferred until after M2** (§13) and is now unblocked. Few-shot examples are the strongest signal in a prompt, and writing them before segmentation settled would have baked in guesses about the unit shape. The method is to take a concept a human promoted from `draft` to `stable` and use *that* as the example — so it needs a human to promote one first. Until then, don't "improve" prompt wording opportunistically; a model failure that can be repaired deterministically (see `prune_links`) should be, because a repair is testable and a prompt rule is not.
 

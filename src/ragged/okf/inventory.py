@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from .concept import parse
+from .concept import Concept, parse
 
 RESERVED = {"index.md", "log.md"}
 
@@ -27,30 +27,36 @@ class ConceptRef:
         return self.concept_id.rsplit("/", 1)[0] if "/" in self.concept_id else None
 
 
-def inventory(bundle_root: Path) -> list[ConceptRef]:
-    """Every concept in the bundle, in path order.
+def read_concepts(bundle_root: Path) -> list[Concept]:
+    """Every concept in the bundle, parsed, in path order.
 
     A file that does not parse is skipped rather than raised on: this feeds
-    prompts and indexes, and one malformed concept must not stop either.
+    prompts, indexes and the graph, and one malformed concept must not stop any
+    of them.
     """
-    refs: list[ConceptRef] = []
+    concepts: list[Concept] = []
     if not bundle_root.exists():
-        return refs
+        return concepts
     for path in sorted(bundle_root.rglob("*.md")):
         if path.name in RESERVED:
             continue
         concept_id = path.relative_to(bundle_root).with_suffix("").as_posix()
         try:
             # utf-8-sig: a hand-edited concept may carry a BOM
-            concept = parse(path.read_text(encoding="utf-8-sig"), concept_id)
+            concepts.append(parse(path.read_text(encoding="utf-8-sig"), concept_id))
         except (OSError, ValueError):
             continue
-        refs.append(
-            ConceptRef(
-                concept_id=concept_id,
-                title=concept.title or concept_id,
-                description=concept.description or "",
-                status=concept.status,
-            )
+    return concepts
+
+
+def inventory(bundle_root: Path) -> list[ConceptRef]:
+    """Every concept in the bundle as `(id, title, description, status)`."""
+    return [
+        ConceptRef(
+            concept_id=concept.concept_id,
+            title=concept.title or concept.concept_id,
+            description=concept.description or "",
+            status=concept.status,
         )
-    return refs
+        for concept in read_concepts(bundle_root)
+    ]
