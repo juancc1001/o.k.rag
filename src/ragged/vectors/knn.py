@@ -18,6 +18,20 @@ def similarities(matrix: np.ndarray) -> np.ndarray:
     return sims
 
 
+def nearest(matrix: np.ndarray, query: np.ndarray, k: int) -> list[tuple[int, float]]:
+    """The k rows nearest one query vector, as `(row, similarity)`, nearest first.
+
+    Both sides are L2-normalized, so this is the same dot product as `similarities`
+    with one side held fixed — which is what `search` asks when it has a credential
+    to embed the query with (DESIGN §10).
+    """
+    if matrix.shape[0] == 0:
+        return []
+    sims = (matrix @ query).astype(np.float32)
+    order = np.argsort(-sims)[: max(k, 0)]
+    return [(int(row), float(sims[row])) for row in order]
+
+
 def top_k(sims: np.ndarray, k: int) -> list[list[int]]:
     """Each row's k nearest neighbours, nearest first."""
     n = sims.shape[0]

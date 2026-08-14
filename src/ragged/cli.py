@@ -8,6 +8,7 @@ import typer
 
 from . import config as config_module
 from . import okf, vectors
+from .agent import write_contract
 from .config import Config
 from .pipeline import IngestSummary, ingest, inspect_extraction
 from .synth import MissingCredential, resolve
@@ -94,6 +95,17 @@ def index() -> None:
         raise typer.Exit(2) from None
     _print_index(summary)
     raise typer.Exit(1 if summary.embed.errors else 0)
+
+
+@app.command()
+def agent() -> None:
+    """Regenerate the agent contract: agent/AGENTS.md, agent/mcp_server.py, .mcp.json."""
+    cfg = config_module.load()
+    if not cfg.bundle_root.exists():
+        typer.secho(f"no bundle at {cfg.bundle_root}", fg="red")
+        raise typer.Exit(2)
+    for path in write_contract(cfg):
+        typer.secho(f"  wrote {path.relative_to(cfg.project_root)}", fg="green")
 
 
 @app.command()

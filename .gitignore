@@ -11,6 +11,13 @@ sources/
 bundle/
 okf-base.yaml
 
+# layer 3, generated from the bundle on every build: AGENTS.md carries the
+# corpus's own names for the same reason bundle/ is not committed, and the
+# .mcp.json entry names the interpreter that generated it. `ragged agent`
+# rewrites both. Anchored, or it would also swallow src/ragged/agent/.
+/agent/
+/.mcp.json
+
 # secrets — .env.example is the committed template
 .env
 
