@@ -9,6 +9,7 @@ import typer
 from . import config as config_module
 from . import okf, vectors
 from .agent import write_contract
+from .api.app import WEB_DIST, create_app
 from .config import Config
 from .pipeline import IngestSummary, ingest, inspect_extraction
 from .synth import MissingCredential, resolve
@@ -109,6 +110,40 @@ def agent() -> None:
 
 
 @app.command()
+def serve(
+    host: str = typer.Option("127.0.0.1", help="Interface to bind."),
+    port: int = typer.Option(8000, help="Port to bind."),
+) -> None:
+    """Serve the read-only API, and the graph view when web/dist is built."""
+    cfg = _load()
+    if not cfg.bundle_root.exists():
+        typer.secho(f"no bundle at {cfg.bundle_root}", fg="red")
+        raise typer.Exit(2)
+
+    try:
+        application = create_app(cfg)
+    except RuntimeError as exc:
+        typer.secho(str(exc), fg="red")
+        raise typer.Exit(2) from None
+
+    if not (cfg.sidecar_root / vectors.GRAPH_NAME).exists():
+        typer.secho(
+            f"  no {vectors.GRAPH_NAME} - /api/graph will 404 until `ragged index` runs",
+            fg="yellow",
+        )
+    if not (cfg.project_root / WEB_DIST).is_dir():
+        typer.secho(
+            f"  no {WEB_DIST} - API only; `npm run build` in web/ to serve the view",
+            fg="bright_black",
+        )
+
+    import uvicorn
+
+    typer.secho(f"  http://{host}:{port}/api/docs", fg="green")
+    uvicorn.run(application, host=host, port=port, log_level="warning")
+
+
+@app.command()
 def extract(path: Path = typer.Argument(..., help="File to extract, for debugging.")) -> None:
     """Print the extracted text for one file. Runs offline - no model call."""
     cfg = config_module.load()
@@ -141,6 +176,32 @@ def doctor() -> None:
         typer.secho("  okflint        found", fg="green")
     else:
         typer.secho("  okflint        missing - only the built-in checks will run", fg="yellow")
+
+    # before the synth provider, which exits on failure: `index` has its own
+    # provider and its own credential, and a missing key for one says nothing
+    # about the other
+    typer.secho(f"\nembeddings: {cfg.vectors.provider}  (`ragged index`)", bold=True)
+    try:
+        embed_impl = vectors.resolve(cfg.vectors.provider)
+    except ValueError as exc:
+        typer.secho(f"  {exc}", fg="red")
+    else:
+        embed_model = cfg.vectors.model or embed_impl.DEFAULT_MODEL
+        typer.echo(f"  model          {embed_model}{'  (default)' if not cfg.vectors.model else ''}")
+        typer.echo(
+            f"  dim/k/tau      {cfg.vectors.dim} / {cfg.vectors.knn_k} / {cfg.vectors.ghost_threshold}"
+        )
+        if not embed_impl.ENV_VARS:
+            typer.secho("  credential     not needed - runs locally", fg="green")
+        elif embed_impl.credential_present():
+            typer.secho("  credential     present", fg="green")
+        else:
+            typer.secho(
+                f"  credential     missing ({' or '.join(embed_impl.ENV_VARS)})"
+                " - `ragged index` will not run",
+                fg="yellow",
+            )
+        _report_path(vectors.GRAPH_NAME, cfg.sidecar_root / vectors.GRAPH_NAME, hint="run `ragged index`")
 
     typer.secho(f"\nprovider: {provider}", bold=True)
     try:

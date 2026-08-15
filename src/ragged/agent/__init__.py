@@ -13,12 +13,13 @@ from .contract import (
     render_mcp_json,
     write_contract,
 )
-from .lint import LintReport, lint
+from .lint import GHOST_LIMIT, LintReport, lint
 from .query import EMBEDDING, TRAVERSAL, Hit, SearchResult, read_concept, search
 
 __all__ = [
     "AGENTS_NAME",
     "EMBEDDING",
+    "GHOST_LIMIT",
     "Hit",
     "LintReport",
     "MCP_CONFIG_NAME",

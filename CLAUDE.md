@@ -14,20 +14,20 @@ Python 3.12+. Windows is the primary dev platform; commands below use the repo-l
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e ".[dev]"   # installs okflint + pytest + the MCP SDK
 
-.\.venv\Scripts\ragged doctor          # provider, credential, reachability, model availability
+.\.venv\Scripts\ragged doctor          # both providers (synth + embeddings), credentials, reachability
 .\.venv\Scripts\ragged build --dry-run # discover + extract only; no model calls, no writes
 .\.venv\Scripts\ragged build           # full pipeline -> bundle/ + okf-base.yaml
 .\.venv\Scripts\ragged index           # embed + project + graph.json -> .ragged/ only
+.\.venv\Scripts\ragged serve           # read-only API + the graph view (needs the api extra)
 .\.venv\Scripts\ragged check           # validate an existing bundle without rebuilding
 .\.venv\Scripts\ragged agent           # regenerate agent/AGENTS.md + .mcp.json (offline)
 .\.venv\Scripts\ragged extract <file>  # print extracted text for one file (offline)
 ```
 
-Tests — okflint must be on `PATH` or the okflint-dependent tests skip:
+Tests — okflint is resolved beside the interpreter, so `PATH` no longer decides whether the okflint-dependent tests run:
 
 ```powershell
-$env:PATH = "$PWD\.venv\Scripts;$env:PATH"
-.\.venv\Scripts\python.exe -m pytest tests -q              # 230 tests
+.\.venv\Scripts\python.exe -m pytest tests -q              # 258 tests, none skipped
 .\.venv\Scripts\python.exe -m pytest tests/test_segment.py -q
 .\.venv\Scripts\python.exe -m pytest tests -q -k "footnote"
 ```
@@ -59,6 +59,8 @@ Module responsibilities:
 - `pipeline.py` — orchestration only; assembles `Concept` objects from synthesis results.
 - `ledger.py` — the idempotency ledger, `.ragged/manifest.json`. Sidecar state, so every read path degrades to "no record" rather than raising. **Not `okf/manifest.py`**, which generates `okf-base.yaml` for okflint.
 - `agent/` — layer 3 (`DESIGN.md` §10): `query.py` (`search`, `read_concept`), `lint.py`, `contract.py` (generates `agent/AGENTS.md`, `agent/mcp_server.py`, `.mcp.json`) and `server.py` (the four MCP tools). **Three of the four tools must keep working with no credential**, which is why `search` falls back from embedding kNN to index traversal. `server.py` imports the MCP SDK lazily — it is an optional extra — and `agent/__init__.py` deliberately does not import it, because `pipeline.py` imports this package.
+- `api/` — the read-only HTTP half of layer 3 (`DESIGN.md` §11), behind `ragged serve`. Four endpoints, all offline, **none of which writes anywhere**. `search` and `lint` call the same functions `agent/` exposes over MCP rather than reimplementing them, so the view and an agent cannot be told different things about one bundle — preserve that when adding an endpoint. FastAPI is an optional extra imported inside `create_app`, so importing the package costs nothing without it. The two ingest endpoints of §11 are deliberately deferred.
+- `web/` — the sigma.js view (Vite + React + TS). Positions come precomputed from `graph.json`; sigma is a renderer, never a layout engine. `web/src/encoding.ts` holds §8's visual encoding alone, so the legend and the renderer cannot drift. Filtering lives in sigma reducers rather than in graph rebuilds, or the τ slider reloads the graph on every pixel.
 - `vectors/` — embed, project, kNN, `graph.json`. Writes only into `.ragged/`, and `okf/` must not depend on it any more than it depends on `synth/`. `vectors/providers/` mirrors `synth/providers/` module for module; which embedding provider is right is **an open question** (`DESIGN.md` §12 Risk 4) and both registered ones stay registered until a real corpus answers it.
 
 Adding a provider means one module under `synth/providers/` exposing `NAME`, `DEFAULT_MODEL`, `ENV_VARS`, `credential_present()`, `list_models()`, `call()`, registered in `providers/__init__.py::PROVIDERS`. Both current providers enforce the concept schema natively (Anthropic `output_config.format`, Gemini `response_json_schema`) — output shape is guaranteed, never parsed out of prose.
@@ -66,6 +68,8 @@ Adding a provider means one module under `synth/providers/` exposing `NAME`, `DE
 ## Invariants that are easy to break
 
 **Encoding.** Windows defaults to cp1252, and five separate M1 bugs came from trusting a platform default at an I/O boundary. Reads use `encoding="utf-8-sig"`, writes use `encoding="utf-8", newline="\n"`, subprocesses decode `utf-8`/`errors="replace"` *and* set `PYTHONIOENCODING=utf-8` in the child's `env`. **`tests/test_encoding.py` enforces this by walking the AST of everything under `src/ragged/` — a deviating call site fails the suite.** README's *Encoding policy* table is the full rule set.
+
+**Executables are resolved beside `sys.executable` before `PATH`.** `okf/validate.py::_okflint` does this, and the reason generalises: the MCP server is spawned by its `.mcp.json` entry rather than from an activated shell, so a console script installed into ragged's own venv is invisible to `shutil.which`. The symptom was silent and asymmetric — `lint` told an agent "okflint not installed" while `ragged check` in a terminal ran it, so the same bundle was validated to two different standards depending on who asked. Any future subprocess ragged owns has the same exposure.
 
 **`verified` is never written.** It records a confirmation event that actually happened; writing it because content looks correct forges the human-reviewed trust tier. Concepts are emitted `status: draft` and a human promotes them by editing the file.
 
@@ -87,9 +91,11 @@ Adding a provider means one module under `synth/providers/` exposing `NAME`, `DE
 
 M1 and M2 done — all four M2 items (segmentation, incremental re-ingest, link-weave, per-directory indexes), verified on the real corpus: conformant bundle, okflint exit 0, and a second `build` making zero model calls.
 
-**M3's offline core is also built** — `embed`, `project` and `graph.json` behind `ragged index`, with the ghost-edge rule of §8. Its API and frontend are not, so τ = 0.82 has still never met a corpus. See `DESIGN.md` §13, which lists M3 before M4 because that is the order the work happened in, not because the reason for the original swap stopped holding.
+**M3 is done** — `embed`, `project` and `graph.json` behind `ragged index`, the four read endpoints behind `ragged serve`, and the sigma.js view in `web/`. See `DESIGN.md` §13, which lists M3 before M4 because that is the order the work happened in, not because the reason for the original swap stopped holding.
 
-**M4 (agent contract) is done** — `src/ragged/agent/`, generated on every build and by `ragged agent`. Its exit criterion was met against the real corpus over a real stdio session with no embedding credential: `search` answered by traversal, `read_concept` returned the concept whole, `lint` reported okflint exit 0. **The remaining half of M3 (the FastAPI app and the sigma.js view) is next.**
+**τ has met a corpus and the default lost, which is the milestone's real output.** On the 18-concept Spanish corpus the median similarity over all 153 pairs is 0.896 and 150 of them clear τ = 0.82 — the 76 ghost edges are 76 because `knn_k = 8` capped them, not because τ discriminated. **The default has deliberately not been changed:** one saturated single-topic corpus rules 0.82 out without distinguishing "raise τ" from "lower k" from "make the threshold relative to the corpus", and fitting a constant to one sample is how a guess becomes a number nobody can argue with. Risk 1 in §12 records this. A second, less homogeneous corpus is what moves it.
+
+**M4 (agent contract) is done** — `src/ragged/agent/`, generated on every build and by `ragged agent`. Its exit criterion was met against the real corpus over a real stdio session with no embedding credential: `search` answered by traversal, `read_concept` returned the concept whole, `lint` reported okflint exit 0. Now that `ragged index` has run, `search` takes the embedding path on this corpus and the traversal fallback is exercised only by the tests — **keep it that way; it is the path the exit criterion depends on.**
 
 **Prompt calibration was deferred until after M2** (§13) and is now unblocked. Few-shot examples are the strongest signal in a prompt, and writing them before segmentation settled would have baked in guesses about the unit shape. The method is to take a concept a human promoted from `draft` to `stable` and use *that* as the example — so it needs a human to promote one first. Until then, don't "improve" prompt wording opportunistically; a model failure that can be repaired deterministically (see `prune_links`) should be, because a repair is testable and a prompt rule is not.
 

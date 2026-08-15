@@ -52,6 +52,27 @@ def test_doctor_reports_a_missing_credential(project):
     assert "GEMINI_API_KEY" in result.output
 
 
+def test_doctor_reports_the_embedding_provider_too_not_just_the_synth_one(project, monkeypatch):
+    """`index` has its own provider and its own credential (DESIGN §6.8)."""
+    (project / ".env").write_text("GEMINI_API_KEY=abc\n", encoding="utf-8")
+    _stub_reachable(monkeypatch, ["gemini-2.5-pro"])
+
+    result = runner.invoke(cli.app, ["doctor"])
+    assert result.exit_code == 0, result.output
+    assert "embeddings: gemini" in result.output
+    assert "gemini-embedding-001" in result.output
+    assert "0.82" in result.output  # tau, so a guess is visible as a guess
+    assert "graph.json" in result.output
+
+
+def test_doctor_reports_the_embedding_half_even_when_the_synth_half_fails(project):
+    """A missing synth key must not hide what `index` would do, or vice versa."""
+    result = runner.invoke(cli.app, ["doctor"])
+    assert result.exit_code == 1
+    assert "embeddings: gemini" in result.output
+    assert "`ragged index` will not run" in result.output
+
+
 def test_doctor_lists_alternatives_when_the_model_is_unavailable(project, monkeypatch):
     (project / ".env").write_text("GEMINI_API_KEY=abc\n", encoding="utf-8")
     _stub_reachable(monkeypatch, ["gemini-9-turbo", "gemini-9-flash"])
