@@ -1,10 +1,10 @@
 """embed -> project -> graph (DESIGN §6.8, §6.9, §8).
 
 Stages 8 and 9 of the pipeline, and separable from 1–7 by design: nothing in the
-build path uses embeddings, so `ragged build` never calls this and a bundle is
+build path uses embeddings, so `okragged build` never calls this and a bundle is
 produced, validated and consumed without it.
 
-Everything written here goes in `.ragged/`. The sidecar rule is the load-bearing
+Everything written here goes in `.okragged/`. The sidecar rule is the load-bearing
 constraint of the design — a bundle carrying an `embedding:` key or a vector file
 is no longer something you can `tar` up and read with `cat`.
 """

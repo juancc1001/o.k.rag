@@ -12,16 +12,16 @@ from pathlib import Path
 
 import pytest
 
-from ragged import agent, config as config_module, okf, pipeline
-from ragged.synth import SynthResult, WeaveResult
-from ragged.vectors import EmbedError
-from ragged.vectors.providers import gemini
+from okragged import agent, config as config_module, okf, pipeline
+from okragged.synth import SynthResult, WeaveResult
+from okragged.vectors import EmbedError
+from okragged.vectors.providers import gemini
 
 TOML = """\
 [bundle]
 root = "bundle"
 okf_version = "0.2"
-actor = "ragged/test"
+actor = "okragged/test"
 title = "Test Bundle"
 
 [sources.local]
@@ -72,7 +72,7 @@ CONCEPTS = [
 def project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     for var in ("GEMINI_API_KEY", "GOOGLE_API_KEY"):
         monkeypatch.delenv(var, raising=False)
-    (tmp_path / "ragged.toml").write_text(TOML, encoding="utf-8", newline="\n")
+    (tmp_path / "okragged.toml").write_text(TOML, encoding="utf-8", newline="\n")
     bundle = tmp_path / "bundle"
     for fields in CONCEPTS:
         okf.write_concept(bundle, okf.Concept(status="draft", **fields))
@@ -85,7 +85,7 @@ def cfg(project: Path):
 
 
 def write_graph(project: Path, graph: dict) -> None:
-    sidecar = project / ".ragged"
+    sidecar = project / ".okragged"
     sidecar.mkdir(parents=True, exist_ok=True)
     (sidecar / "graph.json").write_text(
         json.dumps(graph), encoding="utf-8", newline="\n"
@@ -119,7 +119,7 @@ def test_search_returns_pointers_and_never_a_body(project):
 def test_search_with_no_credential_at_all_answers_by_traversing_the_bundle(project):
     result = agent.search(cfg(project), "revenue recognition", k=8)
     assert result.path == agent.TRAVERSAL
-    assert "ragged index" in result.note
+    assert "okragged index" in result.note
     assert [hit.concept_id for hit in result.hits][:1] == ["revenue-policy"]
 
 
@@ -177,7 +177,7 @@ def test_search_uses_the_stored_vectors_when_a_credential_can_embed_the_query(
 ):
     monkeypatch.setenv("GEMINI_API_KEY", "test-key-not-used")
     monkeypatch.setattr(gemini, "embed", fake_embed)
-    from ragged import vectors
+    from okragged import vectors
 
     vectors.index(cfg(project))
 
@@ -190,7 +190,7 @@ def test_search_uses_the_stored_vectors_when_a_credential_can_embed_the_query(
 def test_a_query_that_cannot_be_embedded_falls_back_to_traversal(project, monkeypatch):
     monkeypatch.setenv("GEMINI_API_KEY", "test-key-not-used")
     monkeypatch.setattr(gemini, "embed", fake_embed)
-    from ragged import vectors
+    from okragged import vectors
 
     vectors.index(cfg(project))
 
@@ -261,11 +261,11 @@ def test_lint_reports_a_concept_past_its_stale_after(project):
 def test_lint_says_why_it_has_no_ghost_edges_until_the_index_has_run(project):
     report = agent.lint(cfg(project))
     assert report.ghosts == []
-    assert "ragged index" in report.ghosts_note
+    assert "okragged index" in report.ghosts_note
 
 
 def test_lint_reports_the_ghost_edges_the_index_computed(project):
-    sidecar = project / ".ragged"
+    sidecar = project / ".okragged"
     sidecar.mkdir(parents=True, exist_ok=True)
     (sidecar / "graph.json").write_text(
         json.dumps({"ghosts": [{"source": "holidays", "target": "pricing", "similarity": 0.9}]}),
@@ -309,7 +309,7 @@ def test_lint_reports_a_graph_that_no_longer_describes_this_bundle(project):
     )
     note = agent.lint(cfg(project)).ghosts_note
     assert "out of date" in note
-    assert "ragged index" in note
+    assert "okragged index" in note
 
 
 def test_a_graph_that_still_describes_the_bundle_is_not_called_out_of_date(project):
@@ -390,7 +390,7 @@ def test_registering_the_server_leaves_the_other_mcp_servers_alone(project):
 
     assert registered["mcpServers"]["other"] == {"command": "node"}
     assert registered["extra"] == 1
-    assert registered["mcpServers"]["ragged"]["args"] == ["agent/mcp_server.py"]
+    assert registered["mcpServers"]["okragged"]["args"] == ["agent/mcp_server.py"]
 
 
 def test_the_contract_lands_beside_the_bundle_never_inside_it(project):
@@ -412,7 +412,7 @@ def test_nothing_the_agent_layer_does_writes_into_the_bundle(project):
 def test_the_generated_launcher_imports_the_server_rather_than_reimplementing_it(project):
     agent.write_contract(cfg(project))
     source = (project / "agent" / "mcp_server.py").read_text(encoding="utf-8-sig")
-    assert "from ragged.agent.server import main" in source
+    assert "from okragged.agent.server import main" in source
     assert b"\r\n" not in (project / "agent" / "mcp_server.py").read_bytes()
 
 
@@ -438,7 +438,7 @@ def ingestable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key-not-used")
     monkeypatch.setattr(pipeline, "synthesize", fake_synthesize)
     monkeypatch.setattr(pipeline, "weave", lambda **kw: WeaveResult(kw["body"], invented=[]))
-    (tmp_path / "ragged.toml").write_text(TOML, encoding="utf-8", newline="\n")
+    (tmp_path / "okragged.toml").write_text(TOML, encoding="utf-8", newline="\n")
     (tmp_path / "sources").mkdir()
     for name in ("alpha", "beta"):
         (tmp_path / "sources" / f"{name}.md").write_text(
@@ -475,7 +475,7 @@ def test_a_path_outside_the_project_is_refused_rather_than_ingested(ingestable):
 # --- the server ------------------------------------------------------------------
 
 def server_for(project: Path):
-    from ragged.agent.server import build_server
+    from okragged.agent.server import build_server
 
     return build_server(cfg(project))
 

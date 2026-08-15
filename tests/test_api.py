@@ -13,15 +13,15 @@ from pathlib import Path
 
 import pytest
 
-from ragged import config as config_module, okf
-from ragged.api.app import create_app
-from ragged.vectors import GRAPH_NAME
+from okragged import config as config_module, okf
+from okragged.api.app import create_app
+from okragged.vectors import GRAPH_NAME
 
 TOML = """\
 [bundle]
 root = "bundle"
 okf_version = "0.2"
-actor = "ragged/test"
+actor = "okragged/test"
 title = "Test Bundle"
 
 [sources.local]
@@ -88,7 +88,7 @@ GRAPH = {
 def project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     for var in ("GEMINI_API_KEY", "GOOGLE_API_KEY"):
         monkeypatch.delenv(var, raising=False)
-    (tmp_path / "ragged.toml").write_text(TOML, encoding="utf-8", newline="\n")
+    (tmp_path / "okragged.toml").write_text(TOML, encoding="utf-8", newline="\n")
     bundle = tmp_path / "bundle"
     for fields in CONCEPTS:
         okf.write_concept(bundle, okf.Concept(status="draft", **fields))
@@ -103,7 +103,7 @@ def client(project: Path):
 
 
 def write_graph(project: Path, graph: dict | None = None) -> Path:
-    path = project / ".ragged" / GRAPH_NAME
+    path = project / ".okragged" / GRAPH_NAME
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         json.dumps(graph if graph is not None else GRAPH, indent=2) + "\n",
@@ -130,7 +130,7 @@ def test_the_graph_endpoint_serves_exactly_what_the_index_wrote(project):
 def test_the_graph_endpoint_says_to_run_index_when_there_is_no_graph(project):
     response = client(project).get("/api/graph")
     assert response.status_code == 404
-    assert "ragged index" in response.json()["detail"]
+    assert "okragged index" in response.json()["detail"]
 
 
 def test_the_graph_carries_both_edge_layers_the_view_renders(project):
@@ -219,7 +219,7 @@ def test_search_over_http_returns_pointers_and_never_a_body(project):
 def test_search_over_http_reports_which_path_answered(project):
     payload = client(project).get("/api/search", params={"q": "revenue"}).json()
     assert payload["path"] == "index-traversal"
-    assert "ragged index" in payload["note"]
+    assert "okragged index" in payload["note"]
 
 
 def test_search_honours_k(project):
@@ -247,7 +247,7 @@ def test_lint_over_http_reports_the_concepts_nothing_links_to(project):
 def test_lint_says_why_it_has_no_ghost_edges_until_the_index_has_run(project):
     payload = client(project).get("/api/lint").json()
     assert payload["ghosts"] == []
-    assert "ragged index" in payload["ghosts_note"]
+    assert "okragged index" in payload["ghosts_note"]
 
 
 # --- the boundary ----------------------------------------------------------------

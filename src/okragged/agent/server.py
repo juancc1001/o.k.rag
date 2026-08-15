@@ -33,7 +33,7 @@ INSTRUCTIONS = (
 
 
 def build_server(config: Config):
-    server = _mcp_server()(name="ragged", instructions=INSTRUCTIONS)
+    server = _mcp_server()(name="okragged", instructions=INSTRUCTIONS)
 
     @server.tool()
     def search(query: str, k: int = 8) -> dict[str, Any]:

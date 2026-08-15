@@ -1,5 +1,5 @@
 # derived, rebuildable from sources/ + bundle/
-.ragged/
+.okragged/
 
 # your input corpus. Not committed: it is your own material, and a real corpus
 # tends to carry third-party names that do not belong in a permanent history.
@@ -13,8 +13,8 @@ okf-base.yaml
 
 # layer 3, generated from the bundle on every build: AGENTS.md carries the
 # corpus's own names for the same reason bundle/ is not committed, and the
-# .mcp.json entry names the interpreter that generated it. `ragged agent`
-# rewrites both. Anchored, or it would also swallow src/ragged/agent/.
+# .mcp.json entry names the interpreter that generated it. `okragged agent`
+# rewrites both. Anchored, or it would also swallow src/okragged/agent/.
 /agent/
 /.mcp.json
 

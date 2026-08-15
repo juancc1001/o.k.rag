@@ -1,8 +1,8 @@
-# ragged — Design
+# okragged — Design
 
 **One line:** drop files in, get out a portable OKF v0.2 knowledge bundle, a generated agent contract, and a served graph that shows both the links the knowledge *has* and the ones it *should* have.
 
-**Status: M2, M3 and M4 built** — the pipeline and the bundle; `embed`, `project` and `graph.json` behind `ragged index`, with the read API and the sigma.js view behind `ragged serve`; and the agent contract (`agent/AGENTS.md` + the stdio MCP server) behind `ragged agent`. **M5, distribution, is next.** See [§13 Milestones](#13-milestones) for what exists and what comes next. `README.md` covers installation and usage.
+**Status: M2, M3 and M4 built** — the pipeline and the bundle; `embed`, `project` and `graph.json` behind `okragged index`, with the read API and the sigma.js view behind `okragged serve`; and the agent contract (`agent/AGENTS.md` + the stdio MCP server) behind `okragged agent`. **M5, distribution, is next.** See [§13 Milestones](#13-milestones) for what exists and what comes next. `README.md` covers installation and usage.
 
 ## Contents
 
@@ -33,7 +33,7 @@
 - Multi-user auth, collaboration, or hosted deployment. Single user, localhost.
 - A chat UI. The consumer of the bundle is Claude Code / any MCP-capable agent, not a bespoke chatbot.
 - Writing `verified` frontmatter. See §4.4 — this is a hard rule, not a deferral.
-- Attested Computations. The OKF v0.2 family is supported on *read* (fields preserved), but ragged does not author them.
+- Attested Computations. The OKF v0.2 family is supported on *read* (fields preserved), but okragged does not author them.
 
 ---
 
@@ -43,15 +43,15 @@ Straight from the LLM Wiki pattern, with OKF as the interchange format for layer
 
 | Layer | Directory | Owner | Mutability |
 |---|---|---|---|
-| 1. Raw sources | `sources/` | The user | Immutable — ragged reads, never writes |
-| 2. The bundle | `bundle/` | ragged (LLM-authored) | Rewritten on every ingest |
-| 3. The schema | `agent/` | ragged (generated), user-editable | Regenerated on demand |
+| 1. Raw sources | `sources/` | The user | Immutable — okragged reads, never writes |
+| 2. The bundle | `bundle/` | okragged (LLM-authored) | Rewritten on every ingest |
+| 3. The schema | `agent/` | okragged (generated), user-editable | Regenerated on demand |
 
 Plus a fourth thing that is *not* a layer because it is not knowledge:
 
-| Sidecar | `.ragged/` | ragged | Derived, disposable, rebuildable from layers 1+2 |
+| Sidecar | `.okragged/` | okragged | Derived, disposable, rebuildable from layers 1+2 |
 
-**The sidecar rule is the load-bearing constraint of this design.** Nothing derived — embeddings, ANN index, 2D projection, content hashes, extraction cache — goes inside `bundle/`. `bundle/` must remain a directory you can `tar` up, hand to someone with no knowledge of ragged, and have them consume with `cat`. That is the entire value proposition of OKF; a `.faiss` file or an `embedding:` frontmatter key destroys it.
+**The sidecar rule is the load-bearing constraint of this design.** Nothing derived — embeddings, ANN index, 2D projection, content hashes, extraction cache — goes inside `bundle/`. `bundle/` must remain a directory you can `tar` up, hand to someone with no knowledge of okragged, and have them consume with `cat`. That is the entire value proposition of OKF; a `.faiss` file or an `embedding:` frontmatter key destroys it.
 
 ---
 
@@ -70,7 +70,7 @@ ragged/
 │     ├─ index.md
 │     └─ <concept>.md
 │
-├─ .ragged/                    # sidecar — gitignored, rebuildable
+├─ .okragged/                  # sidecar — gitignored, rebuildable
 │  ├─ manifest.json            # source hash → concept ids; the idempotency ledger
 │  ├─ extracted/               # cached plain-text extractions, keyed by content hash
 │  ├─ proposed/                # replacements for concepts a human owns (§6.4)
@@ -83,7 +83,7 @@ ragged/
 │  ├─ AGENTS.md                # generated: how to query this bundle
 │  └─ mcp_server.py            # search / read_concept / ingest / lint over stdio
 │
-├─ src/ragged/
+├─ src/okragged/
 │  ├─ sources/                 # Source implementations (local, later gcs, bq)
 │  ├─ extract/                 # bytes → text, per format
 │  ├─ synth/                   # text → OKF concepts (Claude)
@@ -91,15 +91,15 @@ ragged/
 │  ├─ vectors/                 # embed, knn, project
 │  ├─ agent/                   # layer 3: search/lint, the contract, the MCP server
 │  ├─ api/                     # FastAPI app
-│  ├─ ledger.py                # the idempotency ledger (.ragged/manifest.json)
+│  ├─ ledger.py                # the idempotency ledger (.okragged/manifest.json)
 │  └─ cli.py
 │
 ├─ web/                        # Vite + React + TS + sigma.js
-├─ ragged.toml                 # config (see §11)
+├─ okragged.toml               # config (see §11)
 └─ pyproject.toml
 ```
 
-`.gitignore` must contain `.ragged/`. The bundle is committed; the sidecar is not.
+`.gitignore` must contain `.okragged/`. The bundle is committed; the sidecar is not.
 
 ---
 
@@ -117,7 +117,7 @@ Three rules, all enforced by `okflint validate` in CI:
 
 ### 4.2 Frontmatter policy
 
-ragged writes:
+okragged writes:
 
 | Field | Policy |
 |---|---|
@@ -127,13 +127,13 @@ ragged writes:
 | `resource` | When the concept maps to a followable artifact: `file:///…` for a local source, an absolute URL for web material. Omitted for abstract concepts. |
 | `tags` | When the synthesis pass produces cross-cutting tags with ≥2 members. Never single-member tags. |
 | `sources` | Always ≥1 entry: the file the concept derives from. `resource` required per entry; `id` present so the body can footnote it. `last_modified` from filesystem mtime. |
-| `generated` | Always. `{ by: "ragged/<version>", at: <ISO 8601> }`. |
+| `generated` | Always. `{ by: "okragged/<version>", at: <ISO 8601> }`. |
 | `verified` | **Never written.** See §4.4. |
 | `status` | `draft` on first synthesis; promoted to `stable` only by a human edit. Absent ⇒ `stable` per spec, so we write it explicitly. |
 | `stale_after` | Only if the config sets a default TTL for a source; computed to an absolute date at write time. |
-| `x_ragged_source_hash` | Extension field. SHA-256 of the source bytes this concept derives from. Producer-defined keys are explicitly allowed; consumers must preserve unknown keys. Re-ingest reads the ledger, not this — the field is here so a bundle handed to someone who has never heard of ragged still records which revision of the source it came from. |
+| `x_okragged_source_hash` | Extension field. SHA-256 of the source bytes this concept derives from. Producer-defined keys are explicitly allowed; consumers must preserve unknown keys. Re-ingest reads the ledger, not this — the field is here so a bundle handed to someone who has never heard of okragged still records which revision of the source it came from. |
 
-**Type vocabulary.** `type` is a free-form string and the spec forbids imposing a taxonomy. But a *bundle* benefits from internal consistency, so ragged holds a per-bundle vocabulary in `ragged.toml` (`[types] allowed = [...]`). The synthesis pass is shown the current vocabulary and told to reuse an existing value where one fits, or propose a new one. New proposals are appended to the config and reported in the ingest summary — never silently. Defaults for a document corpus: `Document`, `Concept`, `Entity`, `Process`, `Decision`, `Reference`.
+**Type vocabulary.** `type` is a free-form string and the spec forbids imposing a taxonomy. But a *bundle* benefits from internal consistency, so okragged holds a per-bundle vocabulary in `okragged.toml` (`[types] allowed = [...]`). The synthesis pass is shown the current vocabulary and told to reuse an existing value where one fits, or propose a new one. New proposals are appended to the config and reported in the ingest summary — never silently. Defaults for a document corpus: `Document`, `Concept`, `Entity`, `Process`, `Decision`, `Reference`.
 
 ### 4.3 Concept granularity — one source file ≠ one concept
 
@@ -147,7 +147,7 @@ The synthesis pass decides, constrained by: minimum ~150 words of substance per 
 
 ### 4.4 The `verified` rule
 
-ragged writes `generated.by: ragged/<version>` and nothing else in the trust family. It **never** writes `verified`, because `verified` records a confirmation event that actually happened, and writing `verified: {by: human:...}` because content looks correct forges the human-reviewed trust tier. A human promotes a concept by editing the file (or via a future `ragged verify` command that takes an explicit `--as human:<id>`); the pipeline never does it on their behalf.
+okragged writes `generated.by: okragged/<version>` and nothing else in the trust family. It **never** writes `verified`, because `verified` records a confirmation event that actually happened, and writing `verified: {by: human:...}` because content looks correct forges the human-reviewed trust tier. A human promotes a concept by editing the file (or via a future `okragged verify` command that takes an explicit `--as human:<id>`); the pipeline never does it on their behalf.
 
 Corollary: the re-ingest pass must **preserve** a `verified` block a human added, and must flag (not silently drop) when it rewrites the body of a concept that carries one. See §6.4.
 
@@ -184,7 +184,7 @@ The idempotency ledger, written by `ledger.py`. Everything about re-ingest corre
 
 `concepts` is ordered parent-first, so a skipped source can be reported without re-reading its tree. Keys are sorted on write, so a run that changed nothing rewrites a byte-identical file.
 
-`body_sha256` is the hash of the concept body *as ragged last wrote it*. A file on disk that hashes differently was edited by a human, and is protected (§6.4). This is **computed at read time, not stored as a flag**: a stored `human_edited: true` goes stale the moment the human reverts their edit, and a ledger that has to be told the truth twice will eventually be told it once.
+`body_sha256` is the hash of the concept body *as okragged last wrote it*. A file on disk that hashes differently was edited by a human, and is protected (§6.4). This is **computed at read time, not stored as a flag**: a stored `human_edited: true` goes stale the moment the human reverts their edit, and a ledger that has to be told the truth twice will eventually be told it once.
 
 Losing the ledger costs a full re-ingest, never correctness — so every read path degrades to "no record" rather than raising, and a skip additionally requires the recorded concept files to still be on disk.
 
@@ -192,7 +192,7 @@ Losing the ledger costs a full re-ingest, never correctness — so every read pa
 
 `float32[n, dim]`, L2-normalized at write time so cosine similarity is a dot product. Meta maps row → `{concept_id, embedded_body_sha256}`; a concept whose body hash differs from `embedded_body_sha256` is re-embedded.
 
-Meta also records the `provider`, `model` and `dim` the matrix was produced with. Not a second opinion about configuration — it is what makes "swap the provider" (§6.8) safe to do by editing `ragged.toml` rather than only by deleting the file: vectors from a different model are not comparable, and at a different width they are not even stackable, so a mismatch discards the matrix and re-embeds instead of mixing two spaces in one file.
+Meta also records the `provider`, `model` and `dim` the matrix was produced with. Not a second opinion about configuration — it is what makes "swap the provider" (§6.8) safe to do by editing `okragged.toml` rather than only by deleting the file: vectors from a different model are not comparable, and at a different width they are not even stackable, so a mismatch discards the matrix and re-embeds instead of mixing two spaces in one file.
 
 A concept that fails to embed keeps whatever vector it already had, recorded against the *old* body hash. The node still has a position, and the stale hash is what makes the next run retry it.
 
@@ -210,7 +210,7 @@ discover → extract → segment → synthesize → link-weave → emit → vali
            (cached)             (Claude)     (Claude)          (okflint)   (embed provider)
 ```
 
-Stages 1–7 produce the bundle. Stages 8–9 produce the sidecar vectors. They are separable, and that separation is a command boundary: `ragged build` runs 1–7, `ragged index` runs 8–9, `ragged serve` will run the API + web. `build` never embeds — nothing in the build path uses a vector.
+Stages 1–7 produce the bundle. Stages 8–9 produce the sidecar vectors. They are separable, and that separation is a command boundary: `okragged build` runs 1–7, `okragged index` runs 8–9, `okragged serve` will run the API + web. `build` never embeds — nothing in the build path uses a vector.
 
 ### 6.1 discover
 
@@ -219,14 +219,14 @@ Walk the `Source` (§9) and yield `(uri, bytes_or_stream, mtime)`. Compute `cont
 - Hash unchanged → **skip entirely**, including extraction and synthesis. No model call, no cost.
 - Hash changed → mark for re-ingest.
 - Hash unchanged but a section of it failed last run → re-ingest anyway. The ledger records `complete: false`, because a section lost to a 429 is source content missing from the bundle, and a source recorded as finished is never retried until its bytes happen to change. A failed *weave* does not count: the concept exists and is valid, only its links are missing (§6.5).
-- In manifest but no longer present at source → mark its concepts for `status: deprecated` (per spec: keep deprecated concepts for links and history rather than deleting them). Deletion requires explicit `ragged prune`. Marked once: the source record is then dropped, so later runs do not re-announce it.
+- In manifest but no longer present at source → mark its concepts for `status: deprecated` (per spec: keep deprecated concepts for links and history rather than deleting them). Deletion requires explicit `okragged prune`. Marked once: the source record is then dropped, so later runs do not re-announce it.
 - Re-ingested, but the new run produced a differently-named tree → **delete** what the old one produced and this one did not. This is the opposite call from the bullet above, and the difference is who owns the name: a vanished source's concepts are knowledge whose input went away, while a renamed tree is the same knowledge under a dead id. Concept ids derive from model-written titles, so a rebuild renames routinely; without this sweep every run leaves a full copy of the previous one behind. A directory left holding only its own `index.md` goes too.
 
 Ids the previous run wrote stay reserved for their own source across the whole run, released only when that source is itself re-ingested. Otherwise a rebuilt source can claim the id of a source that is about to be skipped.
 
 ### 6.2 extract
 
-Bytes → plain text plus structural hints (headings, tables, sheet names). Keyed cache in `.ragged/extracted/<sha256>.json` so re-runs after a synthesis-only change cost nothing.
+Bytes → plain text plus structural hints (headings, tables, sheet names). Keyed cache in `.okragged/extracted/<sha256>.json` so re-runs after a synthesis-only change cost nothing.
 
 Default extractor: **markitdown** — one dependency covering PDF/DOCX/XLSX/PPTX/HTML/CSV, and it emits markdown, which means the structure survives into the synthesis prompt instead of being flattened. Fallback for PDFs where layout matters (multi-column, heavy tables): **pymupdf** with a layout-preserving mode, selected per-file by config glob.
 
@@ -302,7 +302,7 @@ The concept index is therefore **snapshotted once, before discovery**, and descr
 
 For bulk ingests (>50 units), route through the **Batches API** instead: 50% cost reduction, and a 400-file corpus is not latency-sensitive. Same schema, same cached prefix.
 
-**Protected concepts.** If the on-disk body no longer hashes to `manifest.concepts[id].body_sha256`, or the file carries a `verified` block, synthesis does not overwrite it. Instead it writes the proposed replacement to `.ragged/proposed/<id>.md` and reports it. The human resolves. This is the one place where "the LLM owns layer 2" yields to "the human owns their verification".
+**Protected concepts.** If the on-disk body no longer hashes to `manifest.concepts[id].body_sha256`, or the file carries a `verified` block, synthesis does not overwrite it. Instead it writes the proposed replacement to `.okragged/proposed/<id>.md` and reports it. The human resolves. This is the one place where "the LLM owns layer 2" yields to "the human owns their verification".
 
 With no ledger record at all — a wiped sidecar beside a surviving bundle — only `verified` protects. "We cannot tell" must not mean "never rebuild anything again".
 
@@ -350,18 +350,18 @@ Two layers, because neither alone is sufficient:
 1. **Built-in checks** — the three conformance rules plus W1–W5 warnings. Always run, no dependencies. This is the floor.
 2. **okflint** (pinned, verified against 0.3.1) — the normative gate. `okflint validate --manifest okf-base.yaml <bundle>`; exit 0 required.
 
-**ragged generates `okf-base.yaml`** at the project root, because okflint's `validate` always resolves a manifest (default `okf-base.yaml`) and exits 2 — "bad manifest" — without one. It cannot be run manifest-free. The generated manifest is minimal:
+**okragged generates `okf-base.yaml`** at the project root, because okflint's `validate` always resolves a manifest (default `okf-base.yaml`) and exits 2 — "bad manifest" — without one. It cannot be run manifest-free. The generated manifest is minimal:
 
 - `base.roots` — non-empty list of `{path, exclude_patterns}`, required.
 - `base.reserved_files` — must contain both `index` and `log` keys, required.
 - `hygiene.broken_links: warn` — the spec explicitly permits broken links, so they must never fail the gate.
-- `hygiene.unknown_fields: off` — otherwise `x_ragged_source_hash` is flagged, and producer-defined keys are spec-legal.
+- `hygiene.unknown_fields: off` — otherwise `x_okragged_source_hash` is flagged, and producer-defined keys are spec-legal.
 - **No `profile` block.** A profile pins required fields and controlled vocabularies per type; that is the bundle owner's policy call, and enforcing one would reject the new types synthesis proposes (§4.2). Add it once a vocabulary settles.
 - **No `okf_version` key.** okflint 0.3.1 recognises only `0.1` and prints a warning for anything else. The bundle-root `index.md` is where the bundle declares `0.2`.
 
 When okflint is absent, or the manifest is missing, validation reports *why* it was skipped rather than silently degrading to the floor.
 
-`okflint audit` takes `--bundle`, not a positional path, and is a separate diagnostic (split candidates, inventory) rather than part of the gate. `okflint index --apply` is **not** used — ragged generates its own `index.md` files in 6.6 with descriptions pulled from frontmatter; `okflint index` stays available as a repair tool for hand-edited bundles.
+`okflint audit` takes `--bundle`, not a positional path, and is a separate diagnostic (split candidates, inventory) rather than part of the gate. `okflint index --apply` is **not** used — okragged generates its own `index.md` files in 6.6 with descriptions pulled from frontmatter; `okflint index` stays available as a repair tool for hand-edited bundles.
 
 The okflint subprocess must decode as UTF-8 explicitly — `text=True` inherits the locale codepage and okflint emits characters outside cp1252. That is one instance of a project-wide rule: **never trust a platform default at an I/O boundary.** The full policy, and the AST test that enforces it, are in `README.md` → Encoding policy.
 
@@ -373,7 +373,7 @@ The okflint subprocess must decode as UTF-8 explicitly — `text=True` inherits 
 
 Note the asymmetry that makes this low-stakes: concept vectors are computed at **build** time, when a credential is present either way, and then stored. Reading them needs no credential regardless of who produced them. Only query embedding would, and `search` falls back to index traversal.
 
-Decide it by measurement: if local `bge-small` produces useful ghost edges on the real corpus, keep it. If the signal is noise, compare against `gemini-embedding-001`. Either way the vectors live in `.ragged/` — swapping providers is deleting `embeddings.npy` and re-embedding, with zero impact on `bundle/`. This is the sidecar rule paying for itself.
+Decide it by measurement: if local `bge-small` produces useful ghost edges on the real corpus, keep it. If the signal is noise, compare against `gemini-embedding-001`. Either way the vectors live in `.okragged/` — swapping providers is deleting `embeddings.npy` and re-embedding, with zero impact on `bundle/`. This is the sidecar rule paying for itself.
 
 **What is built is therefore the pluggable interface, not the answer.** `vectors/providers/` mirrors `synth/providers/` exactly — one thin module per backend exposing `NAME`, `DEFAULT_MODEL`, `ENV_VARS`, `WINDOW_CHARS`, `credential_present()` and `embed()`, registered in `PROVIDERS` and selected by `[vectors].provider`. Both are implemented: `gemini` (`gemini-embedding-001`) because the build already requires that credential, and `fastembed` (`bge-small-en-v1.5`) behind an optional extra so the default install does not carry onnxruntime for a question nobody has answered yet. Chunking is per-provider (`WINDOW_CHARS`) rather than global, because the window is a property of the model.
 
@@ -399,7 +399,7 @@ kNN is brute-force cosine over the normalized matrix — `n × dim` float32 is 1
 
 Retrieval strategy is deliberately **not** decided in this document. The objective is producing conformant OKF bundles; how an agent later queries one is a separate question, settled empirically against a real corpus rather than argued up front.
 
-What this section fixes is only the constraint that keeps the question open: retrieval lives entirely in `.ragged/`, so it can change without touching `bundle/`. Embeddings in §8 exist to serve the graph (layout + lint), not to commit to a retrieval design.
+What this section fixes is only the constraint that keeps the question open: retrieval lives entirely in `.okragged/`, so it can change without touching `bundle/`. Embeddings in §8 exist to serve the graph (layout + lint), not to commit to a retrieval design.
 
 ---
 
@@ -456,7 +456,7 @@ Three details the schema does not show:
 
 ### Stack
 
-**Built**, as `web/` behind `ragged serve`.
+**Built**, as `web/` behind `okragged serve`.
 
 **sigma.js v3 + graphology**, WebGL. d3-force is nicer to style but degrades past ~1–2k nodes, and a document corpus of any size will exceed that. Positions come precomputed from UMAP, so no force simulation runs in the browser — sigma is used as a renderer, not a layout engine. Layout is therefore deterministic and instant.
 
@@ -498,7 +498,7 @@ BigQuery specifically: `INFORMATION_SCHEMA.COLUMNS` + `TABLES` + table descripti
 
 ## 10. Agent contract
 
-**Built** (M4), as `src/ragged/agent/`. `pipeline._finalize` regenerates the whole contract on every ingest, and `ragged agent` regenerates it offline from an existing bundle.
+**Built** (M4), as `src/okragged/agent/`. `pipeline._finalize` regenerates the whole contract on every ingest, and `okragged agent` regenerates it offline from an existing bundle.
 
 ### `agent/AGENTS.md` (generated)
 
@@ -517,7 +517,7 @@ stdio MCP server. Four tools:
 | `ingest` | `(paths: list[str] \| None) -> IngestSummary` | Runs the pipeline. `None` = full sweep. |
 | `lint` | `() -> LintReport` | okflint results + ghost edges + stale concepts + orphans. Ghosts are capped at the 20 strongest, with `ghosts_total` and a note; and a `graph.json` whose nodes no longer match the bundle is reported out of date rather than trusted, because a rebuild renames ids and the old graph is then about *different* concepts. |
 
-Registering it is a `.mcp.json` entry pointing at the script — which makes any MCP-capable agent, Claude Code included, a consumer of the bundle with no ragged-specific code.
+Registering it is a `.mcp.json` entry pointing at the script — which makes any MCP-capable agent, Claude Code included, a consumer of the bundle with no okragged-specific code.
 
 **Three of the four tools take no credential, and `search` is the one that has to work for it.** Concept vectors are computed at build time and stored, but embedding a *query* is a read-time model call (§6.8). So `search` has two paths behind one result shape: kNN over `embeddings.npy` when the matrix exists and an embedding credential is present, and otherwise a traversal ranking over what the bundle already says about itself — titles and descriptions (which are what the indexes are made of, verbatim), the bodies at lower weight, and one hop along the authored links, so a concept the bundle links to a hit surfaces behind it. The result names which path answered, and the traversal path says why the other one did not. This is a ranking, not a retrieval framework: §7 keeps retrieval strategy out of scope, and the traversal ranking is deliberately simple enough to explain in a sentence and test without a model.
 
@@ -543,19 +543,19 @@ Nothing in this layer writes to the bundle, and nothing writes a `verified` bloc
 | `GET` | `/api/ingest/{job}` | SSE progress stream | deferred |
 | `GET` | `/api/lint` | Lint report | **built** |
 
-The four read endpoints are wrappers over `agent/query.py`, `agent/lint.py` and the `graph.json` `ragged index` wrote, so `search` and `lint` cannot answer differently here than over MCP (§10). All four are offline; none writes anywhere.
+The four read endpoints are wrappers over `agent/query.py`, `agent/lint.py` and the `graph.json` `okragged index` wrote, so `search` and `lint` cannot answer differently here than over MCP (§10). All four are offline; none writes anywhere.
 
 **The two ingest endpoints are deferred, not cancelled.** They need a job registry and progress events the pipeline does not emit — `ingest` returns a summary at the end and says nothing during — and the graph view needs neither. Writing stays on the CLI and the MCP tool until something asks for it over HTTP. The rest of layer 3 already holds the invariant that matters: nothing in the API path writes to the bundle.
 
 FastAPI is an optional extra (`pip install -e ".[api]"`) for the same reason the MCP SDK is: producing and validating a bundle needs neither.
 
-### `ragged.toml`
+### `okragged.toml`
 
 ```toml
 [bundle]
 root = "bundle"
 okf_version = "0.2"
-actor = "ragged/0.1.0"
+actor = "okragged/0.1.0"
 # title = "Derecho Informático"   # omit -> the project directory name
 
 [sources.local]
@@ -601,11 +601,11 @@ random_state = 42
 | # | Risk | Mitigation |
 |---|---|---|
 | 1 | **Ghost-edge threshold is uncalibrated.** τ = 0.82 is a guess. A coherent corpus may make everything ≥0.9-similar, drowning the signal. | **Measured in M3, and the risk was real:** on the first corpus the median pairwise similarity is 0.896 and 150 of 153 pairs clear τ, so the selectivity comes entirely from `knn_k`. The mitigation stands — τ and k are config and only the last stage reruns — and the slider now exists to explore it. **Still open:** whether the fix is a higher absolute τ, a threshold relative to the corpus's distribution, or a smaller k. One saturated single-topic corpus cannot tell those apart, so the default has deliberately not moved. |
-| 2 | **Extraction quality caps everything downstream.** Garbage text → garbage concepts, and no amount of prompt work fixes it. | Cache extractions and expose them; a `ragged extract --inspect <file>` command so extraction can be debugged independently of synthesis. |
+| 2 | **Extraction quality caps everything downstream.** Garbage text → garbage concepts, and no amount of prompt work fixes it. | Cache extractions and expose them; an `okragged extract --inspect <file>` command so extraction can be debugged independently of synthesis. |
 | 3 | **Synthesis cost on large corpora.** 400 documents × ~3 units × Opus 5 at high effort is real money. | Cached system prefix (~0.1× on the bulk of input tokens), Batches API (50%), hash-based skip on unchanged files. Report estimated cost before a run and require confirmation above a configurable ceiling. |
 | 4 | **Embedding provider is undecided** (§6.8). Local `bge-small` is weaker on domain jargon; hosted costs money and, for query embedding, a credential at read time. | **Still open, deliberately.** What is built is the pluggable interface with both backends registered, selected by config; the answer comes from measuring ghost-edge quality on the real corpus. Sidecar-only, so swapping is a re-embed that touches nothing in `bundle/`, and `embeddings_meta.json` records the provider so a swap re-embeds rather than mixing two vector spaces. |
-| 5 | **Layout instability across ingests.** UMAP with new points added can reshuffle globally even with a fixed seed. | Fixed `random_state` — **done**, and it is only half the mitigation: it makes a run reproducible, not a refit stable. `umap.transform()` on a persisted fitted model would place new points into the existing layout, but it needs the fitted model pickled into the sidecar and an explicit `ragged reindex --full` to refit. Not built. |
-| 6 | **Human edits vs. LLM ownership.** The wiki pattern says the LLM owns layer 2, but a human who verified a concept has a legitimate claim on it. | Body-hash comparison + `verified` detection + `.ragged/proposed/` (§6.4). Never silently overwrite. Built in M2. |
+| 5 | **Layout instability across ingests.** UMAP with new points added can reshuffle globally even with a fixed seed. | Fixed `random_state` — **done**, and it is only half the mitigation: it makes a run reproducible, not a refit stable. `umap.transform()` on a persisted fitted model would place new points into the existing layout, but it needs the fitted model pickled into the sidecar and an explicit `okragged reindex --full` to refit. Not built. |
+| 6 | **Human edits vs. LLM ownership.** The wiki pattern says the LLM owns layer 2, but a human who verified a concept has a legitimate claim on it. | Body-hash comparison + `verified` detection + `.okragged/proposed/` (§6.4). Never silently overwrite. Built in M2. |
 | 7 | **Sensitive content.** Local phase 1 is fine, but document text goes to the Claude API during synthesis, and phase 2 adds cloud sources. | Document this explicitly before first run. Embeddings stay local by default specifically so the *bulk* re-processing path is offline. Revisit before any cloud connector ships. |
 | 8 | **okflint version drift.** It's a young package; its manifest profile format may change. | Pin the version in `pyproject.toml`; keep the built-in three-rule fallback working as a hard floor. |
 
@@ -633,7 +633,7 @@ random_state = 42
 
 **M3 and M4 were deliberately swapped, and then the execution went the other way.** The reason for the swap still stands: the objective is that any model *consumes* the bundle, and that is served by the agent contract, not by the graph. The graph is diagnostic; MCP is the product.
 
-M3's offline core was nevertheless built first. It cost nothing to take out of order, because `ragged index` is a separate command writing only into `.ragged/` — no build path, no `bundle/`, no dependency from `okf/` — so M4 begins from the same place it would have. What taking it early did not buy was the thing M3 exists for: τ stayed a guess until something ran the rule against a real corpus. **M4 came next**, and the rest of M3 after it.
+M3's offline core was nevertheless built first. It cost nothing to take out of order, because `okragged index` is a separate command writing only into `.okragged/` — no build path, no `bundle/`, no dependency from `okf/` — so M4 begins from the same place it would have. What taking it early did not buy was the thing M3 exists for: τ stayed a guess until something ran the rule against a real corpus. **M4 came next**, and the rest of M3 after it.
 
 ---
 
@@ -641,7 +641,7 @@ M3's offline core was nevertheless built first. It cost nothing to take out of o
 
 **M2 — real bundle. All four items done.** In dependency order:
 
-1. **`manifest.json` + idempotent re-ingest.** **Done**, in `ledger.py` (`okf/manifest.py` was taken by the okflint manifest). Content-hash skip so an unchanged source costs nothing — not extraction, not the N+1 model calls segmentation turned one source into. Plus `status: deprecated` for vanished sources, human-edit and `verified` protection via `.ragged/proposed/` (§6.4), and **stale-output cleanup**: parent ids derive from model-written titles, so a rebuild emits a differently-named tree as a matter of course — observed on two builds over the same three unchanged PDFs, different parent ids both times — and nothing else removes what the rename leaves behind.
+1. **`manifest.json` + idempotent re-ingest.** **Done**, in `ledger.py` (`okf/manifest.py` was taken by the okflint manifest). Content-hash skip so an unchanged source costs nothing — not extraction, not the N+1 model calls segmentation turned one source into. Plus `status: deprecated` for vanished sources, human-edit and `verified` protection via `.okragged/proposed/` (§6.4), and **stale-output cleanup**: parent ids derive from model-written titles, so a rebuild emits a differently-named tree as a matter of course — observed on two builds over the same three unchanged PDFs, different parent ids both times — and nothing else removes what the rename leaves behind.
 2. **Segmentation** (§4.3). **Done.** Two passes: a planning call returns the parent's identity plus one verbatim `start_marker` per section, code cuts the text at those markers, then one synthesis call per section. Two passes rather than one call returning an array, because an array makes every concept share one `max_tokens` — which is what produced M1's flat ~2.5k-per-concept ceiling regardless of source length. Measured on 86k characters of PDF: retention 9% → 48%. A section that fails is recorded and skipped, so one 503 costs one section rather than the document.
 3. **Link-weave** (§6.5). **Done**, in `synth/weave.py`. One call per concept written this run, given the full bundle index and the `candidate_links` synthesis proposed; returns `body_markdown` alone. §4.3's "every child links back to its parent in prose" is served by telling the pass its parent rather than by fabricating the sentence in the writer. Targets outside the index are unwrapped to plain text and reported — the spec's tolerance for broken links is for human authors, not for a generator holding the index. The ledger records the **post-weave** `body_sha256`, or the next run reads every concept as human-edited.
 
@@ -661,15 +661,15 @@ Both prompt changes that belong to M2 itself are done with item 3: the existing-
 
 **M3 — vectors + graph.** Embed, project, `graph.json`, FastAPI, sigma.js frontend with both edge layers and the τ slider. Where the ghost-edge idea gets its first real test. Note `search` works on index traversal before this lands; embeddings upgrade it rather than enable it.
 
-**The offline core is built**, as `ragged index` (§6.8, §6.9, §8):
+**The offline core is built**, as `okragged index` (§6.8, §6.9, §8):
 
 - **`embed`** — `vectors/providers/` mirroring `synth/providers/`, with `gemini` and `fastembed` registered and neither one anointed (Risk 4 stays open). One vector per concept over `title + description + body`, mean-pooled over chunks past the provider's window, only the concept vector stored. A body whose hash matches `embedded_body_sha256` is not re-embedded, and one concept failing costs that concept alone.
 - **`project`** — UMAP with a fixed `random_state`, PCA below 15 concepts or without `umap-learn`. Both extras (`umap-learn`, `fastembed`) are optional: numba and onnxruntime are not something a default install should carry to produce a bundle that never reads a vector.
 - **`graph.json`** — nodes with derived `trust`, both edge sets, and the ghost rule of §8 over brute-force cosine kNN in NumPy.
 
-Everything it writes is in `.ragged/`: `embeddings.npy`, `embeddings_meta.json`, `layout.json`, `graph.json`. `build` does not call it and the bundle does not know it ran.
+Everything it writes is in `.okragged/`: `embeddings.npy`, `embeddings_meta.json`, `layout.json`, `graph.json`. `build` does not call it and the bundle does not know it ran.
 
-**The rest is built too:** the four read endpoints of §11 behind `ragged serve`, and the sigma.js view in `web/` with both edge layers, the τ slider and the concept panel. Both extras are optional (`.[api]`, and `web/` builds only if you run `npm`), for the same reason `umap` and `mcp` are: a bundle is produced, validated and consumed without either.
+**The rest is built too:** the four read endpoints of §11 behind `okragged serve`, and the sigma.js view in `web/` with both edge layers, the τ slider and the concept panel. Both extras are optional (`.[api]`, and `web/` builds only if you run `npm`), for the same reason `umap` and `mcp` are: a bundle is produced, validated and consumed without either.
 
 **Exit criterion: ingest a real corpus, index it, and see the ghost edges rendered — τ answered by a corpus rather than by argument. Met**, and the answer was that the default is wrong. On the 18-concept Spanish corpus, embedded with `gemini-embedding-001` at dim 768 and projected with UMAP:
 
@@ -685,17 +685,17 @@ Everything it writes is in `.ragged/`: `embeddings.npy`, `embeddings_meta.json`,
 
 What it does **not** settle: whether the fix is a higher absolute τ, a threshold relative to the corpus's own similarity distribution, or a smaller `knn_k` — one saturated single-topic corpus cannot distinguish those. Raising the default on this evidence alone would be fitting a constant to one sample. The slider is the instrument; the reading is recorded here, and the default moves when a second, less homogeneous corpus agrees.
 
-**M4 — agent contract. Done**, in `src/ragged/agent/` (§10). Generated `AGENTS.md`, the stdio MCP server, and a `.mcp.json` entry that registers it — merged into whatever else is already registered rather than written over it. Three of the four tools (`search`, `read_concept`, `lint`) are credential-free; only `ingest` inherits the write path's requirement, and the generated `AGENTS.md` says so.
+**M4 — agent contract. Done**, in `src/okragged/agent/` (§10). Generated `AGENTS.md`, the stdio MCP server, and a `.mcp.json` entry that registers it — merged into whatever else is already registered rather than written over it. Three of the four tools (`search`, `read_concept`, `lint`) are credential-free; only `ingest` inherits the write path's requirement, and the generated `AGENTS.md` says so.
 
-The credential-free requirement is what shaped `search`: it falls back from embedding kNN to a traversal ranking over the indexes, the bodies and the link graph, and reports which path answered. That fallback is not a stub — it is the path the exit criterion exercises, and on the real corpus it is the only one available, because `ragged index` needs the same credential.
+The credential-free requirement is what shaped `search`: it falls back from embedding kNN to a traversal ranking over the indexes, the bodies and the link graph, and reports which path answered. That fallback is not a stub — it is the path the exit criterion exercises, and on the real corpus it is the only one available, because `okragged index` needs the same credential.
 
-The contract is regenerated by `pipeline._finalize`, so it can never describe a bundle that no longer exists, and by `ragged agent` for a bundle that was built elsewhere. It is generated *beside* `bundle/`, never inside it — layer 3 is a sibling of layer 2, and the sidecar rule (§2) is why.
+The contract is regenerated by `pipeline._finalize`, so it can never describe a bundle that no longer exists, and by `okragged agent` for a bundle that was built elsewhere. It is generated *beside* `bundle/`, never inside it — layer 3 is a sibling of layer 2, and the sidecar rule (§2) is why.
 
-Exit criterion: a session with no credential registers the server, answers a real question from the bundle, and reports lint findings. **Met** on the same 3-PDF Spanish corpus, driving the generated `agent/mcp_server.py` over stdio exactly as the `.mcp.json` entry spawns it: `search` answered a question about Ley 26.388 by traversal (reporting `no stored embeddings for this provider; run ragged index`) with the right concept first, `read_concept` returned it whole, and `lint` reported 18 concepts, okflint exit 0, no orphans, and no ghost edges *because the index has not run* rather than because there are none.
+Exit criterion: a session with no credential registers the server, answers a real question from the bundle, and reports lint findings. **Met** on the same 3-PDF Spanish corpus, driving the generated `agent/mcp_server.py` over stdio exactly as the `.mcp.json` entry spawns it: `search` answered a question about Ley 26.388 by traversal (reporting `no stored embeddings for this provider; run okragged index`) with the right concept first, `read_concept` returned it whole, and `lint` reported 18 concepts, okflint exit 0, no orphans, and no ghost edges *because the index has not run* rather than because there are none.
 
 **M5 — distribution. Next, and deliberately ahead of connectors.**
 
-Everything built so far assumes the reader is standing inside the producer's working tree. `.mcp.json` names a venv-relative interpreter and a relative script path; the server tells its client that `agent/AGENTS.md` is the contract; the only way to drive the pipeline is a CLI rooted at a cwd. §10 claims that registering the server "makes any MCP-capable agent a consumer of the bundle with no ragged-specific code", and **for a consumer outside that tree, it does not.** M5 makes that claim true.
+Everything built so far assumes the reader is standing inside the producer's working tree. `.mcp.json` names a venv-relative interpreter and a relative script path; the server tells its client that `agent/AGENTS.md` is the contract; the only way to drive the pipeline is a CLI rooted at a cwd. §10 claims that registering the server "makes any MCP-capable agent a consumer of the bundle with no okragged-specific code", and **for a consumer outside that tree, it does not.** M5 makes that claim true.
 
 **Why before connectors, which is a reordering.** M6 adds `Source` implementations, and a public API freezes the `Source` protocol (§9) — including the question of whether exhausting `discover()` constitutes a *complete* observation, which is what licenses the ledger to mark an unseen source `deprecated`. That semantics is cheap to settle now and expensive to retrofit, because retrofitting means auditing every `deprecated` mark ever written. Designing the contract once, with connectors in view but unwritten, is the whole reason for the swap.
 
@@ -716,7 +716,7 @@ The URI scheme is the one irreversible choice here: `okf://` would claim the for
 
 **Three pieces.**
 
-1. **Package.** Console-script entry points rather than generated paths. This does not fix the `.mcp.json` defect so much as delete it: a pip-installed `okragged` on `PATH`, invoked as `okragged mcp`, needs no interpreter path, no script path, and nothing relative to a cwd. The server then needs an explicit target — `--project` or `RAGGED_PROJECT` — because a launcher that infers its bundle from `__file__` cannot survive being installed.
+1. **Package.** Console-script entry points rather than generated paths. This does not fix the `.mcp.json` defect so much as delete it: a pip-installed `okragged` on `PATH`, invoked as `okragged mcp`, needs no interpreter path, no script path, and nothing relative to a cwd. The server then needs an explicit target — `--project` or `OKRAGGED_PROJECT` — because a launcher that infers its bundle from `__file__` cannot survive being installed.
 
 2. **Export the contract over the protocol, not the filesystem.** Three levels of disclosure: `instructions` short and self-contained at the handshake, the rendered `AGENTS.md` as a resource, `bundle/index.md` as a second one. Both handlers call functions that already exist (`contract.py::render_agents_md`, `query.py::read_concept`), so there is no second renderer to drift from the file on disk. **The invariant this establishes:** *layer 3 crosses the process boundary over the protocol, never over the filesystem — no generated instruction text may name a path relative to the producer's root.* Checkable offline, so it is a test rather than a convention.
 
@@ -734,7 +734,7 @@ The URI scheme is the one irreversible choice here: `okf://` would claim the for
 
 5. **`add_source` — the write tool that replaces it, and the reason it is not `add_concept`.** Knowledge worth recording is not always in a document: two tables are related in a way no paper states, and someone knows it. That has to be able to enter the bundle.
 
-   The tempting shape is a tool that writes a concept directly, and it breaks the invariant everything else rests on — **every concept traces to a source.** §4.2 requires `sources:` with at least one entry, every concept carries `x_ragged_source_hash`, and the ledger maps source hash → concept ids. A directly-written concept either fabricates provenance or violates the policy, and it appears in the bundle while being absent from the ledger — so "what the ledger describes" and "what the bundle contains" stop agreeing, which is the assumption stale-output cleanup, deprecation and human-edit detection are all built on.
+   The tempting shape is a tool that writes a concept directly, and it breaks the invariant everything else rests on — **every concept traces to a source.** §4.2 requires `sources:` with at least one entry, every concept carries `x_okragged_source_hash`, and the ledger maps source hash → concept ids. A directly-written concept either fabricates provenance or violates the policy, and it appears in the bundle while being absent from the ledger — so "what the ledger describes" and "what the bundle contains" stop agreeing, which is the assumption stale-output cleanup, deprecation and human-edit detection are all built on.
 
    Writing the assertion into `sources/` instead costs nothing architecturally and keeps all of it: provenance points at a file that exists, the ledger stays complete, and segmentation, link-weave and validation apply, so the new knowledge is woven into the graph rather than sitting beside it. The tool writes `sources/conversations/<date>-<slug>.md` and ingests **that path only** — a partial run suppresses the vanished sweep (§6.1), so it is safe by construction.
 
@@ -742,7 +742,7 @@ The URI scheme is the one irreversible choice here: `okf://` would claim the for
 
    **One honest limitation to state rather than discover.** Asserting "x relates to y" mints a *third* concept that links to both; it does not rewrite x and y to link back. Link-weave only touches concepts written in the current run, which is the forward-only property M2 settled. The relationship is in the graph and it is traceable — it just lives in its own node, and the reverse direction is what ghost edges are for.
 
-6. **A lock and a staged emit.** Not deferred to hosting: after M5 the CLI, the MCP server and the Python API are three writers to one directory, and today nothing detects them interleaving. The minimum is a lock file in `.ragged/` and an emit that stages then swaps, so a crash mid-write leaves the previous tree rather than a mix of two namings. The revision model that many *remote* writers need is M6's problem, not this one's.
+6. **A lock and a staged emit.** Not deferred to hosting: after M5 the CLI, the MCP server and the Python API are three writers to one directory, and today nothing detects them interleaving. The minimum is a lock file in `.okragged/` and an emit that stages then swaps, so a crash mid-write leaves the previous tree rather than a mix of two namings. The revision model that many *remote* writers need is M6's problem, not this one's.
 
 **What this must not become.** The API is an entry point to the pipeline, not an abstraction over it. `synth/` stays unpublished for the reason M7 gives below, and it applies with more force to a public API: a `provider=` argument in a documented signature is a promise to track every vendor's drift forever. Nor does the first version return a `Bundle` object — the load-bearing property of this design is that a bundle *is* a directory (§2), and an object hands back a different answer to a question nobody has asked yet. Summaries and paths.
 
@@ -795,7 +795,7 @@ Transport is the least of it: the SDK speaks streamable HTTP, and M3 already bri
 1. M2 shipped and a real corpus of ≥100 documents has been ingested and re-ingested.
 2. The frontmatter policy (§4.2) has gone one full milestone without a breaking change. Today it has never met a real document, so it will move.
 3. A second consumer exists that is not this pipeline — the MCP server (M4) counts. One caller is not evidence of a reusable API.
-4. `parse`/`render` round-trip holds on a bundle authored by something other than ragged.
+4. `parse`/`render` round-trip holds on a bundle authored by something other than okragged.
 
 **Note on reach.** For *consumption* the MCP server beats a library: it works from any language and any agent with no import, whereas a Python library only serves Python producers. M8 is about the production side and about not making the next OKF tool reimplement frontmatter parsing — it is not the distribution strategy for the format.
 

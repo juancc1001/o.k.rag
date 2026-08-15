@@ -46,7 +46,7 @@ class ItemOutcome:
     skipped: bool = False
     """Unchanged since the last ingest — reused wholesale, no model call."""
     protected: dict[str, str] = field(default_factory=dict)
-    """concept_id -> why a human owns it; the replacement went to .ragged/proposed/."""
+    """concept_id -> why a human owns it; the replacement went to .okragged/proposed/."""
     removed: list[str] = field(default_factory=list)
     """Concepts the previous run produced for this source and this one did not."""
     candidates: dict[str, list[str]] = field(default_factory=dict)
@@ -341,7 +341,7 @@ def _ingest_segmented(
 def _write(config: Config, ledger: Ledger, concept: Concept, outcome: ItemOutcome) -> str:
     """Write a concept unless a human owns it (§6.4). Returns the log verb.
 
-    A protected concept's replacement goes to `.ragged/proposed/` for the human
+    A protected concept's replacement goes to `.okragged/proposed/` for the human
     to resolve. This is the one place where "the LLM owns layer 2" yields.
     """
     concept_id = concept.concept_id
@@ -466,7 +466,7 @@ def _deprecate_vanished(
     """A source that is gone deprecates its concepts; it does not delete them.
 
     The spec keeps deprecated concepts for links and history (§6.1) — deletion
-    is an explicit `ragged prune`, never a side effect of removing an input file.
+    is an explicit `okragged prune`, never a side effect of removing an input file.
     """
     for uri in sorted(set(ledger.sources) - discovered):
         for concept_id in ledger.forget_source(uri):
@@ -552,7 +552,7 @@ def _build(
         ],
         generated={"by": config.bundle.actor, "at": _now()},
         status="draft",
-        extra={"x_ragged_source_hash": item.content_sha256},
+        extra={"x_okragged_source_hash": item.content_sha256},
     )
 
 

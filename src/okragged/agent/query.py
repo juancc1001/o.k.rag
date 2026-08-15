@@ -91,7 +91,7 @@ def _by_embedding(
     model = config.vectors.model or impl.DEFAULT_MODEL
     store = load_store(config.sidecar_root, config.vectors.provider, model)
     if store.matrix is None or not store.ids:
-        return None, "no stored embeddings for this provider; run `ragged index`"
+        return None, "no stored embeddings for this provider; run `okragged index`"
     if not impl.credential_present():
         return None, (
             f"no credential for embedding provider {config.vectors.provider!r}, "
@@ -104,7 +104,7 @@ def _by_embedding(
     except EmbedError as exc:
         return None, str(exc)
     if raw.ndim != 2 or not raw.size or raw.shape[1] != store.matrix.shape[1]:
-        return None, "the stored vectors are a different width; re-run `ragged index`"
+        return None, "the stored vectors are a different width; re-run `okragged index`"
 
     norm = float(np.linalg.norm(raw[0]))
     vector = raw[0] if norm == 0 else raw[0] / norm

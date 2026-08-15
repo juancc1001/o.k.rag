@@ -7,15 +7,15 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from ragged import config as config_module
-from ragged import okf, vectors
-from ragged.vectors import EmbedError, graph as graph_module
-from ragged.vectors.providers import fastembed, gemini, resolve
+from okragged import config as config_module
+from okragged import okf, vectors
+from okragged.vectors import EmbedError, graph as graph_module
+from okragged.vectors.providers import fastembed, gemini, resolve
 
 TOML = """\
 [bundle]
 root = "bundle"
-actor = "ragged/test"
+actor = "okragged/test"
 
 [vectors]
 provider = "gemini"
@@ -60,7 +60,7 @@ def cosine(a: str, b: str) -> float:
 def project_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv("GEMINI_API_KEY", "test-key-not-used")
     monkeypatch.setattr(gemini, "embed", fake_embed)
-    (tmp_path / "ragged.toml").write_text(TOML, encoding="utf-8", newline="\n")
+    (tmp_path / "okragged.toml").write_text(TOML, encoding="utf-8", newline="\n")
     (tmp_path / "bundle").mkdir()
     return tmp_path
 
@@ -84,7 +84,7 @@ def run(project: Path) -> vectors.IndexSummary:
 
 
 def graph_of(project: Path) -> dict:
-    return json.loads((project / ".ragged" / "graph.json").read_text(encoding="utf-8-sig"))
+    return json.loads((project / ".okragged" / "graph.json").read_text(encoding="utf-8-sig"))
 
 
 # --- the provider interface ------------------------------------------------------
@@ -136,7 +136,7 @@ def test_one_vector_per_concept_covers_title_description_and_body(project_dir, m
 
     assert summary.embed.embedded == ["north"]
     assert "North" in seen[0] and "Points up." in seen[0] and "mark-north" in seen[0]
-    assert np.load(project_dir / ".ragged" / "embeddings.npy").shape == (1, 3)
+    assert np.load(project_dir / ".okragged" / "embeddings.npy").shape == (1, 3)
 
 
 def test_a_concept_whose_body_is_unchanged_is_not_re_embedded(project_dir, monkeypatch):
@@ -202,9 +202,9 @@ def test_a_concept_longer_than_the_window_is_mean_pooled_into_one_vector(
 
     assert widths[0] > 1, "a body past the window must be chunked"
     # only the concept vector is kept — chunk vectors are never stored
-    assert np.load(project_dir / ".ragged" / "embeddings.npy").shape == (1, 3)
+    assert np.load(project_dir / ".okragged" / "embeddings.npy").shape == (1, 3)
     meta = json.loads(
-        (project_dir / ".ragged" / "embeddings_meta.json").read_text(encoding="utf-8-sig")
+        (project_dir / ".okragged" / "embeddings_meta.json").read_text(encoding="utf-8-sig")
     )
     assert [row["concept_id"] for row in meta["rows"]] == ["north"]
 
@@ -213,7 +213,7 @@ def test_stored_vectors_are_l2_normalized(project_dir, monkeypatch):
     monkeypatch.setattr(gemini, "embed", lambda chunks, **_: [[3.0, 4.0, 0.0] for _ in chunks])
     write(project_dir, "north", "mark-north body text.")
     run(project_dir)
-    matrix = np.load(project_dir / ".ragged" / "embeddings.npy")
+    matrix = np.load(project_dir / ".okragged" / "embeddings.npy")
     assert np.allclose(np.linalg.norm(matrix, axis=1), 1.0)
 
 
@@ -222,14 +222,14 @@ def test_changing_the_model_re_embeds_rather_than_mixing_dimensions(project_dir,
     run(project_dir)
 
     monkeypatch.setattr(gemini, "embed", lambda chunks, **_: [[1.0, 0.0, 0.0, 0.0] for _ in chunks])
-    (project_dir / "ragged.toml").write_text(
+    (project_dir / "okragged.toml").write_text(
         TOML.replace('provider = "gemini"', 'provider = "gemini"\nmodel = "other-model"'),
         encoding="utf-8",
         newline="\n",
     )
     summary = run(project_dir)
     assert summary.embed.embedded == ["north"]
-    assert np.load(project_dir / ".ragged" / "embeddings.npy").shape == (1, 4)
+    assert np.load(project_dir / ".okragged" / "embeddings.npy").shape == (1, 4)
 
 
 def test_a_vector_whose_concept_is_gone_is_dropped(project_dir):
@@ -240,7 +240,7 @@ def test_a_vector_whose_concept_is_gone_is_dropped(project_dir):
     (project_dir / "bundle" / "east.md").unlink()
     summary = run(project_dir)
     assert summary.embed.dropped == ["east"]
-    assert np.load(project_dir / ".ragged" / "embeddings.npy").shape == (1, 3)
+    assert np.load(project_dir / ".okragged" / "embeddings.npy").shape == (1, 3)
 
 
 def test_the_index_writes_nothing_into_the_bundle(project_dir):
@@ -296,7 +296,7 @@ def test_the_layout_records_which_projection_ran(project_dir):
     write(project_dir, "north", "mark-north body text.")
     summary = run(project_dir)
     layout = json.loads(
-        (project_dir / ".ragged" / "layout.json").read_text(encoding="utf-8-sig")
+        (project_dir / ".okragged" / "layout.json").read_text(encoding="utf-8-sig")
     )
     assert layout["method"] == summary.method == "pca"
     assert list(layout["coords"]) == ["north"]
@@ -342,7 +342,7 @@ def test_a_pair_below_the_threshold_is_not_a_ghost(project_dir):
 
 
 def test_the_ghost_threshold_comes_from_config(project_dir):
-    (project_dir / "ragged.toml").write_text(
+    (project_dir / "okragged.toml").write_text(
         TOML.replace("ghost_threshold = 0.82", "ghost_threshold = 0.0"),
         encoding="utf-8",
         newline="\n",
@@ -354,7 +354,7 @@ def test_the_ghost_threshold_comes_from_config(project_dir):
 
 
 def test_a_similar_pair_outside_the_top_k_is_not_a_ghost(project_dir):
-    (project_dir / "ragged.toml").write_text(
+    (project_dir / "okragged.toml").write_text(
         TOML.replace("knn_k = 8", "knn_k = 1"), encoding="utf-8", newline="\n"
     )
     write(project_dir, "north", "mark-north body text.")
@@ -422,7 +422,7 @@ def test_the_stats_count_concepts_links_ghosts_and_broken_links(project_dir):
 def test_trust_is_derived_from_verified_and_never_written_back(project_dir):
     write(project_dir, "north", "mark-north body text.")
     write(project_dir, "nne", "mark-nne body text.", verified=[{"by": "human:jc"}])
-    write(project_dir, "east", "mark-east body text.", verified=[{"by": "agent:ragged"}])
+    write(project_dir, "east", "mark-east body text.", verified=[{"by": "agent:okragged"}])
     run(project_dir)
 
     trust = {n["id"]: n["trust"] for n in graph_of(project_dir)["nodes"]}
@@ -465,7 +465,7 @@ def test_everything_the_index_writes_lands_in_the_sidecar(project_dir):
         "layout.json",
         "graph.json",
     }
-    assert all(p.parent == project_dir / ".ragged" for p in summary.written)
+    assert all(p.parent == project_dir / ".okragged" for p in summary.written)
 
 
 def test_the_trust_tiers_are_read_off_the_concept_not_guessed():

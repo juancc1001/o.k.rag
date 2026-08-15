@@ -53,11 +53,11 @@ export function App() {
   if (error) {
     return (
       <div className="empty">
-        <h1>ragged</h1>
+        <h1>okragged</h1>
         <p className="error">{error}</p>
         <p className="note">
-          The graph is written by <code>ragged index</code>, which reads the bundle and writes
-          into <code>.ragged/</code> only.
+          The graph is written by <code>okragged index</code>, which reads the bundle and writes
+          into <code>.okragged/</code> only.
         </p>
       </div>
     );

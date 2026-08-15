@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 class BundleConfig(BaseModel):
     root: str = "bundle"
     okf_version: str = "0.2"
-    actor: str = "ragged/0.1.0"
+    actor: str = "okragged/0.1.0"
     title: str | None = None
     """Heading of the root index.md. None -> the project directory name, which
     names the tool rather than the knowledge unless the two happen to agree."""
@@ -73,7 +73,7 @@ class Config(BaseModel):
 
     @property
     def sidecar_root(self) -> Path:
-        return self.project_root / ".ragged"
+        return self.project_root / ".okragged"
 
     @property
     def bundle_title(self) -> str:
@@ -84,7 +84,7 @@ class Config(BaseModel):
 
 def load(project_root: Path | None = None) -> Config:
     root = (project_root or Path.cwd()).resolve()
-    path = root / "ragged.toml"
+    path = root / "okragged.toml"
     # utf-8-sig: hand-edited file, so tolerate a BOM (tomllib would reject it)
     raw = tomllib.loads(path.read_text(encoding="utf-8-sig")) if path.exists() else {}
     return Config(

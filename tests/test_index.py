@@ -8,8 +8,8 @@ from __future__ import annotations
 
 import pytest
 
-from ragged import config as config_module
-from ragged import okf, pipeline
+from okragged import config as config_module
+from okragged import okf, pipeline
 
 from test_pipeline import (  # noqa: F401  (project/segmented are used as fixtures)
     SAMPLE,
@@ -61,8 +61,8 @@ def test_an_entry_carries_the_target_description_verbatim(bundle):
 
 
 def test_the_bundle_title_comes_from_config_when_it_is_set(project, monkeypatch):
-    (project / "ragged.toml").write_text(
-        '[bundle]\nroot = "bundle"\ntitle = "Derecho Informático"\nactor = "ragged/test"\n\n'
+    (project / "okragged.toml").write_text(
+        '[bundle]\nroot = "bundle"\ntitle = "Derecho Informático"\nactor = "okragged/test"\n\n'
         '[sources.local]\npath = "sources"\ninclude = ["**/*.md"]\n',
         encoding="utf-8",
     )
@@ -81,7 +81,7 @@ def test_without_a_title_the_directory_name_is_still_the_fallback(tmp_path):
 
 
 def test_the_okflint_manifest_and_the_root_index_agree_on_the_name(project, monkeypatch):
-    (project / "ragged.toml").write_text(
+    (project / "okragged.toml").write_text(
         '[bundle]\nroot = "bundle"\ntitle = "Derecho Informático"\n\n'
         '[sources.local]\npath = "sources"\ninclude = ["**/*.md"]\n',
         encoding="utf-8",
@@ -167,7 +167,7 @@ def test_a_skipped_source_is_still_indexed(project, monkeypatch):
     assert "./revenue-policy.md" in index and "./pricing.md" in index
 
 
-def test_a_hand_edited_title_wins_over_what_ragged_synthesized(project, monkeypatch):
+def test_a_hand_edited_title_wins_over_what_okragged_synthesized(project, monkeypatch):
     monkeypatch.setattr(pipeline, "synthesize", fake_synthesize)
     cfg = config_module.load(project)
     pipeline.ingest(cfg, dry_run=False)

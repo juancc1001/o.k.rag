@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from typer.testing import CliRunner
 
-from ragged import cli
+from okragged import cli
 
 runner = CliRunner()
 
@@ -15,13 +15,13 @@ def project(tmp_path, monkeypatch):
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
     (tmp_path / "sources").mkdir()
-    (tmp_path / "ragged.toml").write_text('[synth]\nprovider = "gemini"\n', encoding="utf-8")
+    (tmp_path / "okragged.toml").write_text('[synth]\nprovider = "gemini"\n', encoding="utf-8")
     monkeypatch.chdir(tmp_path)
     return tmp_path
 
 
 def _stub_reachable(monkeypatch, models):
-    from ragged.synth.providers import gemini
+    from okragged.synth.providers import gemini
 
     monkeypatch.setattr(gemini, "list_models", lambda: models)
 
@@ -70,7 +70,7 @@ def test_doctor_reports_the_embedding_half_even_when_the_synth_half_fails(projec
     result = runner.invoke(cli.app, ["doctor"])
     assert result.exit_code == 1
     assert "embeddings: gemini" in result.output
-    assert "`ragged index` will not run" in result.output
+    assert "`okragged index` will not run" in result.output
 
 
 def test_doctor_lists_alternatives_when_the_model_is_unavailable(project, monkeypatch):
@@ -84,7 +84,7 @@ def test_doctor_lists_alternatives_when_the_model_is_unavailable(project, monkey
 
 
 def test_doctor_reports_an_unreachable_provider(project, monkeypatch):
-    from ragged.synth.providers import gemini
+    from okragged.synth.providers import gemini
 
     (project / ".env").write_text("GEMINI_API_KEY=bad\n", encoding="utf-8")
 

@@ -2,7 +2,7 @@
 
 Four endpoints, every one of them offline and read-only. Each wraps capability
 that already exists — `agent/query.py`, `agent/lint.py`, and the `graph.json`
-`ragged index` wrote — so `search` and `lint` cannot drift from the MCP tools
+`okragged index` wrote — so `search` and `lint` cannot drift from the MCP tools
 that answer the same questions (§10). Nothing here writes anywhere.
 
 `POST /api/ingest` and its SSE progress stream are the two endpoints §11 lists
@@ -41,7 +41,7 @@ def create_app(config: Config):
         ) from exc
 
     app = FastAPI(
-        title="ragged",
+        title="okragged",
         description="Read-only HTTP access to an OKF bundle and its graph.",
         docs_url="/api/docs",
         openapi_url="/api/openapi.json",
@@ -49,12 +49,12 @@ def create_app(config: Config):
 
     @app.get("/api/graph")
     def graph() -> Response:
-        """`.ragged/graph.json` verbatim: nodes, links, ghosts, stats."""
+        """`.okragged/graph.json` verbatim: nodes, links, ghosts, stats."""
         path = config.sidecar_root / GRAPH_NAME
         if not path.exists():
-            raise HTTPException(404, f"no {GRAPH_NAME}; run `ragged index`")
+            raise HTTPException(404, f"no {GRAPH_NAME}; run `okragged index`")
         # served as the bytes on disk rather than parsed and re-serialized, so
-        # what the frontend renders is what `ragged index` wrote
+        # what the frontend renders is what `okragged index` wrote
         return Response(path.read_text(encoding="utf-8-sig"), media_type="application/json")
 
     @app.get("/api/concept/{concept_id:path}")

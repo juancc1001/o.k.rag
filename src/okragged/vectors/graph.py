@@ -1,4 +1,4 @@
-"""`.ragged/graph.json` — two graphs over one set of nodes (DESIGN §8).
+"""`.okragged/graph.json` — two graphs over one set of nodes (DESIGN §8).
 
 The link graph is authored and sparse; the semantic graph is computed and dense.
 The value is the difference: a **ghost edge** is a pair the embeddings say is
