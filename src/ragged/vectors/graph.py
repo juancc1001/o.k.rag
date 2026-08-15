@@ -35,12 +35,14 @@ def build_graph(
 
     links: list[dict] = []
     edges: set[tuple[str, str]] = set()
-    broken = 0
+    # by pair, not by occurrence: one body naming one missing target twice is one
+    # broken link, the same way naming a real one twice is one edge
+    broken: set[tuple[str, str]] = set()
     for concept in concepts:
         targets: set[str] = set()
         for _, resolved in okf.cross_links(concept.body, f"{concept.concept_id}.md"):
             if resolved not in concept_ids:
-                broken += 1
+                broken.add((concept.concept_id, resolved))
                 continue
             if resolved == concept.concept_id or resolved in targets:
                 continue
@@ -81,7 +83,7 @@ def build_graph(
             "concepts": len(nodes),
             "links": len(links),
             "ghosts": len(ghosts),
-            "broken_links": broken,
+            "broken_links": len(broken),
         },
     }
 

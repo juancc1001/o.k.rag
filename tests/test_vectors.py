@@ -389,6 +389,22 @@ def test_node_degree_counts_the_links_that_touch_it(project_dir):
     assert degree == {"east": 1, "nne": 1, "north": 2}
 
 
+def test_a_broken_link_named_twice_is_counted_once(project_dir):
+    write(project_dir, "north", "mark-north. See [x](/nope.md) and again [x](/nope.md).")
+    run(project_dir)
+    stats = graph_of(project_dir)["stats"]
+    # one body, one missing target, one broken link — the same way naming a real
+    # target twice makes one edge
+    assert stats["broken_links"] == 1
+
+
+def test_two_concepts_pointing_at_the_same_missing_target_are_two_broken_links(project_dir):
+    write(project_dir, "north", "mark-north. See [x](/nope.md).")
+    write(project_dir, "east", "mark-east. See [x](/nope.md).")
+    run(project_dir)
+    assert graph_of(project_dir)["stats"]["broken_links"] == 2
+
+
 def test_the_stats_count_concepts_links_ghosts_and_broken_links(project_dir):
     write(project_dir, "north", "mark-north, see [NNE](/nne.md) and [Nobody](/nobody.md).")
     write(project_dir, "nne", "mark-nne body text.")

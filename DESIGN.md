@@ -515,7 +515,7 @@ stdio MCP server. Four tools:
 | `search` | `(query: str, k: int = 8) -> list[{concept_id, title, description, score}]` | Embedding kNN, or index traversal without a credential. Returns pointers, never bodies — the agent decides what to read. |
 | `read_concept` | `(concept_id: str) -> str` | Raw file contents, frontmatter included. |
 | `ingest` | `(paths: list[str] \| None) -> IngestSummary` | Runs the pipeline. `None` = full sweep. |
-| `lint` | `() -> LintReport` | okflint results + ghost edges + stale concepts + orphans. |
+| `lint` | `() -> LintReport` | okflint results + ghost edges + stale concepts + orphans. Ghosts are capped at the 20 strongest, with `ghosts_total` and a note; and a `graph.json` whose nodes no longer match the bundle is reported out of date rather than trusted, because a rebuild renames ids and the old graph is then about *different* concepts. |
 
 Registering it is a `.mcp.json` entry pointing at the script — which makes any MCP-capable agent, Claude Code included, a consumer of the bundle with no ragged-specific code.
 

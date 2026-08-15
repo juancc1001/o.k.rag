@@ -15,6 +15,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -170,7 +171,7 @@ def _run_okflint(report: Report, bundle_root: Path) -> None:
     `validate` always resolves a manifest (default okf-base.yaml) and exits 2
     without one, so skip rather than invoke it and report a bad-manifest failure.
     """
-    exe = shutil.which("okflint")
+    exe = _okflint()
     if exe is None:
         report.okflint_note = "okflint not installed (uv tool install okflint)"
         return
@@ -192,3 +193,17 @@ def _run_okflint(report: Report, bundle_root: Path) -> None:
     )
     report.okflint_exit = proc.returncode
     report.okflint_output = f"{proc.stdout or ''}{proc.stderr or ''}".strip()
+
+
+def _okflint() -> str | None:
+    """Beside this interpreter first, then `PATH`.
+
+    A console script installed into the same venv as ragged sits next to
+    `sys.executable`, and that directory is only on `PATH` if a shell activated
+    the venv. The MCP server is spawned by its `.mcp.json` entry rather than
+    from a shell, so `which` missed it and `lint` told an agent okflint was not
+    installed while `ragged check` in a terminal ran it — the same bundle,
+    validated to two different standards depending on who asked.
+    """
+    beside = Path(sys.executable).parent / ("okflint.exe" if os.name == "nt" else "okflint")
+    return str(beside) if beside.is_file() else shutil.which("okflint")

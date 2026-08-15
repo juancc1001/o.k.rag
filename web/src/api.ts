@@ -70,6 +70,8 @@ export interface LintReport {
   okflint_exit: number | null;
   okflint_note: string;
   ghosts: GraphGhost[];
+  /** Capped server-side; `ghosts_total` is how many the graph holds. */
+  ghosts_total: number;
   ghosts_note: string;
   stale: string[];
   orphans: string[];

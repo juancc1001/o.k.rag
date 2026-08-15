@@ -18,7 +18,7 @@ ragged is designed to have both, and what makes that possible is the **sidecar r
 What the vectors add on top of the markdown:
 
 - **Node position** in the graph — proximity means semantic similarity rather than connectivity. **Computed** by `ragged index`.
-- **Ghost edges** — pairs of concepts that are highly similar with *no* markdown link between them. This is the part links cannot give you: a missing link is not computable from the links you have. It is the lint signal saying two concepts are about the same thing and nobody connected them. **Computed** by `ragged index`; the browser view that makes them explorable is not built.
+- **Ghost edges** — pairs of concepts that are highly similar with *no* markdown link between them. This is the part links cannot give you: a missing link is not computable from the links you have. It is the lint signal saying two concepts are about the same thing and nobody connected them. **Computed** by `ragged index`, explorable in the view `ragged serve` mounts, and reported by the `lint` tool.
 - **Semantic search** over concepts. The MCP server's `search` works without them by traversing the indexes and the links; embeddings upgrade that path rather than enable it, and only when a credential is present to embed the query with.
 
 Embeddings sit deliberately outside the build path ([§6.8](DESIGN.md)). Concepts are produced, validated and consumed without them, which is why `build` never calls an embedding model and `index` is a separate command.
@@ -112,7 +112,7 @@ Without a credential, `ragged build --dry-run`, `ragged extract`, `ragged check`
 ## Usage
 
 ```powershell
-ragged doctor                # config, credential, provider reachability, model availability
+ragged doctor                # both providers, credentials, reachability, model availability
 ragged build --dry-run       # extract + report only. No model calls, no writes.
 ragged build                 # full pipeline -> bundle/ + okf-base.yaml
 ragged index                 # embed + project + graph.json -> .ragged/ only
@@ -261,6 +261,8 @@ Registering it makes any MCP-capable agent a consumer of the bundle with no ragg
 | `read_concept` | `(concept_id)` → the raw file, frontmatter included | none |
 | `ingest` | `(paths \| null)` → what the run wrote; `null` is a full sweep | **required** |
 | `lint` | `()` → conformance, ghost edges, stale concepts, orphans | none |
+
+The ghost list is capped at the 20 strongest, with `ghosts_total` and a note saying what was left out — they grow with the square of the corpus and this is a tool result an agent pays for by the token. `lint` also says when `graph.json` no longer describes the bundle, which a rebuild makes routine: ids come from model-written titles, so a rename means the old graph is about *different* concepts, not merely stale ones.
 
 **`search` returns pointers and never bodies**, because the retrieval path here is progressive disclosure rather than chunk RAG: the agent reads `index.md`, then reads whole concept files, and `AGENTS.md` says so explicitly.
 
@@ -418,11 +420,10 @@ random_state = 42          # fixed, or the layout reshuffles every run
 ## Tests
 
 ```powershell
-$env:PATH = "$PWD\.venv\Scripts;$env:PATH"   # so okflint is discoverable
 .\.venv\Scripts\python.exe -m pytest tests -q
 ```
 
-248 tests. No credentials and no network needed — the end-to-end test stubs the model and asserts the emitted bundle is conformant, so "one file in, one conformant concept out" is covered offline. The embedding provider is stubbed the same way, in a three-dimensional toy space, so what two concepts are "similar" is something the test states rather than something a model decides.
+258 tests. No credentials and no network needed — the end-to-end test stubs the model and asserts the emitted bundle is conformant, so "one file in, one conformant concept out" is covered offline. The embedding provider is stubbed the same way, in a three-dimensional toy space, so what two concepts are "similar" is something the test states rather than something a model decides.
 
 | File | Covers |
 |---|---|
@@ -439,7 +440,7 @@ $env:PATH = "$PWD\.venv\Scripts;$env:PATH"   # so okflint is discoverable
 | `tests/test_env.py` | `.env` loading with and without a BOM, and every `doctor` outcome |
 | `tests/test_encoding.py` | the [encoding policy](#encoding-policy), enforced by AST scan (including the child-process `env` rule), plus BOM tolerance, the piped-child crash reproduced, and LF-only output end to end |
 
-Tests that need okflint skip cleanly when it is not on `PATH`.
+Nothing skips on a normal install. okflint is resolved beside the running interpreter before `PATH` is consulted, so a venv install is found whether or not a shell activated it — which is also why `lint` over MCP reports real conformance rather than "okflint not installed".
 
 ---
 

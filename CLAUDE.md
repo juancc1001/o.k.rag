@@ -14,7 +14,7 @@ Python 3.12+. Windows is the primary dev platform; commands below use the repo-l
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e ".[dev]"   # installs okflint + pytest + the MCP SDK
 
-.\.venv\Scripts\ragged doctor          # provider, credential, reachability, model availability
+.\.venv\Scripts\ragged doctor          # both providers (synth + embeddings), credentials, reachability
 .\.venv\Scripts\ragged build --dry-run # discover + extract only; no model calls, no writes
 .\.venv\Scripts\ragged build           # full pipeline -> bundle/ + okf-base.yaml
 .\.venv\Scripts\ragged index           # embed + project + graph.json -> .ragged/ only
@@ -24,11 +24,10 @@ python -m venv .venv
 .\.venv\Scripts\ragged extract <file>  # print extracted text for one file (offline)
 ```
 
-Tests — okflint must be on `PATH` or the okflint-dependent tests skip:
+Tests — okflint is resolved beside the interpreter, so `PATH` no longer decides whether the okflint-dependent tests run:
 
 ```powershell
-$env:PATH = "$PWD\.venv\Scripts;$env:PATH"
-.\.venv\Scripts\python.exe -m pytest tests -q              # 248 tests
+.\.venv\Scripts\python.exe -m pytest tests -q              # 258 tests, none skipped
 .\.venv\Scripts\python.exe -m pytest tests/test_segment.py -q
 .\.venv\Scripts\python.exe -m pytest tests -q -k "footnote"
 ```
@@ -69,6 +68,8 @@ Adding a provider means one module under `synth/providers/` exposing `NAME`, `DE
 ## Invariants that are easy to break
 
 **Encoding.** Windows defaults to cp1252, and five separate M1 bugs came from trusting a platform default at an I/O boundary. Reads use `encoding="utf-8-sig"`, writes use `encoding="utf-8", newline="\n"`, subprocesses decode `utf-8`/`errors="replace"` *and* set `PYTHONIOENCODING=utf-8` in the child's `env`. **`tests/test_encoding.py` enforces this by walking the AST of everything under `src/ragged/` — a deviating call site fails the suite.** README's *Encoding policy* table is the full rule set.
+
+**Executables are resolved beside `sys.executable` before `PATH`.** `okf/validate.py::_okflint` does this, and the reason generalises: the MCP server is spawned by its `.mcp.json` entry rather than from an activated shell, so a console script installed into ragged's own venv is invisible to `shutil.which`. The symptom was silent and asymmetric — `lint` told an agent "okflint not installed" while `ragged check` in a terminal ran it, so the same bundle was validated to two different standards depending on who asked. Any future subprocess ragged owns has the same exposure.
 
 **`verified` is never written.** It records a confirmation event that actually happened; writing it because content looks correct forges the human-reviewed trust tier. Concepts are emitted `status: draft` and a human promotes them by editing the file.
 

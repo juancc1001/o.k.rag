@@ -133,9 +133,10 @@ def _by_traversal(query: str, k: int, concepts: list[Concept]) -> list[Hit]:
 
     total = dict(base)
     for concept in concepts:
-        for _, target in okf.cross_links(concept.body, f"{concept.concept_id}.md"):
-            if target not in base or target == concept.concept_id:
-                continue
+        # one hop per *pair*, not per link: a body that names the same target
+        # three times asserts one relationship, and counting it three times
+        # would let repetition outrank relevance
+        for target in _targets(concept, base):
             total[target] += NEIGHBOUR_WEIGHT * base[concept.concept_id]
             total[concept.concept_id] += NEIGHBOUR_WEIGHT * base[target]
 
@@ -147,6 +148,15 @@ def _by_traversal(query: str, k: int, concepts: list[Concept]) -> list[Hit]:
         for concept_id, score in ranked[:k]
         if score > 0
     ]
+
+
+def _targets(concept: Concept, known: dict[str, float]) -> list[str]:
+    """The distinct concepts this body links to, itself and strangers excluded."""
+    seen: dict[str, None] = {}
+    for _, target in okf.cross_links(concept.body, f"{concept.concept_id}.md"):
+        if target in known and target != concept.concept_id:
+            seen[target] = None
+    return list(seen)
 
 
 def _hit(concept: Concept, score: float) -> Hit:

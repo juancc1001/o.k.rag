@@ -84,6 +84,14 @@ def cfg(project: Path):
     return config_module.load(project)
 
 
+def write_graph(project: Path, graph: dict) -> None:
+    sidecar = project / ".ragged"
+    sidecar.mkdir(parents=True, exist_ok=True)
+    (sidecar / "graph.json").write_text(
+        json.dumps(graph), encoding="utf-8", newline="\n"
+    )
+
+
 def bundle_bytes(project: Path) -> dict[Path, bytes]:
     return {p: p.read_bytes() for p in sorted((project / "bundle").rglob("*")) if p.is_file()}
 
@@ -129,6 +137,31 @@ def test_a_concept_linked_from_a_hit_outranks_an_unrelated_body_mention(project)
 def test_an_unaccented_query_still_matches_an_accented_title(project):
     result = agent.search(cfg(project), "politica de reembolsos", k=3)
     assert result.hits[0].concept_id == "reembolsos"
+
+
+def test_a_body_linking_the_same_concept_twice_does_not_boost_it_twice(project):
+    """A link asserts a relationship; naming it again asserts the same one."""
+
+    def pricing_score(body: str) -> float:
+        okf.write_concept(
+            project / "bundle",
+            okf.Concept(
+                concept_id="hub",
+                type="Policy",
+                title="Hub",
+                description="Revenue hub.",
+                body=body,
+            ),
+        )
+        hits = agent.search(cfg(project), "revenue", k=8).hits
+        return next(hit.score for hit in hits if hit.concept_id == "pricing")
+
+    once = pricing_score("Revenue matters. See [Price List](/pricing.md).")
+    thrice = pricing_score(
+        "Revenue matters. See [Price List](/pricing.md), then [Price List](/pricing.md), "
+        "then [Price List](/pricing.md)."
+    )
+    assert once == thrice
 
 
 def test_a_query_matching_nothing_returns_no_pointers_rather_than_the_whole_bundle(project):
@@ -242,6 +275,47 @@ def test_lint_reports_the_ghost_edges_the_index_computed(project):
     report = agent.lint(cfg(project))
     assert report.ghosts == [{"source": "holidays", "target": "pricing", "similarity": 0.9}]
     assert report.ghosts_note == ""
+
+
+def test_lint_caps_the_ghost_edges_and_says_how_many_it_left_out(project):
+    ghosts = [
+        {"source": f"a{i}", "target": f"b{i}", "kind": "semantic", "similarity": (800 + i) / 1000}
+        for i in range(25)
+    ]
+    write_graph(project, {"ghosts": ghosts})
+    report = agent.lint(cfg(project))
+
+    assert len(report.ghosts) == agent.GHOST_LIMIT
+    assert report.ghosts_total == 25
+    assert "25" in report.ghosts_note
+    # strongest first, so the half that survives truncation is the useful half
+    assert report.ghosts[0]["similarity"] == 0.824
+    assert [g["similarity"] for g in report.ghosts] == sorted(
+        (g["similarity"] for g in report.ghosts), reverse=True
+    )
+
+
+def test_lint_reports_a_graph_that_no_longer_describes_this_bundle(project):
+    # ids come from model-written titles, so a rebuild renames the tree and the
+    # previous graph is about different concepts rather than merely out of date
+    write_graph(
+        project,
+        {
+            "nodes": [{"id": "revenue-recognition-policy"}],
+            "ghosts": [
+                {"source": "revenue-recognition-policy", "target": "price-list", "similarity": 0.9}
+            ],
+        },
+    )
+    note = agent.lint(cfg(project)).ghosts_note
+    assert "out of date" in note
+    assert "ragged index" in note
+
+
+def test_a_graph_that_still_describes_the_bundle_is_not_called_out_of_date(project):
+    ids = [c.concept_id for c in okf.read_concepts(project / "bundle")]
+    write_graph(project, {"nodes": [{"id": cid} for cid in ids], "ghosts": []})
+    assert agent.lint(cfg(project)).ghosts_note == ""
 
 
 def test_a_broken_cross_link_is_a_warning_in_the_report_not_an_error(project):

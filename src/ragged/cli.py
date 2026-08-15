@@ -177,6 +177,32 @@ def doctor() -> None:
     else:
         typer.secho("  okflint        missing - only the built-in checks will run", fg="yellow")
 
+    # before the synth provider, which exits on failure: `index` has its own
+    # provider and its own credential, and a missing key for one says nothing
+    # about the other
+    typer.secho(f"\nembeddings: {cfg.vectors.provider}  (`ragged index`)", bold=True)
+    try:
+        embed_impl = vectors.resolve(cfg.vectors.provider)
+    except ValueError as exc:
+        typer.secho(f"  {exc}", fg="red")
+    else:
+        embed_model = cfg.vectors.model or embed_impl.DEFAULT_MODEL
+        typer.echo(f"  model          {embed_model}{'  (default)' if not cfg.vectors.model else ''}")
+        typer.echo(
+            f"  dim/k/tau      {cfg.vectors.dim} / {cfg.vectors.knn_k} / {cfg.vectors.ghost_threshold}"
+        )
+        if not embed_impl.ENV_VARS:
+            typer.secho("  credential     not needed - runs locally", fg="green")
+        elif embed_impl.credential_present():
+            typer.secho("  credential     present", fg="green")
+        else:
+            typer.secho(
+                f"  credential     missing ({' or '.join(embed_impl.ENV_VARS)})"
+                " - `ragged index` will not run",
+                fg="yellow",
+            )
+        _report_path(vectors.GRAPH_NAME, cfg.sidecar_root / vectors.GRAPH_NAME, hint="run `ragged index`")
+
     typer.secho(f"\nprovider: {provider}", bold=True)
     try:
         impl = resolve(provider)
