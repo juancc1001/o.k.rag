@@ -92,3 +92,28 @@ The failure was diagnosed by `gh auth status` showing two logged-in accounts wit
 **Worth keeping in mind:** on this machine a "repository not found" is an authentication result until proven otherwise. Check `gh api user --jq '.login'` against the remote's owner before concluding anything about the remote's existence.
 
 **Separately, and still true:** local `main` was 19 commits behind and a `git checkout main` emptied the working tree of every tracked file, which is how this started. That is normal git behaviour, but it is worth noting that `bundle/`, `sources/`, and `.ragged/` are gitignored by design (§13 — ids churn every rebuild, so the diff is unreadable), which means git protects the code and none of the corpus. **The corpus needs its own backup story, separate from the repository.** `HANDOFF-M2.md` was untracked, was never committed, and did not survive.
+
+---
+
+## 8. Serve the contract over the protocol, not over the filesystem
+
+`agent/AGENTS.md` is written at the **producer's** project root and is gitignored. The consumer topology that matters is a *separate repo*: an agent works in `client-app/`, registers ragged's stdio server in its own `.mcp.json`, and reads its own root `AGENTS.md` at startup. It never sees ragged's. Everything layer 3 generates is therefore addressed to a reader who is already inside the producer's working tree — which is the one reader who did not need it.
+
+**A defect first, and it is separable from the rest of this item.** §10 claims that registering the server "makes any MCP-capable agent, Claude Code included, a consumer of the bundle with no ragged-specific code". For a separate consumer repo that does not hold today, in two places:
+
+- `contract.py::render_mcp_json` emits a venv-relative `command` and `args: ["agent/mcp_server.py"]`. `_interpreter`'s comment says why — the entry survives a clone — and that reasoning is correct for the producer's own file and wrong from any other cwd.
+- `server.py::INSTRUCTIONS` tells every connecting client that `agent/AGENTS.md` is the contract. That is a path relative to the producer's root, asserted across a process boundary. In a consumer session it is an instruction to open a file that is not there.
+
+This half is not a candidate improvement. It is `DESIGN.md` asserting something the code does not do, and it should be fixed rather than staged.
+
+**The idea proper.** Deliver the contract over the MCP connection, in three levels of disclosure: `instructions` short and self-contained at the handshake, the rendered `AGENTS.md` as a readable resource, and `bundle/index.md` as a second resource — the entry point the contract already tells you to read first. The installed SDK supports this and it is unused: `MCPServer.resource(uri, *, name, title, description, mime_type)`, static when the URI carries no `{param}`. Both handlers would call functions that already exist (`contract.py::render_agents_md`, `query.py::read_concept`), so there is no second renderer to drift and the file on disk stays byte-identical to what is served.
+
+**Why not the obvious alternative.** Copying `AGENTS.md` into the consumer repo is the first thing anyone tries and it is wrong: the contract is generated *from* the bundle, so a copy in a repo that does not rebuild goes stale silently. §10's "regenerated on every ingest, so it can never describe a bundle that no longer exists" is precisely the property a copy discards. A short pointer stub in the consumer would be stable enough to commit, but it buys nothing the handshake does not already deliver.
+
+**The invariant it would establish**, and the reason this is worth writing down even unbuilt: *layer 3 crosses the process boundary over the protocol, never over the filesystem — no generated instruction text may name a path relative to the producer's root.* Checkable offline, which by CLAUDE.md's own standard (and §13 M7's) makes it a test rather than a convention nobody can verify.
+
+**Cost.** Small. `server.py` (instructions + two resource handlers), `contract.py` (`render_mcp_json` and `_interpreter` take a target root; absolute when it is foreign, byte-identical to today when it is not), one CLI option to merge an entry into a consumer's `.mcp.json` and write nothing else there, plus §10, the README and tests.
+
+**Open before any of it is written: the URI scheme.** `okf://contract` claims the format's name for one tool's server; `ragged://contract` is honest about who serves it. `okf://` is defensible only if M6 stays live, since the scheme would then belong to the format rather than to ragged. This is a public name and reversing it later is a breaking change for anyone who registered against it.
+
+**Gate.** None technically — it does not depend on M3 or M5. But the exit criterion is the M4 one re-run from a foreign repo with no embedding credential: register the generated entry from a different checkout, read the contract resource over the wire, diff it against the producer's `agent/AGENTS.md`, and confirm the handshake alone is enough to know what to do next. Until that session has actually happened, this is reasoning about a consumer nobody has been.
