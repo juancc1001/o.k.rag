@@ -5,7 +5,7 @@ Turns a folder of files into a conformant **Open Knowledge Format (OKF) v0.2** b
 **Status: M2, M3 and M4 done.** A long source is planned into sections and each becomes its own concept under a parent, a second pass weaves cross-links into the prose, every directory gets an `index.md`, and a rebuild only touches the sources that changed. `ragged index` then embeds the bundle, projects it to 2D and writes a `graph.json` with both edge layers, and `ragged serve` renders it — a sigma.js map where proximity is semantic similarity and a **ghost edge** is a pair the embeddings say is about one thing that nobody linked. Every build also generates the **agent contract**: `agent/AGENTS.md` plus a stdio MCP server exposing `search` / `read_concept` / `ingest` / `lint`, three of which need no credential at all. See [Not implemented yet](#not-implemented-yet).
 
 - Architecture, data model and rationale: [`DESIGN.md`](DESIGN.md)
-- **Roadmap and milestones (M1–M5): [`DESIGN.md` §13](DESIGN.md#13-milestones)**
+- **Roadmap and milestones (M1–M9): [`DESIGN.md` §13](DESIGN.md#13-milestones)**
 
 ---
 
@@ -501,8 +501,9 @@ Run against the 3-PDF Spanish corpus: 18 concepts embedded with `gemini-embeddin
 
 - **Calibrate τ on a second corpus.** The first one saturated the similarity space, which rules the default out without ruling anything in. A corpus spanning more than one topic is what distinguishes "raise τ" from "lower k" from "make the threshold relative".
 - **`POST /api/ingest` + SSE progress.** Deferred with M3, not cancelled: it needs a job registry and progress events `pipeline.ingest` does not emit.
-- **Grounded answers** (M7, proposed). `search` normalizes by the best hit, so its top result always scores `1.000` — including for a question the bundle cannot answer. Absolute confidence with an abstention floor, offline citation checking, and trust tiers carried into results.
-- **BigQuery/blob sources.** M5.
+- **Grounded answers** (M9, proposed). `search` normalizes by the best hit, so its top result always scores `1.000` — including for a question the bundle cannot answer. Absolute confidence with an abstention floor, offline citation checking, and trust tiers carried into results.
+- **Distribution** (M5, next). `pip install okragged`, one console script whose `okragged mcp` subcommand a foreign checkout can register, a thin Python API, an `add_source` tool replacing `ingest` on the MCP surface, and the lock plus staged emit that three writers to one bundle now require.
+- **BigQuery/blob sources.** M7.
 
 ### Known rough edges in segmentation
 

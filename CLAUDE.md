@@ -53,7 +53,7 @@ Pipeline (`pipeline.py::ingest`): `discover → extract → plan → synthesize 
 
 Module responsibilities:
 
-- `okf/` — the format layer, and the only part with standalone value (M6 candidate). Bound to the OKF spec, contains no model call. **Keep it free of any dependency on `synth/`, `pipeline.py`, `vectors/` or `agent/`.**
+- `okf/` — the format layer, and the only part with standalone value (M8 candidate). Bound to the OKF spec, contains no model call. **Keep it free of any dependency on `synth/`, `pipeline.py`, `vectors/` or `agent/`.**
 - `synth/` — provider dispatch. Everything shared (prompt assembly, JSON parse, required-field checks, footnote repair) lives in `synth/__init__.py` and `synth/base.py` so the provider paths cannot drift. Provider modules stay thin: auth, request shape, decline detection.
 - `sources/base.py` — the `Source` protocol with its `document` vs `asset` family split; phase-2 connectors plug in here.
 - `pipeline.py` — orchestration only; assembles `Concept` objects from synthesis results.
