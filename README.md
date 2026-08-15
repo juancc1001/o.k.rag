@@ -53,16 +53,7 @@ Four extras are deliberately *not* installed by default, because none is needed 
 
 Without `umap`, `ragged index` projects with PCA and says so. Without `fastembed`, the local embedding provider reports the extra rather than an import error. Without `mcp`, everything except starting the MCP server still works — `ragged agent` still generates the contract, and the server reports the extra when it is launched. Without `api`, `ragged serve` reports the extra instead of starting.
 
-The graph view is a separate build, and needs Node:
-
-```powershell
-cd web
-npm install
-npm run build      # -> web/dist, which `ragged serve` mounts at /
-npm run dev        # or: Vite on :5173, proxying /api to :8000
-```
-
-`ragged serve` runs the API with or without `web/dist` — the view is optional, the endpoints are not.
+The graph view is a separate build and needs Node 20+ — see [The graph view](#the-graph-view--ragged-serve) for the five commands that get it on screen.
 
 `markitdown[all]` prints a `Couldn't find ffmpeg` warning on import. It only affects audio extraction and is safe to ignore.
 
@@ -201,9 +192,41 @@ concept   concepts)
 
 ### The graph view — `ragged serve`
 
+**Running it, from nothing, once:**
+
 ```powershell
-ragged serve                 # http://127.0.0.1:8000
+.\.venv\Scripts\python.exe -m pip install -e ".[api]"   # FastAPI + uvicorn
+.\.venv\Scripts\ragged index                            # writes .ragged/graph.json
+cd web
+npm install                                             # needs Node 20+
+npm run build                                           # -> web/dist
+cd ..
+.\.venv\Scripts\ragged serve                            # http://127.0.0.1:8000
 ```
+
+Then open **<http://127.0.0.1:8000>**. Ghost edges are off by default — tick **show ghost edges** in the left panel to see them, and drag **τ** to decide how similar a pair has to be before the graph claims they belong together.
+
+Three of those five steps are once-only. Day to day it is `ragged serve`, and `ragged index` again whenever the bundle changes — the view reads `graph.json` and nothing else, so it shows whatever the last `index` computed.
+
+**While working on the view itself**, run Vite instead, so a save reloads the page:
+
+```powershell
+.\.venv\Scripts\ragged serve      # terminal 1 — the API on :8000
+cd web; npm run dev               # terminal 2 — the view on :5173, proxying /api
+```
+
+Open **<http://127.0.0.1:5173>** for that one. `ragged serve` also takes `--host` and `--port`.
+
+**If something is missing, the command says which:**
+
+| what you see | what to run |
+|---|---|
+| `the HTTP API needs the optional extra` | `pip install -e ".[api]"` |
+| `no graph.json - /api/graph will 404` | `ragged index` |
+| `no web/dist - API only` | `npm install && npm run build` in `web/` |
+| `no bundle at bundle/` | `ragged build` |
+
+The view is optional; the endpoints are not. `ragged serve` runs the API with or without `web/dist`, and [`/api/docs`](http://127.0.0.1:8000/api/docs) is browsable either way.
 
 Four read-only endpoints, all offline, none of which writes anywhere:
 
