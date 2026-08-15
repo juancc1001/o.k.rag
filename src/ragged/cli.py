@@ -9,6 +9,7 @@ import typer
 from . import config as config_module
 from . import okf, vectors
 from .agent import write_contract
+from .api.app import WEB_DIST, create_app
 from .config import Config
 from .pipeline import IngestSummary, ingest, inspect_extraction
 from .synth import MissingCredential, resolve
@@ -106,6 +107,40 @@ def agent() -> None:
         raise typer.Exit(2)
     for path in write_contract(cfg):
         typer.secho(f"  wrote {path.relative_to(cfg.project_root)}", fg="green")
+
+
+@app.command()
+def serve(
+    host: str = typer.Option("127.0.0.1", help="Interface to bind."),
+    port: int = typer.Option(8000, help="Port to bind."),
+) -> None:
+    """Serve the read-only API, and the graph view when web/dist is built."""
+    cfg = _load()
+    if not cfg.bundle_root.exists():
+        typer.secho(f"no bundle at {cfg.bundle_root}", fg="red")
+        raise typer.Exit(2)
+
+    try:
+        application = create_app(cfg)
+    except RuntimeError as exc:
+        typer.secho(str(exc), fg="red")
+        raise typer.Exit(2) from None
+
+    if not (cfg.sidecar_root / vectors.GRAPH_NAME).exists():
+        typer.secho(
+            f"  no {vectors.GRAPH_NAME} - /api/graph will 404 until `ragged index` runs",
+            fg="yellow",
+        )
+    if not (cfg.project_root / WEB_DIST).is_dir():
+        typer.secho(
+            f"  no {WEB_DIST} - API only; `npm run build` in web/ to serve the view",
+            fg="bright_black",
+        )
+
+    import uvicorn
+
+    typer.secho(f"  http://{host}:{port}/api/docs", fg="green")
+    uvicorn.run(application, host=host, port=port, log_level="warning")
 
 
 @app.command()

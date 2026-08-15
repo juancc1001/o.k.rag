@@ -456,11 +456,16 @@ Three details the schema does not show:
 
 ### Stack
 
-**Not built.** `graph.json` is produced by `ragged index`; the API (§11) and the frontend below are the remaining half of M3.
+**Built**, as `web/` behind `ragged serve`.
 
 **sigma.js v3 + graphology**, WebGL. d3-force is nicer to style but degrades past ~1–2k nodes, and a document corpus of any size will exceed that. Positions come precomputed from UMAP, so no force simulation runs in the browser — sigma is used as a renderer, not a layout engine. Layout is therefore deterministic and instant.
 
 Frontend fetches `graph.json` once and does all filtering client-side. Selecting a node fetches `GET /api/concept/{id}` for the rendered markdown in a side panel.
+
+Two things the build settled that the encoding above states as intent:
+
+- **A ghost edge is thin and pale, not dashed.** sigma v3 ships no dashed edge program, and writing one is more machinery than the distinction needs — weight and colour already separate the two layers at a glance. `web/src/encoding.ts` is the single place the encoding lives, so the legend and the renderer cannot drift.
+- **The τ slider's floor is the configured τ, not 0.** `graph.json` holds only pairs that already passed τ *and* the top-k gate, so the slider explores `[τ_config, 1]`. Calibration is therefore a downward search from a deliberately permissive default — lowering τ below the configured value needs a re-`index`, not a drag.
 
 ---
 
@@ -529,14 +534,20 @@ Nothing in this layer writes to the bundle, and nothing writes a `verified` bloc
 
 ### API (FastAPI)
 
-| Method | Path | Purpose |
-|---|---|---|
-| `GET` | `/api/graph` | `graph.json` |
-| `GET` | `/api/concept/{id}` | Frontmatter + rendered body |
-| `GET` | `/api/search?q=&k=` | kNN, same as the MCP tool |
-| `POST` | `/api/ingest` | Kick off a run; returns a job id |
-| `GET` | `/api/ingest/{job}` | SSE progress stream |
-| `GET` | `/api/lint` | Lint report |
+| Method | Path | Purpose | |
+|---|---|---|---|
+| `GET` | `/api/graph` | `graph.json` | **built** |
+| `GET` | `/api/concept/{id}` | Frontmatter + rendered body | **built** |
+| `GET` | `/api/search?q=&k=` | kNN, same as the MCP tool | **built** |
+| `POST` | `/api/ingest` | Kick off a run; returns a job id | deferred |
+| `GET` | `/api/ingest/{job}` | SSE progress stream | deferred |
+| `GET` | `/api/lint` | Lint report | **built** |
+
+The four read endpoints are wrappers over `agent/query.py`, `agent/lint.py` and the `graph.json` `ragged index` wrote, so `search` and `lint` cannot answer differently here than over MCP (§10). All four are offline; none writes anywhere.
+
+**The two ingest endpoints are deferred, not cancelled.** They need a job registry and progress events the pipeline does not emit — `ingest` returns a summary at the end and says nothing during — and the graph view needs neither. Writing stays on the CLI and the MCP tool until something asks for it over HTTP. The rest of layer 3 already holds the invariant that matters: nothing in the API path writes to the bundle.
+
+FastAPI is an optional extra (`pip install -e ".[api]"`) for the same reason the MCP SDK is: producing and validating a bundle needs neither.
 
 ### `ragged.toml`
 
@@ -589,7 +600,7 @@ random_state = 42
 
 | # | Risk | Mitigation |
 |---|---|---|
-| 1 | **Ghost-edge threshold is uncalibrated.** τ = 0.82 is a guess. A coherent corpus may make everything ≥0.9-similar, drowning the signal. | τ and k are both config, so recomputing the graph at another threshold costs no model call — only the last stage reruns. Live slider once the UI exists; calibrate on the first real corpus; consider per-type thresholds or rank-based (top-k only) instead of absolute similarity. |
+| 1 | **Ghost-edge threshold is uncalibrated.** τ = 0.82 is a guess. A coherent corpus may make everything ≥0.9-similar, drowning the signal. | **Measured in M3, and the risk was real:** on the first corpus the median pairwise similarity is 0.896 and 150 of 153 pairs clear τ, so the selectivity comes entirely from `knn_k`. The mitigation stands — τ and k are config and only the last stage reruns — and the slider now exists to explore it. **Still open:** whether the fix is a higher absolute τ, a threshold relative to the corpus's distribution, or a smaller k. One saturated single-topic corpus cannot tell those apart, so the default has deliberately not moved. |
 | 2 | **Extraction quality caps everything downstream.** Garbage text → garbage concepts, and no amount of prompt work fixes it. | Cache extractions and expose them; a `ragged extract --inspect <file>` command so extraction can be debugged independently of synthesis. |
 | 3 | **Synthesis cost on large corpora.** 400 documents × ~3 units × Opus 5 at high effort is real money. | Cached system prefix (~0.1× on the bulk of input tokens), Batches API (50%), hash-based skip on unchanged files. Report estimated cost before a run and require confirmation above a configurable ceiling. |
 | 4 | **Embedding provider is undecided** (§6.8). Local `bge-small` is weaker on domain jargon; hosted costs money and, for query embedding, a credential at read time. | **Still open, deliberately.** What is built is the pluggable interface with both backends registered, selected by config; the answer comes from measuring ghost-edge quality on the real corpus. Sidecar-only, so swapping is a re-embed that touches nothing in `bundle/`, and `embeddings_meta.json` records the provider so a swap re-embeds rather than mixing two vector spaces. |
@@ -612,7 +623,7 @@ random_state = 42
 |---|---|---|
 | **M1** | Walking skeleton | **done** |
 | **M2** | Real bundle | **done** |
-| **M3** | Vectors + graph | offline core done; API + frontend remain |
+| **M3** | Vectors + graph | **done** |
 | **M4** | Agent contract | **done** |
 | **M5** | Connectors | phase 2 |
 | **M6** | Extract `okf/` as a standalone library | gated — see below |
@@ -620,7 +631,7 @@ random_state = 42
 
 **M3 and M4 were deliberately swapped, and then the execution went the other way.** The reason for the swap still stands: the objective is that any model *consumes* the bundle, and that is served by the agent contract, not by the graph. The graph is diagnostic; MCP is the product.
 
-M3's offline core was nevertheless built first. It cost nothing to take out of order, because `ragged index` is a separate command writing only into `.ragged/` — no build path, no `bundle/`, no dependency from `okf/` — so M4 begins from the same place it would have. What taking it early did *not* buy is the thing M3 exists for: τ stays a guess until something renders ghost edges against a real corpus. **M4 came next**, and the remaining half of M3 follows it.
+M3's offline core was nevertheless built first. It cost nothing to take out of order, because `ragged index` is a separate command writing only into `.ragged/` — no build path, no `bundle/`, no dependency from `okf/` — so M4 begins from the same place it would have. What taking it early did not buy was the thing M3 exists for: τ stayed a guess until something ran the rule against a real corpus. **M4 came next**, and the rest of M3 after it.
 
 ---
 
@@ -656,7 +667,21 @@ Both prompt changes that belong to M2 itself are done with item 3: the existing-
 
 Everything it writes is in `.ragged/`: `embeddings.npy`, `embeddings_meta.json`, `layout.json`, `graph.json`. `build` does not call it and the bundle does not know it ran.
 
-**Not built:** the FastAPI app (§11) and the sigma.js frontend, which is where τ gets calibrated against a real corpus and where Risk 1 is actually answered.
+**The rest is built too:** the four read endpoints of §11 behind `ragged serve`, and the sigma.js view in `web/` with both edge layers, the τ slider and the concept panel. Both extras are optional (`.[api]`, and `web/` builds only if you run `npm`), for the same reason `umap` and `mcp` are: a bundle is produced, validated and consumed without either.
+
+**Exit criterion: ingest a real corpus, index it, and see the ghost edges rendered — τ answered by a corpus rather than by argument. Met**, and the answer was that the default is wrong. On the 18-concept Spanish corpus, embedded with `gemini-embedding-001` at dim 768 and projected with UMAP:
+
+| | |
+|---|---|
+| concepts / authored links / ghosts / broken | 18 / 39 / 76 / 0 |
+| median cosine similarity, all 153 pairs | **0.896** |
+| pairs at or above τ = 0.82 | **150 of 153** |
+| pairs at or above 0.92 | 22 |
+| pairs at or above 0.95 | 4 |
+
+**τ = 0.82 sits below the median, so it excludes almost nothing.** The 76 ghosts are 76 rather than 150 because `knn_k = 8` is doing the filtering — the top-k gate, not the threshold. That is Risk 1 landing exactly where §8 predicted ("everything in a coherent bundle is somewhat similar to everything else"), on a corpus of three PDFs about one statute.
+
+What it does **not** settle: whether the fix is a higher absolute τ, a threshold relative to the corpus's own similarity distribution, or a smaller `knn_k` — one saturated single-topic corpus cannot distinguish those. Raising the default on this evidence alone would be fitting a constant to one sample. The slider is the instrument; the reading is recorded here, and the default moves when a second, less homogeneous corpus agrees.
 
 **M4 — agent contract. Done**, in `src/ragged/agent/` (§10). Generated `AGENTS.md`, the stdio MCP server, and a `.mcp.json` entry that registers it — merged into whatever else is already registered rather than written over it. Three of the four tools (`search`, `read_concept`, `lint`) are credential-free; only `ingest` inherits the write path's requirement, and the generated `AGENTS.md` says so.
 

@@ -25,6 +25,8 @@ okf-base.yaml
 .claude/settings.local.json
 
 .venv/
+node_modules/
+*.tsbuildinfo
 __pycache__/
 *.py[cod]
 *.egg-info/

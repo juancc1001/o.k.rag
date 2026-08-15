@@ -2,7 +2,7 @@
 
 Turns a folder of files into a conformant **Open Knowledge Format (OKF) v0.2** bundle — a directory of markdown concepts with YAML frontmatter that agents and humans can both read, with no SDK required.
 
-**Status: M2 and M4 done, plus M3's offline core.** A long source is planned into sections and each becomes its own concept under a parent, a second pass weaves cross-links into the prose, every directory gets an `index.md`, and a rebuild only touches the sources that changed. `ragged index` then embeds the bundle, projects it to 2D and writes a `graph.json` with both edge layers — the graph UI and the HTTP API that consume it are not built. Every build also generates the **agent contract**: `agent/AGENTS.md` plus a stdio MCP server exposing `search` / `read_concept` / `ingest` / `lint`, three of which need no credential at all. See [Not implemented yet](#not-implemented-yet).
+**Status: M2, M3 and M4 done.** A long source is planned into sections and each becomes its own concept under a parent, a second pass weaves cross-links into the prose, every directory gets an `index.md`, and a rebuild only touches the sources that changed. `ragged index` then embeds the bundle, projects it to 2D and writes a `graph.json` with both edge layers, and `ragged serve` renders it — a sigma.js map where proximity is semantic similarity and a **ghost edge** is a pair the embeddings say is about one thing that nobody linked. Every build also generates the **agent contract**: `agent/AGENTS.md` plus a stdio MCP server exposing `search` / `read_concept` / `ingest` / `lint`, three of which need no credential at all. See [Not implemented yet](#not-implemented-yet).
 
 - Architecture, data model and rationale: [`DESIGN.md`](DESIGN.md)
 - **Roadmap and milestones (M1–M5): [`DESIGN.md` §13](DESIGN.md#13-milestones)**
@@ -42,15 +42,27 @@ python3 -m venv .venv
 
 This installs the `ragged` console script plus `okflint` (the OKF linter), `pytest`, and the MCP SDK — the last two so the suite runs whole rather than skipping its server tests. Runtime dependencies: `anthropic`, `google-genai`, `markitdown[all]`, `numpy`, `pydantic`, `python-dotenv`, `pyyaml`, `typer`.
 
-Three extras are deliberately *not* installed by default, because none is needed to produce or validate a bundle and all three are heavy:
+Four extras are deliberately *not* installed by default, because none is needed to produce or validate a bundle:
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install -e ".[umap]"        # umap-learn; pulls numba
 .\.venv\Scripts\python.exe -m pip install -e ".[fastembed]"   # local embeddings; ~150 MB of onnxruntime
 .\.venv\Scripts\python.exe -m pip install -e ".[mcp]"         # the MCP SDK; pulls starlette + uvicorn
+.\.venv\Scripts\python.exe -m pip install -e ".[api]"         # FastAPI + uvicorn, for `ragged serve`
 ```
 
-Without `umap`, `ragged index` projects with PCA and says so. Without `fastembed`, the local embedding provider reports the extra rather than an import error. Without `mcp`, everything except starting the MCP server still works — `ragged agent` still generates the contract, and the server reports the extra when it is launched.
+Without `umap`, `ragged index` projects with PCA and says so. Without `fastembed`, the local embedding provider reports the extra rather than an import error. Without `mcp`, everything except starting the MCP server still works — `ragged agent` still generates the contract, and the server reports the extra when it is launched. Without `api`, `ragged serve` reports the extra instead of starting.
+
+The graph view is a separate build, and needs Node:
+
+```powershell
+cd web
+npm install
+npm run build      # -> web/dist, which `ragged serve` mounts at /
+npm run dev        # or: Vite on :5173, proxying /api to :8000
+```
+
+`ragged serve` runs the API with or without `web/dist` — the view is optional, the endpoints are not.
 
 `markitdown[all]` prints a `Couldn't find ffmpeg` warning on import. It only affects audio extraction and is safe to ignore.
 
@@ -113,6 +125,7 @@ ragged doctor                # config, credential, provider reachability, model 
 ragged build --dry-run       # extract + report only. No model calls, no writes.
 ragged build                 # full pipeline -> bundle/ + okf-base.yaml
 ragged index                 # embed + project + graph.json -> .ragged/ only
+ragged serve                 # the read-only API, and the graph view if web/dist is built
 ragged check                 # validate an existing bundle without rebuilding
 ragged agent                 # regenerate agent/AGENTS.md + .mcp.json (offline)
 ragged extract <file>        # print extracted text for one file (offline, for debugging)
@@ -137,6 +150,7 @@ Start with two or three files. The first real run is where the synthesis prompt 
 | `doctor` | provider reachable, model available | no credential, unreachable, or model unavailable | unknown provider name |
 | `build` | all files synthesized, bundle conformant | a file failed, or the bundle is not conformant | no `sources/` directory, or no credential |
 | `index` | every concept embedded, graph written | a concept failed to embed | no `bundle/` directory, or no credential |
+| `serve` | — (runs until interrupted) | — | no `bundle/` directory, or the `api` extra is missing |
 | `check` | bundle conformant | not conformant | no `bundle/` directory |
 | `agent` | contract written | — | no `bundle/` directory |
 | `extract` | printed | — | file not found |
@@ -183,7 +197,26 @@ concept   concepts)
 | **project** | Embeddings → 2D. UMAP with a fixed `random_state`, so the layout does not reshuffle on every run; PCA below 15 concepts (UMAP is unstable that small) or when `umap-learn` is not installed. The coordinates go to `layout.json` as well as into the graph. |
 | **graph.json** | `nodes`, `links`, `ghosts`, `stats`. A **link** is an authored markdown cross-link that resolves to a concept. A **ghost** is a pair whose cosine similarity is at least τ (`ghost_threshold`, default 0.82), that is in each other's top-k neighbours (`knn_k`, default 8), and that has **no** markdown link between them in either direction — the work queue: two concepts about the same thing that nobody connected. Node `trust` is *derived* from the concept's `verified` block per the spec's tier rules and never written back. Every concept is a node, including one that failed to embed — it just has no position. |
 
-τ is a guess until it meets a corpus ([`DESIGN.md` §12](DESIGN.md#12-risks-and-open-questions) Risk 1). Changing it and re-running `index` costs nothing: the vectors are reused and only the graph is recomputed.
+**τ has now met a corpus, and the default lost** ([`DESIGN.md` §12](DESIGN.md#12-risks-and-open-questions) Risk 1). On the 3-PDF Spanish corpus the median similarity across all 153 concept pairs is **0.896**, and 150 of them clear τ = 0.82 — so the threshold excludes almost nothing and the 76 ghost edges are 76 because `knn_k = 8` capped them, not because τ did. That is the predicted failure mode of a single-topic corpus, and it does not by itself say whether the fix is a higher τ, a threshold relative to the corpus's own distribution, or a smaller k. The default has deliberately not moved on one sample. Changing it and re-running `index` costs nothing: the vectors are reused and only the graph is recomputed.
+
+### The graph view — `ragged serve`
+
+```powershell
+ragged serve                 # http://127.0.0.1:8000
+```
+
+Four read-only endpoints, all offline, none of which writes anywhere:
+
+| | | |
+|---|---|---|
+| `GET /api/graph` | `graph.json` as `ragged index` wrote it | 404 until it has run |
+| `GET /api/concept/{id}` | frontmatter, body, and the body rendered | 404 for anything outside the bundle |
+| `GET /api/search?q=&k=` | the same two paths as the MCP tool | pointers, never bodies |
+| `GET /api/lint` | the same report as the MCP tool | conformance, ghosts, stale, orphans |
+
+`search` and `lint` call the same functions `agent/` exposes over MCP, so the view and an agent cannot be told different things about one bundle. `POST /api/ingest` and its SSE progress stream ([`DESIGN.md` §11](DESIGN.md#11-http-api-and-config)) are deferred — they need a job model and progress events the pipeline does not emit, and writing stays on the CLI and the MCP tool until something asks for it over HTTP.
+
+The view itself is sigma.js v3 + graphology over WebGL, in `web/`. Positions are precomputed by UMAP, so nothing simulates a layout in the browser and the map is identical on every load. Node colour is `type`, size is link degree, border is the trust tier, and a faded node is deprecated or past its `stale_after`. Solid edges are authored links; **ghost edges are off by default and the τ slider is the instrument** — it filters upward from the τ `graph.json` was computed at, because the file holds no pair below it. Selecting a node fetches its concept into a side panel. Raw HTML in a body is escaped rather than rendered: the body is model-written.
 
 ### The agent contract — `agent/` and `.mcp.json`
 
@@ -295,6 +328,9 @@ Broken links are **warnings, not errors** — the spec explicitly permits them, 
 | `src/ragged/agent/lint.py` | The lint report: conformance from `okf/validate.py`, ghost edges read out of `graph.json`, stale concepts, orphans. |
 | `src/ragged/agent/contract.py` | Generates `agent/AGENTS.md`, `agent/mcp_server.py` and the `.mcp.json` entry. No timestamp, so an unchanged bundle regenerates byte-identically. |
 | `src/ragged/agent/server.py` | The four MCP tools over those functions. Imports the SDK lazily, and writes nothing to stdout — the protocol lives there. |
+| `src/ragged/api/app.py` | The four read-only HTTP endpoints, over the same functions the MCP tools use. Imports FastAPI lazily; mounts `web/dist` when it exists. |
+| `web/src/encoding.ts` | §8's visual encoding in one place — type colours, degree→size, trust→border — so the legend and the renderer cannot drift. |
+| `web/src/Graph.tsx` | The sigma renderer. Filtering happens in reducers rather than by rebuilding the graph, so dragging τ costs a repaint. |
 
 ### Config and output
 
@@ -309,6 +345,7 @@ Broken links are **warnings, not errors** — the spec explicitly permits them, 
 | `agent/` | **no** (gitignored) | Layer 3 — the generated contract. Not committed for the same reason as `bundle/`: `AGENTS.md` is written from the corpus and carries its names. `ragged agent` rewrites it. |
 | `.mcp.json` | **no** (gitignored) | The registration entry. Names the interpreter that generated it, so it is per-machine. Other servers already in the file are preserved. |
 | `.ragged/` | **no** (gitignored) | Sidecar: the ledger (`manifest.json`), the extraction cache, replacements for concepts a human owns (`proposed/`), and the vectors — `embeddings.npy`, `embeddings_meta.json`, `layout.json`, `graph.json`. Entirely derived and rebuildable — deleting it costs a full re-ingest and a re-embed, nothing more. |
+| `web/` | yes, minus `node_modules/` and `dist/` | The graph view's source. Built deliberately with `npm run build`; `ragged serve` mounts the result if it is there. |
 | `DESIGN.md` | yes | Architecture, data model, risks, milestones. |
 
 The separation matters: **nothing derived ever goes inside `bundle/`.** A bundle must stay something you can zip up, hand to someone who has never heard of ragged, and read with `cat`. That portability is the whole point of OKF, and an embeddings file or an `embedding:` frontmatter key would destroy it.
@@ -362,7 +399,7 @@ $env:PATH = "$PWD\.venv\Scripts;$env:PATH"   # so okflint is discoverable
 .\.venv\Scripts\python.exe -m pytest tests -q
 ```
 
-230 tests. No credentials and no network needed — the end-to-end test stubs the model and asserts the emitted bundle is conformant, so "one file in, one conformant concept out" is covered offline. The embedding provider is stubbed the same way, in a three-dimensional toy space, so what two concepts are "similar" is something the test states rather than something a model decides.
+248 tests. No credentials and no network needed — the end-to-end test stubs the model and asserts the emitted bundle is conformant, so "one file in, one conformant concept out" is covered offline. The embedding provider is stubbed the same way, in a three-dimensional toy space, so what two concepts are "similar" is something the test states rather than something a model decides.
 
 | File | Covers |
 |---|---|
@@ -426,9 +463,11 @@ All four items in [`DESIGN.md` §13](DESIGN.md#13-milestones):
 - **Link weaving** (§6.5). The bundle is a graph rather than a set of small trees. Note that links point forward from concepts written this run to concepts that already existed, and not back — a skipped source's concepts are not rewritten, because that would spend a model call producing a file nobody asked for. The missing direction is what M3's ghost edges are for.
 - **Per-directory `index.md`** (§6.6), read off the bundle rather than accumulated during the run.
 
-### M3 — offline core done
+### M3 — done
 
-`ragged index` writes `embeddings.npy`, `embeddings_meta.json`, `layout.json` and `graph.json`, all into `.ragged/`. The embedding provider is pluggable and **deliberately undecided** ([`DESIGN.md` §12](DESIGN.md#12-risks-and-open-questions) Risk 4): `gemini` and `fastembed` are both registered, the choice is config, and it is meant to be settled by measuring ghost-edge quality on a real corpus rather than argued up front.
+`ragged index` writes `embeddings.npy`, `embeddings_meta.json`, `layout.json` and `graph.json`, all into `.ragged/`; `ragged serve` exposes four read-only endpoints over them and mounts the sigma.js view. The embedding provider is pluggable and **deliberately undecided** ([`DESIGN.md` §12](DESIGN.md#12-risks-and-open-questions) Risk 4): `gemini` and `fastembed` are both registered, and the choice is config.
+
+Run against the 3-PDF Spanish corpus: 18 concepts embedded with `gemini-embedding-001` at dim 768, projected with UMAP, 39 authored links, 76 ghost edges, 0 broken links, and `search` answered by the **embedding** path rather than by traversal for the first time. What the graph then said about τ is above, and it is the milestone's actual result: **the default threshold does not discriminate on a single-topic corpus.**
 
 ### M4 — done
 
@@ -436,7 +475,8 @@ All four items in [`DESIGN.md` §13](DESIGN.md#13-milestones):
 
 ### Next
 
-- **The rest of M3**: the FastAPI app and the sigma.js graph view with the τ slider. `graph.json` exists but nothing renders it yet, so τ = 0.82 is still a guess.
+- **Calibrate τ on a second corpus.** The first one saturated the similarity space, which rules the default out without ruling anything in. A corpus spanning more than one topic is what distinguishes "raise τ" from "lower k" from "make the threshold relative".
+- **`POST /api/ingest` + SSE progress.** Deferred with M3, not cancelled: it needs a job registry and progress events `pipeline.ingest` does not emit.
 - **Grounded answers** (M7, proposed). `search` normalizes by the best hit, so its top result always scores `1.000` — including for a question the bundle cannot answer. Absolute confidence with an abstention floor, offline citation checking, and trust tiers carried into results.
 - **BigQuery/blob sources.** M5.
 
