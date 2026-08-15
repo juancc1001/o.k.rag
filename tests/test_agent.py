@@ -3,11 +3,16 @@
 Three of the four tools must work with no credential at all — that is the M4 exit
 criterion — so nothing here sets one except where the embedding path is the thing
 under test, and the embedding provider is stubbed in a toy space either way.
+
+The M5 invariant is here too: what layer 3 says across the process boundary may
+not name a path relative to the producer's root. `producer_paths` is the check,
+and it has a meta-test pointing it at the text it replaced.
 """
 
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -94,6 +99,27 @@ def write_graph(project: Path, graph: dict) -> None:
 
 def bundle_bytes(project: Path) -> dict[Path, bytes]:
     return {p: p.read_bytes() for p in sorted((project / "bundle").rglob("*")) if p.is_file()}
+
+
+PRODUCER_PATH = re.compile(
+    r"""
+    (?<![:\w/\\])(?:[\w.-]+[/\\])+[\w.-]+      # a path: at least one directory segment
+    | (?<![\w:/\\])[A-Za-z]:[/\\][^\s`'"]*     # a drive-lettered absolute path
+    | (?<![\w./\\])(?:\.mcp\.json|okragged\.toml|AGENTS\.md)\b   # producer-root files
+    """,
+    re.VERBOSE,
+)
+
+
+def producer_paths(text: str) -> list[str]:
+    """Every token in `text` that addresses a file rather than naming a resource.
+
+    A URI is not a path: `okragged://contract` survives this, which is the whole
+    point of exporting the contract over the protocol instead of pointing at it.
+    A bare filename survives too — `index.md` describes the bundle's own shape and
+    is reached with `read_concept`, not opened.
+    """
+    return [match.group() for match in PRODUCER_PATH.finditer(text)]
 
 
 def fake_embed(chunks, *, model, dim):
@@ -390,12 +416,38 @@ def test_registering_the_server_leaves_the_other_mcp_servers_alone(project):
 
     assert registered["mcpServers"]["other"] == {"command": "node"}
     assert registered["extra"] == 1
-    assert registered["mcpServers"]["okragged"]["args"] == ["agent/mcp_server.py"]
+    assert registered["mcpServers"]["okragged"]["args"] == ["mcp"]
+
+
+def test_the_registration_entry_names_a_console_script_not_an_interpreter(project):
+    """A venv path and a script path are true from one cwd and nowhere else."""
+    agent.write_contract(cfg(project))
+    entry = json.loads((project / ".mcp.json").read_text(encoding="utf-8-sig"))
+    entry = entry["mcpServers"]["okragged"]
+
+    assert entry == {"command": "okragged", "args": ["mcp"]}
+    assert not producer_paths(json.dumps(entry))
+
+
+def test_the_contract_hands_a_foreign_project_an_entry_that_names_the_root_absolutely(
+    project,
+):
+    """A consumer's cwd is its own tree, so the target has to be spelled out."""
+    text = agent.render_agents_md(cfg(project))
+    assert '"command": "okragged"' in text
+    assert '"--project"' in text
+    assert project.resolve().as_posix() in text
+
+
+def test_the_contract_points_at_the_resources_rather_than_at_a_file_to_open(project):
+    text = agent.render_agents_md(cfg(project))
+    assert agent.CONTRACT_URI in text
+    assert agent.INDEX_URI in text
 
 
 def test_the_contract_lands_beside_the_bundle_never_inside_it(project):
     written = agent.write_contract(cfg(project))
-    assert [p.name for p in written] == ["AGENTS.md", "mcp_server.py", ".mcp.json"]
+    assert [p.name for p in written] == ["AGENTS.md", ".mcp.json"]
     assert (project / "agent" / "AGENTS.md").exists()
     assert not list((project / "bundle").rglob("AGENTS.md"))
 
@@ -407,13 +459,6 @@ def test_nothing_the_agent_layer_does_writes_into_the_bundle(project):
     agent.lint(cfg(project))
     agent.write_contract(cfg(project))
     assert bundle_bytes(project) == before, "nothing derived may enter bundle/"
-
-
-def test_the_generated_launcher_imports_the_server_rather_than_reimplementing_it(project):
-    agent.write_contract(cfg(project))
-    source = (project / "agent" / "mcp_server.py").read_text(encoding="utf-8-sig")
-    assert "from okragged.agent.server import main" in source
-    assert b"\r\n" not in (project / "agent" / "mcp_server.py").read_bytes()
 
 
 # --- ingest ----------------------------------------------------------------------
@@ -529,3 +574,140 @@ def test_ingest_without_a_credential_is_a_tool_error_and_the_server_still_answer
     failed, report = anyio.run(go)
     assert failed.is_error and "credential" in failed.content[0].text
     assert report.structured_content["concepts"] == 4
+
+
+# --- the contract, over the protocol ---------------------------------------------
+
+
+def resources_of(project: Path):
+    import anyio
+    from mcp import Client
+
+    async def go():
+        async with Client(server_for(project)) as client:
+            listed = (await client.list_resources()).resources
+            contract = await client.read_resource(agent.CONTRACT_URI)
+            index = await client.read_resource(agent.INDEX_URI)
+            return listed, contract.contents[0].text, index.contents[0].text
+
+    return anyio.run(go)
+
+
+def test_the_server_exports_the_contract_and_the_index_as_resources(project):
+    pytest.importorskip("mcp", reason='the MCP SDK is an optional extra: pip install -e ".[mcp]"')
+    listed, _, _ = resources_of(project)
+    assert sorted(str(resource.uri) for resource in listed) == [
+        agent.CONTRACT_URI,
+        agent.INDEX_URI,
+    ]
+
+
+def test_the_contract_served_over_the_wire_is_the_file_on_disk(project):
+    """One renderer, so a consumer and a reader of `agent/` cannot be told
+    different things about one bundle."""
+    pytest.importorskip("mcp", reason='the MCP SDK is an optional extra: pip install -e ".[mcp]"')
+    agent.write_contract(cfg(project))
+    _, contract, index = resources_of(project)
+
+    assert contract == (project / "agent" / "AGENTS.md").read_text(encoding="utf-8-sig")
+    assert index == agent.read_concept(cfg(project), "index")
+
+
+def test_nothing_the_server_says_at_the_handshake_names_a_path_in_the_producers_tree(
+    project,
+):
+    """The M5 invariant: layer 3 crosses the process boundary over the protocol,
+    never over the filesystem. A consumer registers this server from its own
+    checkout, so a path relative to this root names a file it does not have."""
+    pytest.importorskip("mcp", reason='the MCP SDK is an optional extra: pip install -e ".[mcp]"')
+    import anyio
+    from mcp import Client
+
+    async def go():
+        async with Client(server_for(project)) as client:
+            return (
+                client.instructions or "",
+                (await client.list_tools()).tools,
+                (await client.list_resources()).resources,
+            )
+
+    instructions, tools, resources = anyio.run(go)
+    said = [instructions]
+    said += [tool.description or "" for tool in tools]
+    said += [
+        f"{resource.uri} {resource.name} {resource.title or ''} {resource.description or ''}"
+        for resource in resources
+    ]
+
+    offenders = {text: found for text in said if (found := producer_paths(text))}
+    assert not offenders, offenders
+
+
+def test_the_path_check_catches_the_instruction_and_the_entry_it_replaced():
+    """A guard that always passes guards nothing (see `tests/test_encoding.py`).
+
+    Both offenders are the real ones: M4's handshake told every client that
+    `agent/AGENTS.md` was the contract, and M4's registration entry spawned the
+    server through the producer's own venv.
+    """
+    from okragged.agent.server import INSTRUCTIONS
+
+    was = (
+        "An Open Knowledge Format bundle. Read index.md first, then read whole concept "
+        "files — `search` returns pointers, not bodies. agent/AGENTS.md is the contract."
+    )
+    entry = json.dumps({"command": ".venv/Scripts/python.exe", "args": ["agent/mcp_server.py"]})
+
+    assert producer_paths(was) == ["agent/AGENTS.md"]
+    assert producer_paths(entry) == [".venv/Scripts/python.exe", "agent/mcp_server.py"]
+    assert producer_paths(INSTRUCTIONS) == []
+
+
+# --- okragged mcp ----------------------------------------------------------------
+
+
+def served_root(project: Path, monkeypatch, args: list[str]) -> Path:
+    """The root `okragged mcp` would have served, without serving it."""
+    from typer.testing import CliRunner
+
+    from okragged import cli
+    from okragged.agent import server
+
+    seen: list[Path] = []
+    monkeypatch.setattr(server, "main", seen.append)
+    result = CliRunner().invoke(cli.app, args)
+    assert result.exit_code == 0, result.output
+    return seen[0]
+
+
+def test_the_server_command_serves_the_project_it_is_pointed_at(project, monkeypatch, tmp_path):
+    """A launcher that inferred its bundle from `__file__` could not be installed."""
+    elsewhere = tmp_path / "consumer"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    assert served_root(project, monkeypatch, ["mcp", "--project", str(project)]) == project
+
+
+def test_the_server_command_takes_its_project_from_the_environment_too(
+    project, monkeypatch, tmp_path
+):
+    elsewhere = tmp_path / "consumer"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    monkeypatch.setenv("OKRAGGED_PROJECT", str(project))
+    assert served_root(project, monkeypatch, ["mcp"]) == project
+
+
+def test_the_server_command_says_so_on_stderr_when_there_is_no_bundle_to_serve(
+    tmp_path, monkeypatch
+):
+    """stdout carries the protocol, so a diagnostic there corrupts the session."""
+    from typer.testing import CliRunner
+
+    from okragged import cli
+
+    monkeypatch.chdir(tmp_path)
+    result = CliRunner().invoke(cli.app, ["mcp"])
+    assert result.exit_code == 2
+    assert "no bundle" in result.stderr
+    assert result.stdout == ""

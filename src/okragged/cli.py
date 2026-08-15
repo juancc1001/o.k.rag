@@ -100,13 +100,43 @@ def index() -> None:
 
 @app.command()
 def agent() -> None:
-    """Regenerate the agent contract: agent/AGENTS.md, agent/mcp_server.py, .mcp.json."""
+    """Regenerate the agent contract: agent/AGENTS.md and .mcp.json."""
     cfg = config_module.load()
     if not cfg.bundle_root.exists():
         typer.secho(f"no bundle at {cfg.bundle_root}", fg="red")
         raise typer.Exit(2)
     for path in write_contract(cfg):
         typer.secho(f"  wrote {path.relative_to(cfg.project_root)}", fg="green")
+
+
+@app.command()
+def mcp(
+    project: Path | None = typer.Option(
+        None,
+        "--project",
+        envvar="OKRAGGED_PROJECT",
+        help="Project root holding the bundle. Defaults to the current directory.",
+    ),
+) -> None:
+    """Serve this bundle to an MCP client over stdio. What .mcp.json registers."""
+    # the target is explicit because it has to be: a server that inferred its
+    # bundle from __file__ could not survive being pip-installed, and the
+    # consumer this exists for is spawning it from a different tree entirely
+    root = (project or Path.cwd()).resolve()
+    cfg = config_module.load(root)
+    # stderr, not stdout: the protocol is newline-delimited JSON on stdout, and
+    # a diagnostic there corrupts the first frame of the session
+    if not cfg.bundle_root.exists():
+        typer.secho(f"no bundle at {cfg.bundle_root}", fg="red", err=True)
+        raise typer.Exit(2)
+
+    from .agent.server import main as serve_mcp
+
+    try:
+        serve_mcp(root)
+    except RuntimeError as exc:  # the MCP SDK is an optional extra
+        typer.secho(str(exc), fg="red", err=True)
+        raise typer.Exit(2) from None
 
 
 @app.command()

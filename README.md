@@ -119,6 +119,7 @@ okragged index                 # embed + project + graph.json -> .okragged/ only
 okragged serve                 # the read-only API, and the graph view if web/dist is built
 okragged check                 # validate an existing bundle without rebuilding
 okragged agent                 # regenerate agent/AGENTS.md + .mcp.json (offline)
+okragged mcp --project <dir>   # serve a bundle to an MCP client over stdio
 okragged extract <file>        # print extracted text for one file (offline, for debugging)
 ```
 
@@ -248,12 +249,19 @@ Layer 3, regenerated at the end of every `build` and on demand by `okragged agen
 ```
 agent/AGENTS.md        how to read this bundle: structure, type vocabulary,
                        trust tiers, the three operations
-agent/mcp_server.py    the launcher .mcp.json points at
 .mcp.json              the registration entry, merged into whatever else
                        is already registered
 ```
 
-Registering it makes any MCP-capable agent a consumer of the bundle with no okragged-specific code. Four tools:
+The server is `okragged mcp`, a subcommand of the console script — there is no generated launcher to point at, so the entry is portable:
+
+```json
+{ "mcpServers": { "okragged": { "command": "okragged", "args": ["mcp"] } } }
+```
+
+No interpreter path and no script path, which is what makes any MCP-capable agent a consumer of the bundle with no okragged-specific code **from any tree at all**. The server takes its bundle from `--project` or `OKRAGGED_PROJECT`, defaulting to the cwd — a client spawns it with the config file's directory as its cwd, so the entry beside the bundle needs no target. To consume the bundle from *another* project, paste the entry `AGENTS.md` prints instead: the same two words plus `--project` and this root, absolutely.
+
+Four tools:
 
 | Tool | Signature | Credential |
 |---|---|---|
@@ -274,6 +282,15 @@ The ghost list is capped at the 20 strongest, with `ghosts_total` and a note say
 The result shape is identical, and the response names which path answered — plus, on the traversal path, why the other one did not. Retrieval strategy is deliberately out of scope ([`DESIGN.md` §7](DESIGN.md)); this ranking is meant to be simple enough to explain in a sentence and test without a model.
 
 `ingest` goes through the same pipeline as `okragged build`, credential and all, so a client that disconnects mid-run cannot strand model calls already paid for. Given a `paths` subset it also skips the vanished-source sweep: a partial run never looked at the other sources, so their absence is not evidence that they are gone.
+
+**The contract itself is served over the protocol**, because a consumer in another checkout cannot open `agent/AGENTS.md`:
+
+| Resource | What it returns |
+|---|---|
+| `okragged://contract` | `AGENTS.md`, rendered by the same function that writes the file |
+| `okragged://index` | the bundle's root `index.md` |
+
+Above them, the handshake `instructions` say what the bundle is and to fetch the contract — short, self-contained, and naming no path. Nothing the server says over the wire may name a path relative to the producer's root, and `tests/test_agent.py` enforces that with a check pointed at the text it replaced, so it cannot quietly stop biting.
 
 The server needs the MCP SDK, an optional extra — `pip install -e ".[mcp]"`. Everything else in the contract is generated without it.
 
@@ -351,8 +368,8 @@ Broken links are **warnings, not errors** — the spec explicitly permits them, 
 | `src/okragged/vectors/providers/fastembed.py` | Local `bge-small-en-v1.5`, behind an optional extra. Registered but not chosen — see `DESIGN.md` §12 Risk 4. |
 | `src/okragged/agent/query.py` | `search` and `read_concept`: the embedding path, the credential-free traversal ranking, and the id resolution that keeps a read inside the bundle. |
 | `src/okragged/agent/lint.py` | The lint report: conformance from `okf/validate.py`, ghost edges read out of `graph.json`, stale concepts, orphans. |
-| `src/okragged/agent/contract.py` | Generates `agent/AGENTS.md`, `agent/mcp_server.py` and the `.mcp.json` entry. No timestamp, so an unchanged bundle regenerates byte-identically. |
-| `src/okragged/agent/server.py` | The four MCP tools over those functions. Imports the SDK lazily, and writes nothing to stdout — the protocol lives there. |
+| `src/okragged/agent/contract.py` | Generates `agent/AGENTS.md` and the `.mcp.json` entry, and renders what `okragged://contract` serves. No timestamp, so an unchanged bundle regenerates byte-identically. |
+| `src/okragged/agent/server.py` | The four MCP tools and the two resources, over those functions. Imports the SDK lazily, and writes nothing to stdout — the protocol lives there. |
 | `src/okragged/api/app.py` | The four read-only HTTP endpoints, over the same functions the MCP tools use. Imports FastAPI lazily; mounts `web/dist` when it exists. |
 | `web/src/encoding.ts` | §8's visual encoding in one place — type colours, degree→size, trust→border — so the legend and the renderer cannot drift. |
 | `web/src/Graph.tsx` | The sigma renderer. Filtering happens in reducers rather than by rebuilding the graph, so dragging τ costs a repaint. |
@@ -368,7 +385,7 @@ Broken links are **warnings, not errors** — the spec explicitly permits them, 
 | `bundle/` | **no** (gitignored) | Layer 2 — the OKF product. The deliverable, portable with no okragged dependency — but concept ids derive from model-written titles, so every rebuild renames the whole tree and the diff is unreadable. Commit an example bundle under `examples/` instead, refreshed on purpose. |
 | `okf-base.yaml` | **no** (gitignored) | Generated okflint manifest, rewritten with the bundle. |
 | `agent/` | **no** (gitignored) | Layer 3 — the generated contract. Not committed for the same reason as `bundle/`: `AGENTS.md` is written from the corpus and carries its names. `okragged agent` rewrites it. |
-| `.mcp.json` | **no** (gitignored) | The registration entry. Names the interpreter that generated it, so it is per-machine. Other servers already in the file are preserved. |
+| `.mcp.json` | **no** (gitignored) | The registration entry: `okragged mcp`, a console script on `PATH`. Other servers already in the file are preserved. |
 | `.okragged/` | **no** (gitignored) | Sidecar: the ledger (`manifest.json`), the extraction cache, replacements for concepts a human owns (`proposed/`), and the vectors — `embeddings.npy`, `embeddings_meta.json`, `layout.json`, `graph.json`. Entirely derived and rebuildable — deleting it costs a full re-ingest and a re-embed, nothing more. |
 | `web/` | yes, minus `node_modules/` and `dist/` | The graph view's source. Built deliberately with `npm run build`; `okragged serve` mounts the result if it is there. |
 | `DESIGN.md` | yes | Architecture, data model, risks, milestones. |
@@ -423,7 +440,7 @@ random_state = 42          # fixed, or the layout reshuffles every run
 .\.venv\Scripts\python.exe -m pytest tests -q
 ```
 
-258 tests. No credentials and no network needed — the end-to-end test stubs the model and asserts the emitted bundle is conformant, so "one file in, one conformant concept out" is covered offline. The embedding provider is stubbed the same way, in a three-dimensional toy space, so what two concepts are "similar" is something the test states rather than something a model decides.
+267 tests. No credentials and no network needed — the end-to-end test stubs the model and asserts the emitted bundle is conformant, so "one file in, one conformant concept out" is covered offline. The embedding provider is stubbed the same way, in a three-dimensional toy space, so what two concepts are "similar" is something the test states rather than something a model decides.
 
 | File | Covers |
 |---|---|
@@ -436,7 +453,7 @@ random_state = 42          # fixed, or the layout reshuffles every run
 | `tests/test_manifest.py` | manifest keys okflint requires, skip-with-reason behaviour, and cross-checking that okflint agrees with the built-in checks |
 | `tests/test_providers.py` | provider registry and interface, dispatch, schema/required-field enforcement, Gemini credential resolution and decline mapping, non-2xx and transport-failure mapping for both providers, fail-fast pre-flight |
 | `tests/test_vectors.py` | the embedding provider registry, hash-based reuse and per-concept failure isolation, mean-pooling past the window with no chunk vector stored, L2 normalization, a model change re-embedding instead of mixing widths, the PCA fallback and its determinism, the ghost rule (τ, top-k, a link in either direction), derived trust tiers, graph stats, and that `index` writes nothing into `bundle/` |
-| `tests/test_agent.py` | each tool's contract: `search` returning pointers and not bodies, the credential-free traversal path and its ranking (title over body, a linked neighbour over an unrelated mention, folded accents), the embedding path and the fallback when a query cannot be embedded, `read_concept` refusing a path out of the bundle, the lint report's orphans/stale/ghosts, the generated `AGENTS.md` content, a `.mcp.json` merge that keeps other servers, a partial `ingest` not deprecating what it did not look at, and that none of it writes into `bundle/`. The server tests skip without the `mcp` extra. |
+| `tests/test_agent.py` | each tool's contract: `search` returning pointers and not bodies, the credential-free traversal path and its ranking (title over body, a linked neighbour over an unrelated mention, folded accents), the embedding path and the fallback when a query cannot be embedded, `read_concept` refusing a path out of the bundle, the lint report's orphans/stale/ghosts, the generated `AGENTS.md` content, a `.mcp.json` merge that keeps other servers and an entry that names a console script rather than an interpreter, `okragged mcp` taking its target from `--project` or the environment, the two resources and the contract served over the wire matching the file on disk byte for byte, a partial `ingest` not deprecating what it did not look at, and that none of it writes into `bundle/`. Plus the M5 invariant — nothing the server declares may name a path relative to the producer's root — with a meta-test pointing the check at the M4 text it replaced. The server tests skip without the `mcp` extra. |
 | `tests/test_env.py` | `.env` loading with and without a BOM, and every `doctor` outcome |
 | `tests/test_encoding.py` | the [encoding policy](#encoding-policy), enforced by AST scan (including the child-process `env` rule), plus BOM tolerance, the piped-child crash reproduced, and LF-only output end to end |
 
@@ -495,14 +512,14 @@ Run against the 3-PDF Spanish corpus: 18 concepts embedded with `gemini-embeddin
 
 ### M4 — done
 
-`agent/AGENTS.md`, the stdio MCP server and the `.mcp.json` entry that registers it, regenerated at the end of every build. Verified against the same 3-PDF corpus by spawning the generated launcher over stdio exactly as `.mcp.json` does, with no embedding credential: `search` answered by traversal and named the right concept first, `read_concept` returned it whole, `lint` reported 18 concepts and okflint exit 0, and it said it had no ghost edges *because `okragged index` has not run* rather than because there are none.
+`agent/AGENTS.md`, the stdio MCP server and the `.mcp.json` entry that registers it, regenerated at the end of every build. Verified against the same 3-PDF corpus by spawning the server over stdio exactly as `.mcp.json` does, with no embedding credential: `search` answered by traversal and named the right concept first, `read_concept` returned it whole, `lint` reported 18 concepts and okflint exit 0, and it said it had no ghost edges *because `okragged index` has not run* rather than because there are none.
 
 ### Next
 
 - **Calibrate τ on a second corpus.** The first one saturated the similarity space, which rules the default out without ruling anything in. A corpus spanning more than one topic is what distinguishes "raise τ" from "lower k" from "make the threshold relative".
 - **`POST /api/ingest` + SSE progress.** Deferred with M3, not cancelled: it needs a job registry and progress events `pipeline.ingest` does not emit.
 - **Grounded answers** (M9, proposed). `search` normalizes by the best hit, so its top result always scores `1.000` — including for a question the bundle cannot answer. Absolute confidence with an abstention floor, offline citation checking, and trust tiers carried into results.
-- **Distribution** (M5, next). `pip install okragged`, one console script whose `okragged mcp` subcommand a foreign checkout can register, a thin Python API, an `add_source` tool replacing `ingest` on the MCP surface, and the lock plus staged emit that three writers to one bundle now require.
+- **Distribution** (M5, in progress). The rename and the console script have landed, and so has the half that makes a foreign checkout a consumer: `okragged mcp --project <dir>`, a `.mcp.json` entry naming nothing but a command on `PATH`, and the contract served as `okragged://contract` / `okragged://index` rather than as a file only the producer can open. Still to come: a thin Python API, an `add_source` tool replacing `ingest` on the MCP surface, and the lock plus staged emit that three writers to one bundle now require.
 - **BigQuery/blob sources.** M7.
 
 ### Known rough edges in segmentation

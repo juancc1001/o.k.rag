@@ -80,8 +80,8 @@ ragged/
 │  └─ graph.json               # what the frontend fetches (nodes + both edge sets)
 │
 ├─ agent/                      # layer 3 — the agent contract
-│  ├─ AGENTS.md                # generated: how to query this bundle
-│  └─ mcp_server.py            # search / read_concept / ingest / lint over stdio
+│  └─ AGENTS.md                # generated: how to query this bundle
+│                              # (the server is `okragged mcp`, registered by .mcp.json)
 │
 ├─ src/okragged/
 │  ├─ sources/                 # Source implementations (local, later gcs, bq)
@@ -502,13 +502,15 @@ BigQuery specifically: `INFORMATION_SCHEMA.COLUMNS` + `TABLES` + table descripti
 
 ### `agent/AGENTS.md` (generated)
 
-The layer-3 schema doc, regenerated on each ingest. Contains: the bundle's directory structure, the current type vocabulary with counts, the three operations (ingest / query / lint) and how to invoke each, the trust-tier convention, and an explicit instruction that the query path is *read `index.md` first, then read whole concept files* — not "search for chunks".
+The layer-3 schema doc, regenerated on each ingest. Contains: the bundle's directory structure, the current type vocabulary with counts, the three operations (ingest / query / lint) and how to invoke each, the trust-tier convention, an explicit instruction that the query path is *read `index.md` first, then read whole concept files* — not "search for chunks" — and the registration entry a *foreign* project pastes into its own config, which is the one place a path to this root belongs and is therefore absolute.
 
 It carries no timestamp, deliberately: the same bundle must regenerate to the same bytes, or a contract that is read as documentation churns on every build.
 
-### `agent/mcp_server.py`
+### The server — `okragged mcp`
 
-stdio MCP server. Four tools:
+A subcommand of the console script, not a generated launcher (M5, §13). It takes its bundle from `--project` or `OKRAGGED_PROJECT`, defaulting to the cwd; nothing is inferred from `__file__`, because a server that inferred its bundle that way could not survive being pip-installed. Registering it is therefore `{"command": "okragged", "args": ["mcp", …]}` — a name on `PATH` with no interpreter path and no script path, which makes any MCP-capable agent, Claude Code included, a consumer of the bundle with no okragged-specific code *from any tree at all*. The entry `okragged agent` writes into the producer's own root omits `--project`, since a client spawns the server with the config file's directory as its cwd; the copy in `AGENTS.md`, meant for someone else's config, names the root absolutely.
+
+Four tools:
 
 | Tool | Signature | Notes |
 |---|---|---|
@@ -517,7 +519,14 @@ stdio MCP server. Four tools:
 | `ingest` | `(paths: list[str] \| None) -> IngestSummary` | Runs the pipeline. `None` = full sweep. |
 | `lint` | `() -> LintReport` | okflint results + ghost edges + stale concepts + orphans. Ghosts are capped at the 20 strongest, with `ghosts_total` and a note; and a `graph.json` whose nodes no longer match the bundle is reported out of date rather than trusted, because a rebuild renames ids and the old graph is then about *different* concepts. |
 
-Registering it is a `.mcp.json` entry pointing at the script — which makes any MCP-capable agent, Claude Code included, a consumer of the bundle with no okragged-specific code.
+And two resources, which is the other half of what makes that claim true. A consumer in another checkout cannot open `agent/AGENTS.md`, so the contract crosses the process boundary over the protocol instead of over the filesystem:
+
+| Resource | URI | Rendered by |
+|---|---|---|
+| the contract | `okragged://contract` | `contract.py::render_agents_md` |
+| the bundle's root index | `okragged://index` | `query.py::read_concept(config, "index")` |
+
+Both call the function that writes the file, rather than a second renderer, so what is served cannot drift from what is on disk. Above them sits the handshake `instructions`: short, self-contained, and naming **no** path — it says what the bundle is and to fetch the contract. Three levels of disclosure, and the invariant they establish is checkable offline, which by §6.5's standard makes it a test rather than a convention: **no generated instruction text may name a path relative to the producer's root.** `tests/test_agent.py` asserts it over everything the server declares over the wire, with a meta-test pointing the check at the M4 text it replaced.
 
 **Three of the four tools take no credential, and `search` is the one that has to work for it.** Concept vectors are computed at build time and stored, but embedding a *query* is a read-time model call (§6.8). So `search` has two paths behind one result shape: kNN over `embeddings.npy` when the matrix exists and an embedding credential is present, and otherwise a traversal ranking over what the bundle already says about itself — titles and descriptions (which are what the indexes are made of, verbatim), the bodies at lower weight, and one hop along the authored links, so a concept the bundle links to a hit surfaces behind it. The result names which path answered, and the traversal path says why the other one did not. This is a ranking, not a retrieval framework: §7 keeps retrieval strategy out of scope, and the traversal ranking is deliberately simple enough to explain in a sentence and test without a model.
 
@@ -718,7 +727,9 @@ The URI scheme is the one irreversible choice here: `okf://` would claim the for
 
 1. **Package.** Console-script entry points rather than generated paths. This does not fix the `.mcp.json` defect so much as delete it: a pip-installed `okragged` on `PATH`, invoked as `okragged mcp`, needs no interpreter path, no script path, and nothing relative to a cwd. The server then needs an explicit target — `--project` or `OKRAGGED_PROJECT` — because a launcher that infers its bundle from `__file__` cannot survive being installed.
 
-2. **Export the contract over the protocol, not the filesystem.** Three levels of disclosure: `instructions` short and self-contained at the handshake, the rendered `AGENTS.md` as a resource, `bundle/index.md` as a second one. Both handlers call functions that already exist (`contract.py::render_agents_md`, `query.py::read_concept`), so there is no second renderer to drift from the file on disk. **The invariant this establishes:** *layer 3 crosses the process boundary over the protocol, never over the filesystem — no generated instruction text may name a path relative to the producer's root.* Checkable offline, so it is a test rather than a convention.
+2. **Export the contract over the protocol, not the filesystem. Built** (§10). Three levels of disclosure: `instructions` short and self-contained at the handshake, the rendered `AGENTS.md` as `okragged://contract`, `bundle/index.md` as `okragged://index`. Both handlers call functions that already exist (`contract.py::render_agents_md`, `query.py::read_concept`), so there is no second renderer to drift from the file on disk. **The invariant this establishes:** *layer 3 crosses the process boundary over the protocol, never over the filesystem — no generated instruction text may name a path relative to the producer's root.* Checkable offline, so it is a test rather than a convention, and it has a meta-test pointing it at the M4 handshake and the M4 registration entry — both of which it catches.
+
+   Built with it, because it is the same defect: `okragged mcp` with `--project` / `OKRAGGED_PROJECT`, the portable `{"command": "okragged", "args": ["mcp", …]}` entry, and the deletion of the generated `agent/mcp_server.py` — which existed only to be the thing `.mcp.json` pointed at, and after the entry names a console script nothing points at it.
 
    Credentials are a smaller problem than they look. MCP config carries `env` per server, so a consumer supplies its own key; and **three of the four tools need none at all**. Auth covers `ingest` and `search`'s embedding upgrade, not the server.
 

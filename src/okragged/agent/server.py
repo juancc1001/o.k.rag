@@ -5,6 +5,12 @@ Four tools over capability that already exists: `search` and `read_concept` from
 `pipeline.ingest` — whose `_finalize` runs in a `finally`, so a client that
 disconnects mid-run cannot strand model calls already paid for.
 
+Plus two resources, which is how the contract reaches a consumer that is not
+standing in this tree: the handshake `instructions` are short and name no path,
+and the contract itself is fetched over the protocol. Both handlers call the
+functions that already render what is on disk, so what is served cannot drift
+from the file.
+
 **Nothing here may write to stdout.** The protocol is newline-delimited JSON on
 it. The SDK's stdio transport serves the wire from a private duplicate of fd 1
 and points fd 1 itself at stderr, so a stray `print` — markitdown's ffmpeg
@@ -22,18 +28,45 @@ from ..config import Config
 from ..config import load as load_config
 from ..pipeline import IngestSummary
 from ..pipeline import ingest as run_ingest
+from .contract import CONTRACT_URI, INDEX_URI, render_agents_md
 from .lint import lint as run_lint
 from .query import read_concept as read_one
 from .query import search as run_search
 
 INSTRUCTIONS = (
-    "An Open Knowledge Format bundle. Read index.md first, then read whole concept "
-    "files — `search` returns pointers, not bodies. agent/AGENTS.md is the contract."
+    "An Open Knowledge Format bundle: markdown concepts with YAML frontmatter, one "
+    f"index per directory, and a cross-link graph. Read the `{CONTRACT_URI}` resource "
+    "first — it says what this bundle holds and how to read it — then work from "
+    f"`{INDEX_URI}`. `search` returns pointers, never bodies; `read_concept` returns a "
+    "whole file, which is the unit of knowledge here."
 )
+"""Asserted across a process boundary, so it names no path: the consumer reading
+it works in its own tree and has none of this one's (DESIGN §13 M5)."""
 
 
 def build_server(config: Config):
     server = _mcp_server()(name="okragged", instructions=INSTRUCTIONS)
+
+    @server.resource(
+        CONTRACT_URI,
+        name="contract",
+        title="Agent contract",
+        description="What this bundle holds, how to query it, and what its trust tiers mean.",
+        mime_type="text/markdown",
+    )
+    def contract() -> str:
+        return render_agents_md(config)
+
+    @server.resource(
+        INDEX_URI,
+        name="index",
+        title="Bundle index",
+        description="The bundle's root index: every top-level concept, with its own "
+        "title and description.",
+        mime_type="text/markdown",
+    )
+    def index() -> str:
+        return read_one(config, "index")
 
     @server.tool()
     def search(query: str, k: int = 8) -> dict[str, Any]:
