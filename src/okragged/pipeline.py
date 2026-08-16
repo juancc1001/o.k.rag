@@ -90,6 +90,17 @@ class IngestSummary:
         return [o for o in self.outcomes if o.concept_id and not o.skipped]
 
 
+def require_credential(config: Config) -> None:
+    """Raise before anything is spent or written. Callers with something to undo
+    (`agent.write.add_source` writes a source file) ask first."""
+    impl = resolve(config.synth.provider)
+    if not impl.credential_present():
+        raise MissingCredential(
+            f"no credential for provider {config.synth.provider!r}; "
+            f"set one of {', '.join(impl.ENV_VARS)} in .env or the environment"
+        )
+
+
 def ingest(
     config: Config, dry_run: bool = False, only: list[str] | None = None
 ) -> IngestSummary:
@@ -102,13 +113,7 @@ def ingest(
     )
     summary = IngestSummary()
     if not dry_run:
-        # fail before extracting a whole corpus, not after
-        impl = resolve(config.synth.provider)
-        if not impl.credential_present():
-            raise MissingCredential(
-                f"no credential for provider {config.synth.provider!r}; "
-                f"set one of {', '.join(impl.ENV_VARS)} in .env or the environment"
-            )
+        require_credential(config)  # before extracting a whole corpus, not after
     ledger_path = config.sidecar_root / LEDGER_NAME
     ledger = Ledger() if dry_run else Ledger.load(ledger_path)
     # snapshotted once: the synthesis prefix has to stay byte-identical all run

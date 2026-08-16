@@ -35,6 +35,14 @@ class LocalFileSource:
                 seen.add(path)
                 yield self._item(path)
 
+    def matches(self, path: Path) -> bool:
+        """Whether `discover` would yield this path. The include globs are
+        configurable, so a file written into the tree is not necessarily one
+        this source can see."""
+        if not path.is_file() or self._excluded(path):
+            return False
+        return any(path in self.root.glob(pattern) for pattern in self.include)
+
     def fetch(self, item: SourceItem) -> bytes:
         return (self.project_root / item.uri).read_bytes()
 

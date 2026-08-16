@@ -267,14 +267,14 @@ Four tools:
 |---|---|---|
 | `search` | `(query, k=8)` → `concept_id`, `title`, `description`, `score` | none |
 | `read_concept` | `(concept_id)` → the raw file, frontmatter included | none |
-| `ingest` | `(paths \| null)` → what the run wrote; `null` is a full sweep | **required** |
+| `add_source` | `(text, title=null)` → the source written and the concepts it produced | **required** |
 | `lint` | `()` → conformance, ghost edges, stale concepts, orphans | none |
 
 The ghost list is capped at the 20 strongest, with `ghosts_total` and a note saying what was left out — they grow with the square of the corpus and this is a tool result an agent pays for by the token. `lint` also says when `graph.json` no longer describes the bundle, which a rebuild makes routine: ids come from model-written titles, so a rename means the old graph is about *different* concepts, not merely stale ones.
 
 **`search` returns pointers and never bodies**, because the retrieval path here is progressive disclosure rather than chunk RAG: the agent reads `index.md`, then reads whole concept files, and `AGENTS.md` says so explicitly.
 
-**Three of the four tools work with no credential at all**, which is what M4 is for — the bundle has to be readable by a session that has no key. That constrains `search`, since concept vectors are computed at build time but embedding a *query* is a read-time model call:
+**Three of the four tools work with no credential at all**, and the fourth only ever adds — `ingest` came off this surface in M5, so nothing reachable over the protocol can sweep the corpus. That is what M4 is for — the bundle has to be readable by a session that has no key. That constrains `search`, since concept vectors are computed at build time but embedding a *query* is a read-time model call:
 
 - `embeddings.npy` present **and** an embedding credential present → kNN over the stored matrix.
 - otherwise → **index traversal**: a term ranking over concept titles and descriptions (which is what every index entry is made of, verbatim), the bodies at lower weight, and one hop along the authored links, so a concept the bundle links to a hit surfaces behind it. Accents are folded, so `informaticos` matches `Informáticos`.
@@ -440,7 +440,7 @@ random_state = 42          # fixed, or the layout reshuffles every run
 .\.venv\Scripts\python.exe -m pytest tests -q
 ```
 
-267 tests. No credentials and no network needed — the end-to-end test stubs the model and asserts the emitted bundle is conformant, so "one file in, one conformant concept out" is covered offline. The embedding provider is stubbed the same way, in a three-dimensional toy space, so what two concepts are "similar" is something the test states rather than something a model decides.
+281 tests. No credentials and no network needed — the end-to-end test stubs the model and asserts the emitted bundle is conformant, so "one file in, one conformant concept out" is covered offline. The embedding provider is stubbed the same way, in a three-dimensional toy space, so what two concepts are "similar" is something the test states rather than something a model decides.
 
 | File | Covers |
 |---|---|

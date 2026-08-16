@@ -1,9 +1,20 @@
 """The stdio MCP server (DESIGN §10).
 
 Four tools over capability that already exists: `search` and `read_concept` from
-`agent/query.py`, `lint` from `agent/lint.py`, `ingest` straight through
-`pipeline.ingest` — whose `_finalize` runs in a `finally`, so a client that
-disconnects mid-run cannot strand model calls already paid for.
+`agent/query.py`, `lint` from `agent/lint.py`, `add_source` from `agent/write.py`
+— which goes through `pipeline.ingest`, whose `_finalize` runs in a `finally`, so
+a client that disconnects mid-run cannot strand model calls already paid for.
+
+**There is no `ingest` tool, and its absence is the point** (§13 M5). A full
+sweep runs `_deprecate_vanished`, so a recipient holding the bundle and the
+sidecar but no corpus would have every concept marked `deprecated` — which is
+exactly what you would ship to make search work. Removing the tool closes that
+structurally; gating it would only guard it.
+
+The tool descriptions carry the rules that matter, because they are the only
+channel every client shows a model: `instructions` are client-dependent and
+resources are an optional client capability, but a tool is displayed with its
+description wherever tools are.
 
 Plus two resources, which is how the contract reaches a consumer that is not
 standing in this tree: the handshake `instructions` are short and name no path,
@@ -26,12 +37,11 @@ from typing import Any
 
 from ..config import Config
 from ..config import load as load_config
-from ..pipeline import IngestSummary
-from ..pipeline import ingest as run_ingest
 from .contract import CONTRACT_URI, INDEX_URI, render_agents_md
 from .lint import lint as run_lint
 from .query import read_concept as read_one
 from .query import search as run_search
+from .write import add_source as run_add_source
 
 INSTRUCTIONS = (
     "An Open Knowledge Format bundle: markdown concepts with YAML frontmatter, one "
@@ -70,7 +80,11 @@ def build_server(config: Config):
 
     @server.tool()
     def search(query: str, k: int = 8) -> dict[str, Any]:
-        """Find concepts. Returns pointers - id, title, description, score - never bodies."""
+        """Find concepts. Returns pointers - id, title, description, score - never bodies.
+
+        A way in, not a substitute for the indexes: read the `okragged://index`
+        resource first, then read what either one points at.
+        """
         result = run_search(config, query, k)
         return {
             "path": result.path,
@@ -80,13 +94,25 @@ def build_server(config: Config):
 
     @server.tool()
     def read_concept(concept_id: str) -> str:
-        """Read one concept file whole, frontmatter included."""
+        """Read one concept file whole, frontmatter included.
+
+        A concept file is the unit of knowledge here - read the whole file, never
+        a fragment of one.
+        """
         return read_one(config, concept_id)
 
     @server.tool()
-    def ingest(paths: list[str] | None = None) -> dict[str, Any]:
-        """Re-ingest sources into the bundle. null = every source. Needs a credential."""
-        return _ingest_payload(run_ingest(config, only=paths))
+    def add_source(text: str, title: str | None = None) -> dict[str, Any]:
+        """Record knowledge no source document states, as a new source.
+
+        Takes prose, not a concept: it is written into the corpus as a source
+        file - the path is generated here and never accepted - and the pipeline
+        authors the concept from it, so the concept has real provenance. Submit
+        no frontmatter. Nothing on this surface writes a `verified` block: that
+        records a confirmation event that actually happened, and a human promotes
+        a concept by editing the file. Needs a credential.
+        """
+        return asdict(run_add_source(config, text, title))
 
     @server.tool()
     def lint() -> dict[str, Any]:
@@ -101,7 +127,7 @@ def main(project_root: Path) -> None:
 
     config = load_config(project_root)
     # utf-8-sig: a BOM otherwise renames the first key and the credential reads
-    # as missing, which `ingest` would report as a configuration problem
+    # as missing, which `add_source` would report as a configuration problem
     load_dotenv(project_root / ".env", encoding="utf-8-sig")
     build_server(config).run()
 
@@ -114,37 +140,3 @@ def _mcp_server():
             "the MCP server needs the optional extra: pip install -e \".[mcp]\""
         ) from exc
     return MCPServer
-
-
-def _ingest_payload(summary: IngestSummary) -> dict[str, Any]:
-    report = summary.report
-    return {
-        "concepts": sum(outcome.concept_count for outcome in summary.synthesized),
-        "written": [
-            {
-                "uri": outcome.uri,
-                "concept_id": outcome.concept_id,
-                "children": outcome.child_ids,
-                "section_errors": outcome.section_errors,
-                "weave_errors": outcome.weave_errors,
-                "removed": outcome.removed,
-            }
-            for outcome in summary.synthesized
-        ],
-        "skipped": [outcome.uri for outcome in summary.skipped],
-        "failed": [
-            {"uri": outcome.uri, "error": outcome.error} for outcome in summary.failed
-        ],
-        "protected": {
-            cid: why for outcome in summary.outcomes for cid, why in outcome.protected.items()
-        },
-        "deprecated": summary.deprecated,
-        "new_types": sorted({o.new_type for o in summary.outcomes if o.new_type}),
-        "tokens": {
-            "input": summary.input_tokens,
-            "output": summary.output_tokens,
-            "cache_read": summary.cache_read_tokens,
-        },
-        "conformant": report.ok if report else None,
-        "errors": [str(finding) for finding in report.errors] if report else [],
-    }

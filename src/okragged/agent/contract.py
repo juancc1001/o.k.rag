@@ -88,8 +88,8 @@ def render_agents_md(config: Config) -> str:
         "## How to query it",
         "",
         f"1. **Read `{bundle}/index.md` first.** It lists every top-level concept with its "
-        "own title and description. An entry that ends `([n more](./x/index.md))` owns a "
-        "subdirectory — follow it down.",
+        "own title and description. An entry that ends `([n more](./<subdir>/index.md))` "
+        "owns a subdirectory — follow it down.",
         "2. **Then read whole concept files.** A concept is the unit of knowledge here, and "
         "its frontmatter carries the provenance its body depends on. Do not search for "
         "chunks and do not read fragments: read the file.",
@@ -132,28 +132,35 @@ def render_agents_md(config: Config) -> str:
         "",
         "## Operations",
         "",
-        "Three, over the MCP server registered in `.mcp.json`.",
+        "Four tools, over the MCP server. Three of them need no credential at all.",
         "",
         "| tool | signature | credential |",
         "|---|---|---|",
         "| `search` | `(query: str, k: int = 8)` → pointers: `concept_id`, `title`, "
         "`description`, `score` | none |",
         "| `read_concept` | `(concept_id: str)` → the raw file, frontmatter included | none |",
-        "| `ingest` | `(paths: list[str] \\| None)` → what the run wrote. `null` = full sweep | "
-        "**required** |",
         "| `lint` | `()` → conformance, ghost edges, stale concepts, orphans | none |",
+        "| `add_source` | `(text: str, title: str \\| None)` → the source it wrote and the "
+        "concepts synthesized from it | **required** |",
         "",
-        "**Only `ingest` needs a credential.** It runs the synthesis pipeline, which calls a "
-        "model; without a key it fails with that message and changes nothing. Querying and "
-        "linting an existing bundle are entirely offline.",
+        "**Only `add_source` needs a credential**, because it is the only one that calls a "
+        "model. Querying and linting an existing bundle are entirely offline.",
         "",
         f"- **query** — `search`, then `read_concept` on what it points at (and on "
         f"`{bundle}/index.md` itself).",
-        "- **ingest** — re-reads `sources/`, and only pays for the files whose bytes "
-        "changed. A concept a human edited is never overwritten.",
         "- **lint** — okflint conformance plus ghost edges (similar pairs nobody linked), "
-        "stale concepts, and orphans (concepts nothing links to). Ghost edges come from "
-        "`.okragged/graph.json`, so run `okragged index` if it reports having none to read.",
+        "stale concepts, and orphans (concepts nothing links to). Ghost edges are computed "
+        "by `okragged index`, so run that if it reports having none to read.",
+        "- **add_source** — for knowledge no document states: two things are related in a "
+        "way no source says, and somebody knows it. Give it prose and it writes that prose "
+        "into the corpus as a new source, generating the path itself, then synthesizes "
+        "concepts from that one file. Every concept traces to a source, which is why "
+        "nothing here writes a concept — or a `verified` block — directly. Asserting that "
+        "x relates to y mints a third concept linking to both; it does not rewrite x and y "
+        "to link back.",
+        "",
+        "**Re-ingesting the whole corpus is not on this surface**, deliberately: it is "
+        "`okragged build`, where the sources and the credential already are.",
         "",
         "## Registering the server",
         "",
@@ -161,8 +168,8 @@ def render_agents_md(config: Config) -> str:
         "clone and no script to point at. It needs the MCP SDK, an optional extra: "
         f'`pip install "{COMMAND}[mcp]"`.',
         "",
-        f"`{MCP_CONFIG_NAME}` beside this bundle already registers it. To consume this "
-        "bundle from another project, put this in that project's config instead:",
+        "The project this bundle was built in already registers it. To consume this "
+        "bundle from another project, put this in that project's MCP config instead:",
         "",
         "```json",
         json.dumps(foreign, indent=2),

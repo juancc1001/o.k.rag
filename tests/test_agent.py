@@ -18,7 +18,7 @@ from pathlib import Path
 import pytest
 
 from okragged import agent, config as config_module, okf, pipeline
-from okragged.synth import SynthResult, WeaveResult
+from okragged.synth import MissingCredential, SynthResult, WeaveResult
 from okragged.vectors import EmbedError
 from okragged.vectors.providers import gemini
 
@@ -387,11 +387,56 @@ def test_the_contract_describes_the_bundles_directory_structure(project):
     assert "pricing/  (1 concept(s))" in text
 
 
-def test_the_contract_says_only_ingest_needs_a_credential(project):
+def test_the_contract_says_only_add_source_needs_a_credential(project):
     text = agent.render_agents_md(cfg(project))
-    assert "**Only `ingest` needs a credential.**" in text
+    assert "**Only `add_source` needs a credential**" in text
     for tool in ("search", "read_concept", "lint"):
         assert f"`{tool}`" in text
+
+
+def test_the_contract_no_longer_offers_a_way_to_re_ingest_the_corpus(project):
+    """The tool is gone, so the contract must not describe one (§13 M5)."""
+    text = agent.render_agents_md(cfg(project))
+    assert "| `ingest` |" not in text
+    assert "okragged build" in text
+
+
+def test_the_generated_contract_names_no_path_in_the_producers_tree(project):
+    """The M5 invariant, over the file as well as over the wire: `AGENTS.md` is
+    served as `okragged://contract` to a consumer with none of these directories.
+
+    Two kinds of path survive it, and both are addresses rather than instructions
+    to open a file here: the bundle's own index, which is what `read_concept`
+    reaches and what the served artifact is *made of*, and the producer's root in
+    the registration snippet a foreign project pastes into its own config.
+    """
+    config = cfg(project)
+    text = agent.render_agents_md(config)
+    served_artifact = f"{config.bundle.root}/index.md"
+    registration_target = project.resolve().as_posix()
+
+    offenders = [
+        found
+        for found in producer_paths(text)
+        if found != served_artifact and found != registration_target
+    ]
+    assert not offenders, offenders
+
+
+def test_the_path_check_catches_the_operations_text_it_replaced():
+    """A guard that always passes guards nothing (see `tests/test_encoding.py`).
+
+    Both offenders are the real ones: M4's contract registered the server in a
+    file only the producer has, and told a consumer to read its sidecar.
+    """
+    was = (
+        "Three, over the MCP server registered in `.mcp.json`.\n"
+        "- **ingest** — re-reads `sources/`, and only pays for the files whose bytes "
+        "changed.\n"
+        "- **lint** — Ghost edges come from `.okragged/graph.json`, so run `okragged "
+        "index` if it reports having none to read."
+    )
+    assert producer_paths(was) == [".mcp.json", ".okragged/graph.json"]
 
 
 def test_the_contract_explains_that_verified_is_never_written(project):
@@ -517,6 +562,121 @@ def test_a_path_outside_the_project_is_refused_rather_than_ingested(ingestable):
         pipeline.ingest(config_module.load(ingestable), only=["../elsewhere.md"])
 
 
+# --- add_source ------------------------------------------------------------------
+
+ASSERTION = "Invoices and refunds share a customer id, which no document says."
+
+
+def added(project: Path, text: str = ASSERTION, title: str | None = None):
+    from okragged.agent.write import add_source
+
+    return add_source(config_module.load(project), text, title)
+
+
+def calls(monkeypatch) -> list[str]:
+    """Every synthesis this run pays for, so a skip can be told from a rewrite."""
+    seen: list[str] = []
+
+    def counted(**kwargs):
+        seen.append(kwargs["source_uri"])
+        return fake_synthesize(**kwargs)
+
+    monkeypatch.setattr(pipeline, "synthesize", counted)
+    return seen
+
+
+def test_add_source_writes_the_assertion_into_the_corpus_as_a_real_source(ingestable):
+    result = added(ingestable)
+    path = ingestable / result.uri
+
+    assert result.uri.startswith("sources/conversations/")
+    assert path.read_text(encoding="utf-8-sig") == ASSERTION + "\n"
+    assert result.concepts and not result.errors
+
+
+def test_a_concept_from_an_added_source_carries_the_provenance_a_concept_requires(
+    ingestable,
+):
+    """The reason it is not `add_concept`: provenance points at a file that exists."""
+    result = added(ingestable)
+    concept = okf.parse(
+        (ingestable / "bundle" / f"{result.concepts[0]}.md").read_text(encoding="utf-8-sig"),
+        result.concepts[0],
+    )
+    assert [source.resource for source in concept.sources]
+    assert result.uri in concept.sources[0].resource
+    assert concept.extra["x_okragged_source_hash"]
+
+
+def test_add_source_synthesizes_only_the_file_it_wrote(ingestable, monkeypatch):
+    pipeline.ingest(config_module.load(ingestable))
+    seen = calls(monkeypatch)
+    result = added(ingestable)
+    assert seen == [result.uri]
+
+
+def test_adding_a_source_leaves_the_rest_of_the_corpus_alone_and_undeprecated(ingestable):
+    """A partial run suppresses the vanished sweep (§6.1), which is the whole
+    reason the tool ingests one path rather than sweeping."""
+    pipeline.ingest(config_module.load(ingestable))
+    before = {
+        name: (ingestable / "bundle" / f"{name}.md").read_text(encoding="utf-8-sig")
+        for name in ("alpha", "beta")
+    }
+    added(ingestable)
+
+    for name, text in before.items():
+        after = okf.parse((ingestable / "bundle" / f"{name}.md").read_text(encoding="utf-8-sig"), name)
+        assert after.status == "draft"
+        assert (ingestable / "bundle" / f"{name}.md").read_text(encoding="utf-8-sig") == text
+
+
+def test_re_adding_the_same_assertion_costs_no_model_call(ingestable, monkeypatch):
+    first = added(ingestable)
+    seen = calls(monkeypatch)
+    again = added(ingestable)
+
+    assert again.uri == first.uri
+    assert again.skipped and seen == []
+    assert again.concepts == first.concepts
+
+
+def test_add_source_generates_its_path_and_a_title_cannot_escape_the_directory(ingestable):
+    result = added(ingestable, title="../../etc/passwd")
+    written = ingestable / result.uri
+
+    assert written.parent == ingestable / "sources" / "conversations"
+    assert written.is_file()
+    assert not list(ingestable.parent.glob("passwd*"))
+
+
+def test_add_source_refuses_text_that_is_already_a_concept(ingestable):
+    """The `add_concept` misuse the design refuses, caught where it is cheap."""
+    with pytest.raises(ValueError, match="prose, not a concept"):
+        added(ingestable, text="---\ntype: Policy\ntitle: Refunds\n---\n\nRefunds happen.\n")
+    assert not (ingestable / "sources" / "conversations").exists()
+
+
+def test_add_source_refuses_when_the_configured_globs_would_never_discover_it(ingestable):
+    """`include` is configurable, so the file could land where nothing reads it."""
+    (ingestable / "okragged.toml").write_text(
+        TOML.replace('include = ["**/*.md"]', 'include = ["*.md"]'),
+        encoding="utf-8",
+        newline="\n",
+    )
+    with pytest.raises(ValueError, match="include"):
+        added(ingestable)
+    assert not list((ingestable / "sources" / "conversations").glob("*.md"))
+
+
+def test_add_source_writes_nothing_when_there_is_no_credential(ingestable, monkeypatch):
+    for var in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"):
+        monkeypatch.delenv(var, raising=False)
+    with pytest.raises(MissingCredential):
+        added(ingestable)
+    assert not (ingestable / "sources" / "conversations").exists()
+
+
 # --- the server ------------------------------------------------------------------
 
 def server_for(project: Path):
@@ -534,7 +694,42 @@ def test_the_server_exposes_exactly_the_four_tools_the_contract_names(project):
         async with Client(server_for(project)) as client:
             return sorted(tool.name for tool in (await client.list_tools()).tools)
 
-    assert anyio.run(go) == ["ingest", "lint", "read_concept", "search"]
+    assert anyio.run(go) == ["add_source", "lint", "read_concept", "search"]
+
+
+def test_no_tool_on_the_surface_can_sweep_the_corpus(project):
+    """A recipient holding the bundle *and* the sidecar has a ledger and no
+    `sources/`, so a full `ingest` would read every source as vanished and mark
+    every concept `deprecated`. Removing the tool closes that structurally, which
+    is the difference between unreachable and merely guarded (§13 M5)."""
+    pytest.importorskip("mcp", reason='the MCP SDK is an optional extra: pip install -e ".[mcp]"')
+    import anyio
+    from mcp import Client
+
+    async def go():
+        async with Client(server_for(project)) as client:
+            return [tool.name for tool in (await client.list_tools()).tools]
+
+    assert "ingest" not in anyio.run(go)
+
+
+def test_the_tool_descriptions_carry_the_rules_a_client_may_never_read_elsewhere(project):
+    """`instructions` are client-dependent and resources are an optional client
+    capability; a tool is shown with its description wherever tools are shown."""
+    pytest.importorskip("mcp", reason='the MCP SDK is an optional extra: pip install -e ".[mcp]"')
+    import anyio
+    from mcp import Client
+
+    async def go():
+        async with Client(server_for(project)) as client:
+            return {tool.name: tool.description or "" for tool in (await client.list_tools()).tools}
+
+    described = anyio.run(go)
+    assert agent.INDEX_URI in described["search"]
+    assert "never bodies" in described["search"]
+    assert "whole file" in described["read_concept"]
+    assert "`verified`" in described["add_source"]
+    assert "credential" in described["add_source"]
 
 
 def test_a_session_with_no_credential_searches_reads_and_lints_over_the_protocol(project):
@@ -558,17 +753,18 @@ def test_a_session_with_no_credential_searches_reads_and_lints_over_the_protocol
     assert report.structured_content["concepts"] == 4
 
 
-def test_ingest_without_a_credential_is_a_tool_error_and_the_server_still_answers(
+def test_add_source_without_a_credential_is_a_tool_error_and_the_server_still_answers(
     project, monkeypatch
 ):
     pytest.importorskip("mcp", reason='the MCP SDK is an optional extra: pip install -e ".[mcp]"')
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    for var in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"):
+        monkeypatch.delenv(var, raising=False)
     import anyio
     from mcp import Client
 
     async def go():
         async with Client(server_for(project)) as client:
-            failed = await client.call_tool("ingest", {})
+            failed = await client.call_tool("add_source", {"text": "Two tables are related."})
             return failed, await client.call_tool("lint", {})
 
     failed, report = anyio.run(go)
