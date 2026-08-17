@@ -92,3 +92,29 @@ Considered while planning M6 and **deliberately left here.** §13 M6 settles *wh
 **If it ever lands it has to stay coarse**, because the format is self-describing on purpose. Per-directory `index.md` files carry every child's `title` and `description` verbatim, cross-links point anywhere in the tree, and `AGENTS.md` publishes the type vocabulary with counts. Serving the map while withholding the bodies still discloses the map — so the honest unit is a subtree, which M2 already made a valid entry point by giving every directory its own index. `--root finance/` is close to free; per-concept ACLs fight the grain and would half-work, which is worse than not offering them.
 
 **Not negotiable either way:** access control never enters the bundle (§13 M6). Whatever this becomes, it is a server concern.
+
+---
+
+## 10. Addressing — a bundle has no name, only a location
+
+**The observation.** MCP has no discovery: no registry, no broadcast, nothing a client can ask. A server exists to a client because a human wrote it into config, full stop. That is the protocol and not a defect. But it means every way of reaching a bundle is currently a *location*, and locations are not identities.
+
+- **M5** addresses a bundle by filesystem path (`--project /some/where`). Machine-specific; meaningless in a message to someone else.
+- **M6** would address it by URL. Host-specific; dead when the host moves or the tunnel restarts.
+- Two copies of one bundle are indistinguishable from two unrelated bundles. `[bundle].title` is a display string, `okf-base.yaml` names the linter's manifest, and the root `index.md` declares `okf_version` — **none of them identifies the bundle.**
+
+**Why it matters, concretely.** The intended flow is "someone runs okragged over their corpus and exposes it when they want to". For a second person to reach it, they need something to put in `claude mcp add`. Today the only candidates are a path on a machine they do not have or a URL that is valid until it is not. There is no sentence of the form *point me at that corpus* that survives the corpus moving.
+
+**What registration ergonomics do and do not fix.** `claude mcp add <name> -- okragged mcp --project <path>` is a better line for a human than editing JSON, and `AGENTS.md` should probably print it next to the portable entry. It is worth doing and it is not this item: it shortens the instruction, it does not make the target nameable, and it is one client's command, so it cannot be the only form offered.
+
+**Three questions this splits into, and they have different urgencies.**
+
+1. **Does a bundle get a stable id?** The expensive question, and the one to settle early, because it is a public identifier in the same class as the `okragged://` scheme (§13 M5) — reversing it breaks everyone who recorded one. If yes, it belongs in the bundle-root `index.md`, since that is the one file the format already gives frontmatter, and it must be *generated once and never rewritten*, unlike concept ids which churn on every rebuild by design.
+2. **Can one server serve more than one bundle?** `--project` is one root per process. Hosted, `https://host/<bundle>` is the obvious shape and is not designed. Cheap to answer, but it depends on (1) for what `<bundle>` is.
+3. **How does a consumer find out a bundle exists at all?** Out of scope for anything soon — that is a directory service, and it is a different product.
+
+**The trap to avoid.** Do not let (1) become an `access:`-style key or a registry the bundle depends on to be readable. The sidecar rule's logic applies: a bundle must stay something you can `tar` and `cat`. An id is a *fact about* the bundle written into it; a lookup a reader must perform to understand it is not.
+
+**Gate.** (1) before M6 ships anything anyone registers against. (2) with M6. (3) not scheduled, and possibly never here.
+
+**Note on the intermittent case.** "Exposed when I feel like it" is usually a tunnel, and a tunnel URL is public the instant it exists — which means M6's authentication is not optional even for a bundle its owner thinks of as temporarily shared. That is worth stating because intermittent hosting *feels* lower-stakes than permanent hosting and is not.
