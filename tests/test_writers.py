@@ -405,6 +405,106 @@ def test_a_commit_interrupted_while_placing_a_concept_is_finished_by_the_next_ru
     ]
 
 
+def test_a_commit_interrupted_between_placing_and_removing_is_finished_by_the_next_run(
+    project, monkeypatch
+):
+    """The window the record exists to fence, driven directly.
+
+    A re-ingest under a new naming places the new files and removes what the rename
+    left behind, and *between* those two the source owns both namings. Ordering
+    inside the fence is place-then-remove on purpose: within the window both on
+    disk is a superset of the truth, and neither of them is not.
+
+    Driven through `staging.commit` rather than through a rebuild because ids for
+    an unsegmented source come from its filename — the model-written titles that
+    make a tree rename wholesale are the segmented path's.
+    """
+    monkeypatch.setattr(pipeline, "synthesize", fake_synthesize)
+    cfg = config_module.load(project)
+    pipeline.ingest(cfg, dry_run=False)
+    assert (cfg.bundle_root / "revenue-policy.md").exists()
+
+    area = staging.prepare(cfg)
+    okf.write_concept(
+        area.bundle,
+        okf.Concept(
+            concept_id="renamed-policy",
+            type="Policy",
+            title="Renamed Policy",
+            description="the same source under the naming this run chose",
+            body="Body.",
+        ),
+    )
+    ledger = Ledger.load(cfg.sidecar_root / LEDGER_NAME)
+    ledger.note_concept("renamed-policy", "sources/revenue-policy.md", "Body.")
+    ledger.forget_concept("revenue-policy")
+    # the source now owns the new id, exactly as `_run` records before it commits
+    ledger.sources["sources/revenue-policy.md"].concepts = ["renamed-policy"]
+
+    real_delete = staging.delete_concept
+    fail = {"on": True}
+
+    def die_removing_the_stale_concept(*args, **kwargs):
+        if fail["on"]:
+            raise OSError("interrupted after placing, before removing")
+        return real_delete(*args, **kwargs)
+
+    monkeypatch.setattr(staging, "delete_concept", die_removing_the_stale_concept)
+    with pytest.raises(OSError):
+        staging.commit(
+            area,
+            ledger,
+            unit="`sources/revenue-policy.md`",
+            place=["renamed-policy"],
+            remove=["revenue-policy"],
+        )
+
+    # both namings on disk: a superset of the truth, and the record says which wins
+    assert (cfg.bundle_root / "renamed-policy.md").exists()
+    assert (cfg.bundle_root / "revenue-policy.md").exists()
+    assert (cfg.sidecar_root / staging.PENDING_NAME).exists()
+    assert "revenue-policy" in Ledger.load(cfg.sidecar_root / LEDGER_NAME).concepts, (
+        "the ledger is published by the commit, so it has not moved yet"
+    )
+
+    fail["on"] = False
+    monkeypatch.setattr(pipeline, "synthesize", no_model)  # the source is unchanged
+    summary = pipeline.ingest(cfg, dry_run=False)
+
+    assert any("completed the commit" in note for note in summary.recovered), summary.recovered
+    assert (cfg.bundle_root / "renamed-policy.md").exists()
+    assert not (cfg.bundle_root / "revenue-policy.md").exists(), "the stale naming goes"
+    published = Ledger.load(cfg.sidecar_root / LEDGER_NAME)
+    assert "renamed-policy" in published.concepts
+    assert "revenue-policy" not in published.concepts
+    assert not (cfg.sidecar_root / staging.PENDING_NAME).exists()
+
+
+def test_a_vanished_source_deprecates_and_is_forgotten_in_one_commit(project, monkeypatch):
+    """One commit per vanished source, for the reason the boundary is the source
+    everywhere else: the status change and the ledger forgetting it are one fact."""
+    three_sources(project)
+    monkeypatch.setattr(pipeline, "synthesize", fake_synthesize)
+    cfg = config_module.load(project)
+    pipeline.ingest(cfg, dry_run=False)
+
+    (project / "sources" / "zz-one.md").unlink()
+    monkeypatch.setattr(pipeline, "synthesize", no_model)  # the survivors are unchanged
+    summary = pipeline.ingest(cfg, dry_run=False)
+
+    assert summary.deprecated == ["zz-one"]
+    concept = okf.parse(
+        (cfg.bundle_root / "zz-one.md").read_text(encoding="utf-8-sig"), "zz-one"
+    )
+    assert concept.status == "deprecated", "kept for links and history (§6.1), not deleted"
+
+    ledger = Ledger.load(cfg.sidecar_root / LEDGER_NAME)
+    assert "sources/zz-one.md" not in ledger.sources
+    assert "zz-one" not in ledger.concepts
+    assert not (cfg.sidecar_root / staging.PENDING_NAME).exists()
+    assert not (cfg.sidecar_root / staging.STAGING).exists()
+
+
 def test_a_record_that_cannot_be_read_still_publishes_what_was_staged(project, monkeypatch):
     """Last resort: the record is the plan, and losing it must not lose the work.
 

@@ -6,9 +6,11 @@ that already exists — `agent/query.py`, `agent/lint.py`, and the `graph.json`
 that answer the same questions (§10). Nothing here writes anywhere.
 
 `POST /api/ingest` and its SSE progress stream are the two endpoints §11 lists
-that are not here: they need a job model and progress events the pipeline does
-not emit, and the graph view needs neither. `ingest` stays on the CLI and the
-MCP server until then.
+that are not here. They needed two things the pipeline did not have: progress
+events, which now exist — `ingest` takes a `progress` callable and reports each
+stage as it reaches it — and a job model, which does not. The graph view needs
+neither, so `ingest` stays on the CLI and the MCP server until something asks
+for it over HTTP.
 
 FastAPI is an optional extra for the same reason the MCP SDK is — producing and
 validating a bundle needs neither.
@@ -17,6 +19,7 @@ validating a bundle needs neither.
 from __future__ import annotations
 
 from dataclasses import asdict
+from pathlib import Path
 from typing import Any
 
 from .. import okf
@@ -26,9 +29,20 @@ from ..agent.query import search as run_search
 from ..config import Config
 from ..vectors import GRAPH_NAME
 
-WEB_DIST = "web/dist"
-"""The built frontend, mounted at `/` when it exists. In dev it is Vite that
-serves the app and proxies `/api` here, so this staying absent is normal."""
+STATIC_DIR = Path(__file__).parent / "static"
+"""The built frontend, mounted at `/` when it exists.
+
+**Resolved from the package, never from the project root.** It used to be
+`config.project_root / "web/dist"` — inside the *user's corpus directory*, beside
+their `sources/`, which is only correct when the project root happens to be this
+checkout. An installed user who built the frontend would have had to copy it next
+to their own corpus to be served it. That is the defect class §10 and M5 exist to
+remove: a path that means something only inside the producer's tree. Vite's
+`outDir` points here, so one build serves the checkout and the wheel alike.
+
+In dev it is Vite that serves the app and proxies `/api` here, so this staying
+absent is normal.
+"""
 
 
 def create_app(config: Config):
@@ -91,9 +105,8 @@ def create_app(config: Config):
         """Conformance, ghost edges, stale concepts, orphans."""
         return asdict(run_lint(config))
 
-    dist = config.project_root / WEB_DIST
-    if dist.is_dir():
-        app.mount("/", StaticFiles(directory=dist, html=True), name="web")
+    if STATIC_DIR.is_dir():
+        app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="web")
 
     return app
 

@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import tempfile
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -77,6 +79,15 @@ class Ledger:
             return cls()
 
     def save(self, path: Path) -> Path:
+        """Write the ledger atomically and durably.
+
+        Temp file plus rename rather than a plain write, because this is the one
+        file whose half-written state is worse than its absence: a truncated
+        ledger loads as an empty one (`load` degrades on `ValueError`), and an
+        empty ledger re-ingests the whole corpus. The fsync is for the same reason
+        `staging` fsyncs its record — a commit publishes this file by renaming it,
+        so its content has to have reached the disk before the rename does.
+        """
         # sorted, so a run that changed nothing rewrites a byte-identical file
         payload = {
             "version": VERSION,
@@ -85,11 +96,16 @@ class Ledger:
             "concepts": {cid: asdict(r) for cid, r in sorted(self.concepts.items())},
         }
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(
-            json.dumps(payload, indent=2, ensure_ascii=False) + "\n",
-            encoding="utf-8",
-            newline="\n",
-        )
+        fd, tmp = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as fh:
+                fh.write(json.dumps(payload, indent=2, ensure_ascii=False) + "\n")
+                fh.flush()
+                os.fsync(fh.fileno())
+            os.replace(tmp, path)
+        except BaseException:
+            Path(tmp).unlink(missing_ok=True)
+            raise
         return path
 
     def unchanged(self, uri: str, content_sha256: str, bundle_root: Path) -> SourceRecord | None:

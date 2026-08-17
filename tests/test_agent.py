@@ -365,9 +365,20 @@ def test_a_broken_cross_link_is_a_warning_in_the_report_not_an_error(project):
 
 def test_the_contract_tells_an_agent_to_read_the_index_before_whole_concepts(project):
     text = agent.render_agents_md(cfg(project))
-    assert "Read `bundle/index.md` first" in text
+    assert "Read the root index first" in text
     assert "read whole concept files" in text.lower()
     assert "Do not search for chunks" in text
+
+
+def test_the_contract_names_the_index_as_a_resource_before_it_names_a_path(project):
+    """This text is served as `okragged://contract` to a consumer holding no
+    directory of ours, so step one cannot be an instruction to open a file. The
+    path stays for a reader who does hold it - second, and marked as conditional."""
+    text = agent.render_agents_md(cfg(project))
+    step_one = next(line for line in text.splitlines() if line.startswith("1. "))
+
+    assert step_one.index(agent.INDEX_URI) < step_one.index("bundle/index.md")
+    assert "if you hold the directory" in step_one
 
 
 def test_the_contract_lists_the_type_vocabulary_with_counts(project):
@@ -456,7 +467,7 @@ def test_registering_the_server_leaves_the_other_mcp_servers_alone(project):
         encoding="utf-8",
         newline="\n",
     )
-    agent.write_contract(cfg(project))
+    agent.register(cfg(project))
     registered = json.loads((project / ".mcp.json").read_text(encoding="utf-8-sig"))
 
     assert registered["mcpServers"]["other"] == {"command": "node"}
@@ -466,12 +477,43 @@ def test_registering_the_server_leaves_the_other_mcp_servers_alone(project):
 
 def test_the_registration_entry_names_a_console_script_not_an_interpreter(project):
     """A venv path and a script path are true from one cwd and nowhere else."""
-    agent.write_contract(cfg(project))
+    agent.register(cfg(project))
     entry = json.loads((project / ".mcp.json").read_text(encoding="utf-8-sig"))
     entry = entry["mcpServers"]["okragged"]
 
     assert entry == {"command": "okragged", "args": ["mcp"]}
     assert not producer_paths(json.dumps(entry))
+
+
+def test_writing_the_contract_does_not_register_the_server(project):
+    """The split: AGENTS.md is derived from the bundle and is rewritten whenever it
+    changes; `.mcp.json` is the machine's MCP config, is the same bytes at every
+    bundle size, and is written only when somebody asks."""
+    written = agent.write_contract(cfg(project))
+
+    assert [p.name for p in written] == ["AGENTS.md"]
+    assert not (project / ".mcp.json").exists()
+
+
+def test_a_project_reports_whether_its_server_is_registered(project):
+    """What lets a build *mention* the registration without performing it."""
+    config = cfg(project)
+    assert not agent.is_registered(config)
+
+    agent.register(config)
+    assert agent.is_registered(config)
+
+
+def test_registering_reports_nothing_registered_when_another_server_holds_the_file(
+    project,
+):
+    """A `.mcp.json` that exists is not a `.mcp.json` that registers us."""
+    (project / ".mcp.json").write_text(
+        json.dumps({"mcpServers": {"other": {"command": "node"}}}),
+        encoding="utf-8",
+        newline="\n",
+    )
+    assert not agent.is_registered(cfg(project))
 
 
 def test_the_contract_hands_a_foreign_project_an_entry_that_names_the_root_absolutely(
@@ -492,7 +534,7 @@ def test_the_contract_points_at_the_resources_rather_than_at_a_file_to_open(proj
 
 def test_the_contract_lands_beside_the_bundle_never_inside_it(project):
     written = agent.write_contract(cfg(project))
-    assert [p.name for p in written] == ["AGENTS.md", ".mcp.json"]
+    assert [p.name for p in written] == ["AGENTS.md"]
     assert (project / "agent" / "AGENTS.md").exists()
     assert not list((project / "bundle").rglob("AGENTS.md"))
 
@@ -504,6 +546,64 @@ def test_nothing_the_agent_layer_does_writes_into_the_bundle(project):
     agent.lint(cfg(project))
     agent.write_contract(cfg(project))
     assert bundle_bytes(project) == before, "nothing derived may enter bundle/"
+
+
+# --- okragged agent, and what --register adds ------------------------------------
+
+
+def run_cli(project: Path, monkeypatch, args: list[str]):
+    from typer.testing import CliRunner
+
+    from okragged import cli
+
+    monkeypatch.chdir(project)
+    result = CliRunner().invoke(cli.app, args)
+    assert result.exit_code == 0, result.output
+    return result
+
+
+def test_the_agent_command_refreshes_the_contract_without_registering(project, monkeypatch):
+    result = run_cli(project, monkeypatch, ["agent"])
+
+    assert (project / "agent" / "AGENTS.md").exists()
+    assert not (project / ".mcp.json").exists()
+    assert "--register" in result.output, "an unregistered project should be told how"
+
+
+def test_the_agent_command_registers_only_when_asked(project, monkeypatch):
+    run_cli(project, monkeypatch, ["agent", "--register"])
+
+    entry = json.loads((project / ".mcp.json").read_text(encoding="utf-8-sig"))
+    assert entry["mcpServers"]["okragged"] == {"command": "okragged", "args": ["mcp"]}
+
+
+def test_the_agent_command_stops_offering_to_register_once_it_has(project, monkeypatch):
+    run_cli(project, monkeypatch, ["agent", "--register"])
+    result = run_cli(project, monkeypatch, ["agent"])
+    assert "--register" not in result.output
+
+
+def test_registering_never_truncates_a_config_holding_other_servers(project, monkeypatch):
+    """`.mcp.json` is read, merged and written back, and it is the one file here
+    that carries other people's data - so the write is temp-file-plus-rename."""
+    original = json.dumps({"mcpServers": {"other": {"command": "node"}}})
+    (project / ".mcp.json").write_text(original, encoding="utf-8", newline="\n")
+
+    monkeypatch.setattr(
+        agent.contract.os, "replace", _explode("the rename failed mid-publish")
+    )
+    with pytest.raises(RuntimeError):
+        agent.register(cfg(project))
+
+    assert (project / ".mcp.json").read_text(encoding="utf-8-sig") == original
+    assert not list(project.glob("*.tmp")), "the temp file must not survive"
+
+
+def _explode(message: str):
+    def boom(*_args, **_kwargs):
+        raise RuntimeError(message)
+
+    return boom
 
 
 # --- ingest ----------------------------------------------------------------------
@@ -541,7 +641,14 @@ def test_an_ingest_regenerates_the_agent_contract(ingestable):
     pipeline.ingest(config_module.load(ingestable))
     text = (ingestable / "agent" / "AGENTS.md").read_text(encoding="utf-8-sig")
     assert "2 concept(s)" in text
-    assert (ingestable / ".mcp.json").exists()
+
+
+def test_an_ingest_never_registers_the_server(ingestable):
+    """`.mcp.json` is not derived from the bundle - the entry is the same bytes at
+    every bundle size - and it belongs to whatever agent works in this directory.
+    A build that merged itself into it would be editing somebody else's config."""
+    pipeline.ingest(config_module.load(ingestable))
+    assert not (ingestable / ".mcp.json").exists()
 
 
 def test_ingesting_one_path_leaves_the_sources_it_did_not_look_at_alone(ingestable):
@@ -675,6 +782,45 @@ def test_add_source_writes_nothing_when_there_is_no_credential(ingestable, monke
     with pytest.raises(MissingCredential):
         added(ingestable)
     assert not (ingestable / "sources" / "conversations").exists()
+
+
+def test_a_source_another_writer_blocked_is_reported_rather_than_lost(
+    ingestable, monkeypatch
+):
+    """The credential check happens before the write, so it can raise. Everything
+    after it has a source file on disk behind it - and a held lock is now a routine
+    outcome - so raising would tell the caller their prose was lost while it sat in
+    the corpus waiting for the next build.
+    """
+    from okragged import lock
+
+    config = config_module.load(ingestable)
+    with lock.hold(config.sidecar_root, "some other build"):
+        result = added(ingestable)
+
+    assert result.ingested is False
+    assert result.concepts == []
+    assert any("LockHeld" in error for error in result.errors), result.errors
+
+    written = ingestable / result.uri
+    assert written.is_file(), "the assertion is in the corpus, not discarded"
+    assert ASSERTION in written.read_text(encoding="utf-8-sig")
+
+
+def test_a_source_the_next_build_picks_up_costs_nothing_extra(ingestable, monkeypatch):
+    """The other half of reporting rather than raising: the file it left behind is
+    an ordinary source, so the next run ingests it like any other."""
+    from okragged import lock
+
+    config = config_module.load(ingestable)
+    with lock.hold(config.sidecar_root, "some other build"):
+        blocked = added(ingestable)
+
+    monkeypatch.setattr(pipeline, "synthesize", fake_synthesize)
+    summary = pipeline.ingest(config)
+
+    assert blocked.uri in [outcome.uri for outcome in summary.outcomes]
+    assert not summary.failed, [o.error for o in summary.failed]
 
 
 # --- the server ------------------------------------------------------------------

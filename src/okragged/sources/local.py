@@ -38,7 +38,14 @@ class LocalFileSource:
     def matches(self, path: Path) -> bool:
         """Whether `discover` would yield this path. The include globs are
         configurable, so a file written into the tree is not necessarily one
-        this source can see."""
+        this source can see.
+
+        Globbing the tree to test one path is deliberate, not an oversight:
+        `Path.match` does not treat `**` as recursive, so it answers yes to
+        patterns that would never have yielded this file, and `full_match` needs
+        3.13. Called once per `add_source`, where a corpus walk is noise beside
+        the model call that follows.
+        """
         if not path.is_file() or self._excluded(path):
             return False
         return any(path in self.root.glob(pattern) for pattern in self.include)

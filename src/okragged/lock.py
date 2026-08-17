@@ -73,7 +73,15 @@ class Held:
 
 @contextmanager
 def hold(sidecar_root: Path, operation: str) -> Iterator[Held]:
-    """Hold the project for one writer, or raise `LockHeld` naming the other one."""
+    """Hold the project for one writer, or raise `LockHeld` naming the other one.
+
+    **Not reentrant, deliberately.** `_alive` reads our own pid as live, because
+    two `add_source` calls in one MCP server process are exactly what this exists
+    to serialize. So nesting two `hold`s in one process self-refuses with a
+    message naming its own pid — never wrap a caller of `pipeline.ingest` or
+    `vectors.index` in another one. The deferred `POST /api/ingest` job model
+    (§11) is the obvious future caller that would be tempted.
+    """
     path = sidecar_root / LOCK_NAME
     holder = Holder(
         operation=operation,

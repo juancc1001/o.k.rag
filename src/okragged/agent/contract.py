@@ -1,18 +1,34 @@
 """Layer 3: the generated agent contract (DESIGN §2, §10).
 
-`agent/AGENTS.md` is the schema doc — what this bundle holds and how to read it.
-`.mcp.json` registers `okragged mcp` over it, which is what makes any MCP-capable
-agent a consumer of the bundle with no okragged-specific code.
+Two artifacts with **different natures**, which is why they are written by two
+functions and not one:
 
-Regenerated on every ingest and by `okragged agent`, and deliberately carries no
-timestamp: the same bundle must regenerate to the same bytes, or a committed
-contract churns on every build.
+`agent/AGENTS.md` is a *function of the bundle* — the concept count, the
+structure tree, the type vocabulary. It changes whenever the bundle changes, so
+`write_contract` runs after every commit, and §10's rule that the contract must
+never describe a bundle that no longer exists is a rule about this file. It
+carries no timestamp, so an unchanged bundle regenerates to the same bytes.
+
+`.mcp.json` is a *function of nothing*. Since M5 the entry is `{"command":
+"okragged", "args": ["mcp"]}` — the same bytes whether the bundle holds no
+concepts or a thousand. Under M4 it named the generating interpreter and the
+generated `agent/mcp_server.py`, so it really was derived from the producer's
+tree; the console script deleted that, and rewriting it on every build outlived
+its reason. So `register` is a **deliberate act** — `okragged agent --register`
+— and never a side effect of building.
+
+The distinction is not tidiness. `.mcp.json` is the one thing here okragged does
+not own: it is the MCP config for whatever agent works in that directory, shared
+with every other server registered there. Merging into somebody else's config
+unasked, on every build, is a write okragged has no reason to make.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import posixpath
+import tempfile
 from collections import Counter
 from pathlib import Path
 
@@ -34,11 +50,36 @@ INDEX_URI = "okragged://index"
 
 
 def write_contract(config: Config) -> list[Path]:
-    agent_root = config.project_root / "agent"
-    return [
-        _write(agent_root / AGENTS_NAME, render_agents_md(config)),
-        _write(config.project_root / MCP_CONFIG_NAME, render_mcp_json(config)),
-    ]
+    """Regenerate `agent/AGENTS.md`. Does **not** register the server.
+
+    A list of one, because the caller reports what was written and because the
+    contract may yet grow a second derived file — registration will not be it.
+    """
+    return [_write(config.project_root / "agent" / AGENTS_NAME, render_agents_md(config))]
+
+
+def register(config: Config) -> Path:
+    """Write the `.mcp.json` entry, merged into whatever else is registered.
+
+    The one function here that writes a file okragged does not own, which is why
+    nothing calls it on your behalf: `okragged agent --register` asks for it, and
+    a build never does.
+    """
+    return _write(config.project_root / MCP_CONFIG_NAME, render_mcp_json(config))
+
+
+def is_registered(config: Config) -> bool:
+    """Whether `.mcp.json` already registers this project's server.
+
+    Only so a build can *mention* that it does not; a build that acted on this
+    would be the side effect this module exists to remove.
+    """
+    path = config.project_root / MCP_CONFIG_NAME
+    try:
+        loaded = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError):
+        return False
+    return isinstance(loaded, dict) and SERVER_KEY in (loaded.get("mcpServers") or {})
 
 
 def render_mcp_json(config: Config) -> str:
@@ -87,9 +128,13 @@ def render_agents_md(config: Config) -> str:
         "",
         "## How to query it",
         "",
-        f"1. **Read `{bundle}/index.md` first.** It lists every top-level concept with its "
-        "own title and description. An entry that ends `([n more](./<subdir>/index.md))` "
-        "owns a subdirectory — follow it down.",
+        # named as a resource before it is named as a path: this text is served as
+        # `okragged://contract` to a consumer who has no `bundle/` to open
+        f"1. **Read the root index first** — `{INDEX_URI}` over the protocol, or "
+        f"`{bundle}/index.md` if you hold the directory. It lists every top-level concept "
+        "with its own title and description. An entry that ends "
+        "`([n more](./<subdir>/index.md))` owns a subdirectory — follow it down with "
+        "`read_concept`.",
         "2. **Then read whole concept files.** A concept is the unit of knowledge here, and "
         "its frontmatter carries the provenance its body depends on. Do not search for "
         "chunks and do not read fragments: read the file.",
@@ -146,8 +191,8 @@ def render_agents_md(config: Config) -> str:
         "**Only `add_source` needs a credential**, because it is the only one that calls a "
         "model. Querying and linting an existing bundle are entirely offline.",
         "",
-        f"- **query** — `search`, then `read_concept` on what it points at (and on "
-        f"`{bundle}/index.md` itself).",
+        "- **query** — `search`, then `read_concept` on what it points at. "
+        "`read_concept(\"index\")` returns the root index itself.",
         "- **lint** — okflint conformance plus ghost edges (similar pairs nobody linked), "
         "stale concepts, and orphans (concepts nothing links to). Ghost edges are computed "
         "by `okragged index`, so run that if it reports having none to read.",
@@ -205,6 +250,20 @@ def _types(concepts: list[Concept]) -> list[str]:
 
 
 def _write(path: Path, text: str) -> Path:
+    """Temp file plus rename, as `okf/writer.py` does for a concept.
+
+    Load-bearing for `.mcp.json` and not merely tidy: it is read, merged and
+    written back, and it holds other people's server registrations. A truncated
+    write there costs the user every other server in the file, not one
+    regenerable artifact of ours.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8", newline="\n")
+    fd, tmp = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(text)
+        os.replace(tmp, path)
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
     return path

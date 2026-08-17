@@ -17,7 +17,10 @@ vanished-source sweep (§6.1): safe by construction rather than by a check.
 
 The project lock and the staged emit come with `ingest` (§6.6), so two of these at
 once serialize on the bundle rather than on the source file — which needs no lock,
-because the path is generated per assertion and identical bytes reuse it.
+because the path is generated per assertion and identical bytes reuse it. The
+loser of that race does not raise: its source is already written, so it reports
+`ingested=False` and the next run ingests it. A tool that raised there would tell
+the caller their assertion was lost while it sat in `sources/`.
 
 Not imported by `agent/__init__.py`, for the same reason `server` is not: it
 imports `pipeline`, which imports that package to regenerate the contract.
@@ -52,6 +55,11 @@ class AddedSource:
     skipped: bool = False
     """The bytes were already on disk, so the content-hash skip (§6.1) answered
     and no model was called."""
+    ingested: bool = True
+    """False when the source was written but the pipeline never ran over it — a
+    lock held by another writer, most often. The prose is recorded either way and
+    `okragged build` will pick it up, which is why this reports rather than
+    raises: the alternative loses the assertion the caller just made."""
 
 
 def add_source(config: Config, text: str, title: str | None = None) -> AddedSource:
@@ -86,7 +94,20 @@ def add_source(config: Config, text: str, title: str | None = None) -> AddedSour
         )
 
     uri = path.relative_to(config.project_root).as_posix()
-    summary = ingest(config, only=[uri])
+    # Everything after this point has a written source file behind it, so a
+    # failure here is reported rather than raised. Raising would hand the caller
+    # an exception while their prose sat in the corpus unmentioned — and it *is*
+    # in the corpus: the next `okragged build` ingests it. The credential check
+    # above is the one failure that still raises, because it happens first and
+    # leaves nothing behind.
+    try:
+        summary = ingest(config, only=[uri])
+    except Exception as exc:
+        return AddedSource(
+            uri=uri,
+            errors=[f"{type(exc).__name__}: {exc}"],
+            ingested=False,
+        )
     return AddedSource(
         uri=uri,
         concepts=[cid for outcome in summary.outcomes for cid in _produced(outcome)],

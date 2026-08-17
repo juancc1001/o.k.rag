@@ -6,10 +6,24 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 
 
+def _default_actor() -> str:
+    """`generated.by` for every concept this build writes.
+
+    Derived from the installed version rather than written out, because this
+    string is stamped into the bundle: a hand-kept copy that missed a release
+    would not merely misreport the tool, it would misattribute provenance in
+    every concept produced after it. `okragged.__version__` is the same value
+    and `pyproject.toml` is the only place it is declared.
+    """
+    from . import _installed_version
+
+    return f"okragged/{_installed_version()}"
+
+
 class BundleConfig(BaseModel):
     root: str = "bundle"
     okf_version: str = "0.2"
-    actor: str = "okragged/0.1.0"
+    actor: str = Field(default_factory=_default_actor)
     title: str | None = None
     """Heading of the root index.md. None -> the project directory name, which
     names the tool rather than the knowledge unless the two happen to agree."""

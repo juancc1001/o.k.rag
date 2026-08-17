@@ -151,13 +151,19 @@ def ingest(
 ) -> IngestSummary:
     """Run the pipeline over `config`'s sources.
 
-    `contract` regenerates layer 3 (`agent/AGENTS.md`, `.mcp.json`) after the emit
-    and it defaults to on because that is what `okragged build` must do: §10 relies
-    on the contract never describing a bundle that no longer exists, and a CLI run
-    is the moment the bundle changed. The public `okragged.build()` defaults it
-    *off* for the opposite reason — a library call that drops `.mcp.json` into the
-    caller's repository is a surprise, and `okragged.write_contract()` is there for
-    a caller who wants it.
+    `contract` regenerates `agent/AGENTS.md` after the emit, and defaults to on
+    because §10 relies on the contract never describing a bundle that no longer
+    exists — and a run that committed is the moment the bundle changed. It is the
+    same default for every caller: this writes one file, derived from the bundle
+    the caller just asked for, beside that bundle.
+
+    **It does not register the MCP server.** `.mcp.json` is not derived from the
+    bundle — the entry is the same bytes at nought concepts and at a thousand —
+    and it belongs to whatever agent works in that directory rather than to
+    okragged. Registering is `okragged agent --register`, or `agent.register()`;
+    see `agent/contract.py`, which is where the two artifacts part company. This
+    parameter is also why `contract=False` still exists: a caller who wants the
+    bundle and nothing beside it can still say so.
 
     `progress` is called as the run moves through its stages; see `Progress`.
 
@@ -192,9 +198,14 @@ def ingest(
             # contract written beside concepts that did not land would describe
             # ones that do not exist (§10). A run that dies leaves the previous
             # contract, which under-describes the bundle until the next run — the
-            # same self-healing direction as the indexes
+            # same self-healing direction as the indexes. AGENTS.md only: nothing
+            # here touches the machine's MCP config
             write_contract(config)
-        return _validated(config, summary, progress)
+    # outside the lock: validation reads the published bundle and spawns okflint,
+    # and holding one writer off a project while a subprocess runs buys nothing.
+    # A build that lands concurrently only means the report describes a newer tree
+    # than this run produced, which is the tree a reader will actually find
+    return _validated(config, summary, progress)
 
 
 def _validated(

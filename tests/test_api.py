@@ -264,9 +264,31 @@ def test_nothing_the_api_serves_writes_into_the_bundle(project):
     assert bundle_bytes(project) == before
 
 
-def test_the_view_is_served_only_once_it_has_been_built(project):
+def test_the_view_is_served_only_once_it_has_been_built(project, tmp_path, monkeypatch):
+    from okragged.api import app as api_app
+
+    built = tmp_path / "static"
+    monkeypatch.setattr(api_app, "STATIC_DIR", built)
     assert client(project).get("/").status_code == 404
-    dist = project / "web" / "dist"
-    dist.mkdir(parents=True)
-    (dist / "index.html").write_text("<h1>graph</h1>", encoding="utf-8", newline="\n")
+
+    built.mkdir()
+    (built / "index.html").write_text("<h1>graph</h1>", encoding="utf-8", newline="\n")
     assert "graph" in client(project).get("/").text
+
+
+def test_the_built_view_is_found_in_the_package_and_never_in_the_users_corpus(project):
+    """The M6 defect: `project_root / "web/dist"` put the frontend inside whatever
+    corpus directory `okragged serve` was pointed at, so only a run from this
+    checkout could ever find it. It is package-relative now, which is the one
+    location that is true for an installed user."""
+    from okragged.api import app as api_app
+    from okragged.api.app import STATIC_DIR
+
+    assert STATIC_DIR == Path(api_app.__file__).parent / "static"
+    assert not STATIC_DIR.is_relative_to(project), "never inside the user's corpus"
+
+    # and a corpus that happens to contain one is still not consulted
+    decoy = project / "web" / "dist"
+    decoy.mkdir(parents=True)
+    (decoy / "index.html").write_text("<h1>decoy</h1>", encoding="utf-8", newline="\n")
+    assert "decoy" not in client(project).get("/").text

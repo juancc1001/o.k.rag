@@ -111,6 +111,10 @@ def build_server(config: Config):
         no frontmatter. Nothing on this surface writes a `verified` block: that
         records a confirmation event that actually happened, and a human promotes
         a concept by editing the file. Needs a credential.
+
+        `ingested: false` means the prose was recorded but nothing was synthesized
+        from it yet - another writer held the project, most likely. The source is
+        in the corpus and the next build picks it up; do not submit it again.
         """
         return asdict(run_add_source(config, text, title))
 

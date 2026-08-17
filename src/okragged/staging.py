@@ -226,7 +226,12 @@ def _apply(area: Area, record: dict) -> None:
 
 def _write_pending(path: Path, record: dict) -> None:
     """Atomically, and flushed: it is the only thing standing between a crash
-    mid-commit and a source whose tree is a mix of two namings."""
+    mid-commit and a source whose tree is a mix of two namings.
+
+    The payload it fences is durable too — `okf/writer._atomic_write` and
+    `Ledger.save` both fsync — because a record that outlived the content it
+    names would replay a commit over a truncated concept.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
     try:

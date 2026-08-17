@@ -189,11 +189,21 @@ def _label(concept_id: str) -> str:
 
 
 def _atomic_write(path: Path, text: str) -> None:
+    """Temp file, flush to disk, rename.
+
+    The fsync is what makes this usable as a commit *payload*. A staged concept is
+    published by `staging._apply` on the strength of a pending record that is
+    itself fsynced, so without this the record could outlive the content it names
+    and the replay would place a truncated concept. Model calls dominate a run by
+    orders of magnitude, so the cost does not show.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as fh:
             fh.write(text)
+            fh.flush()
+            os.fsync(fh.fileno())
         os.replace(tmp, path)
     except BaseException:
         Path(tmp).unlink(missing_ok=True)

@@ -2,9 +2,9 @@
 
 The surface itself is thin — every function here delegates to the one the CLI
 calls — so what is worth testing is the contract around it: that importing the
-package is silent and cheap, that a library `build` does not write layer 3 into the
-caller's tree while `okragged build` still does, and that a run reports progress
-while it is running rather than only when it is over.
+package is silent and cheap, that a library `build` behaves as `okragged build`
+does while neither of them registers an MCP server, and that a run reports
+progress while it is running rather than only when it is over.
 
 The model is stubbed throughout, as everywhere else in this suite.
 """
@@ -170,32 +170,53 @@ def test_a_library_call_reads_no_dotenv(project, monkeypatch):
         okragged.build(cfg)
 
 
-# --- the contract asymmetry ------------------------------------------------------
+# --- the contract, and what a build will not write -------------------------------
 
 
-def test_a_library_build_writes_no_agent_directory_and_no_mcp_json(project):
+def test_a_library_build_regenerates_the_contract_like_the_cli_does(project):
+    """No library-versus-CLI asymmetry: what justified one was `.mcp.json`, and a
+    build no longer writes it either way."""
     summary = okragged.build(project)
 
     assert summary.report is not None and summary.report.ok, (
         [str(f) for f in summary.report.errors] if summary.report else None
     )
     assert (project / "bundle" / "revenue-policy.md").exists()
-    assert not (project / "agent").exists()
+    assert (project / "agent" / "AGENTS.md").exists()
+
+
+def test_no_build_registers_an_mcp_server(project, monkeypatch):
+    """Neither entry point may edit the machine's MCP config. It is not derived
+    from the bundle, and it is shared with every other server registered in it."""
+    okragged.build(project)
+    assert not (project / ".mcp.json").exists()
+
+    monkeypatch.chdir(project)
+    assert runner.invoke(cli.app, ["build"]).exit_code == 0
     assert not (project / ".mcp.json").exists()
 
 
-def test_write_contract_is_how_a_caller_asks_for_layer_three(project):
-    okragged.build(project)
+def test_write_contract_is_how_a_caller_asks_for_the_contract_alone(project):
+    okragged.build(project, contract=False)
+    assert not (project / "agent").exists()
+
     written = okragged.write_contract(project)
-
-    assert (project / "agent" / "AGENTS.md").exists()
-    assert (project / ".mcp.json").exists()
-    assert {p.name for p in written} == {"AGENTS.md", ".mcp.json"}
+    assert [p.name for p in written] == ["AGENTS.md"]
+    assert not (project / ".mcp.json").exists()
 
 
-def test_a_library_build_writes_the_contract_when_asked(project):
-    okragged.build(project, contract=True)
-    assert (project / "agent" / "AGENTS.md").exists()
+def test_register_is_the_only_call_that_writes_the_mcp_config(project):
+    okragged.build(project)
+    path = okragged.register(project)
+
+    assert path == project / ".mcp.json"
+    entry = json.loads(path.read_text(encoding="utf-8-sig"))
+    assert entry["mcpServers"]["okragged"] == {"command": "okragged", "args": ["mcp"]}
+
+
+def test_a_library_build_writes_no_contract_when_told_not_to(project):
+    okragged.build(project, contract=False)
+    assert not (project / "agent").exists()
 
 
 def test_okragged_build_still_regenerates_the_contract(project, monkeypatch):
@@ -206,7 +227,6 @@ def test_okragged_build_still_regenerates_the_contract(project, monkeypatch):
 
     assert result.exit_code == 0, result.output
     assert (project / "agent" / "AGENTS.md").exists()
-    assert (project / ".mcp.json").exists()
 
 
 def test_a_dry_run_from_python_writes_nothing_and_calls_no_model(project, monkeypatch):

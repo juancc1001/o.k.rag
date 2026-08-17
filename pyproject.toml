@@ -37,3 +37,9 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/okragged"]
+
+# the built graph view, which Vite writes into the package rather than into
+# web/dist so that one build serves a checkout and an installed user alike. Absent
+# from a source tree where `npm run build` has never run, which is why `okragged
+# serve` reports it as missing instead of failing.
+artifacts = ["src/okragged/api/static/**"]

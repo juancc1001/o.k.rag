@@ -21,9 +21,12 @@ the caller's business, so put the provider key in the environment (or pass a
 `Config` for a project whose keys you loaded yourself) before calling `build`,
 `index` or `add_source`.
 
-**`build()` does not write layer 3; `okragged build` does.** The asymmetry is
-deliberate and the reason is in `pipeline.ingest`. `write_contract()` is here for
-a caller who wants `agent/AGENTS.md` and `.mcp.json` written.
+**`build()` behaves as `okragged build` does**, contract included: it regenerates
+`agent/AGENTS.md`, one derived file beside the bundle it just built. There is no
+library-versus-CLI asymmetry here any more, because the thing that justified one
+was `.mcp.json`, and a build no longer writes it. Registering the MCP server is
+`register()` — the only call here that touches a file okragged does not own, and
+never made on a caller's behalf.
 
 Imports are deferred — function-local, plus a module `__getattr__` (PEP 562) for
 the two names — so `import okragged` stays silent and cheap. The extraction path
@@ -47,7 +50,25 @@ if TYPE_CHECKING:  # annotations only; importing these eagerly is the thing to a
     from .pipeline import IngestSummary, Progress
     from .vectors import IndexSummary
 
-__version__ = "0.1.0"
+def _installed_version() -> str:
+    """The version from package metadata, so `pyproject.toml` is the only place
+    it is written down.
+
+    A hand-kept copy here would be one of three, and the third — `[bundle].actor`
+    — is stamped into every concept's `generated.by`, so a forgotten bump does not
+    just misreport the tool, it mislabels provenance inside the bundle. Falls back
+    for a source tree that was never installed.
+
+    Resolved on attribute access rather than at import, like `Config` and
+    `Progress`: reading package metadata off disk is work an `import okragged`
+    that only wanted a function should not pay for.
+    """
+    from importlib.metadata import PackageNotFoundError, version
+
+    try:
+        return version("okragged")
+    except PackageNotFoundError:  # pragma: no cover - an uninstalled checkout
+        return "0+unknown"
 
 __all__ = [
     "Config",
@@ -60,6 +81,7 @@ __all__ = [
     "index",
     "lint",
     "read_concept",
+    "register",
     "search",
     "write_contract",
 ]
@@ -84,16 +106,21 @@ def build(
     *,
     dry_run: bool = False,
     only: list[str] | None = None,
-    contract: bool = False,
+    contract: bool = True,
     progress: Callable[[Progress], None] | None = None,
 ) -> IngestSummary:
     """Run the ingest pipeline: discover → extract → plan → synthesize → link-weave
     → emit → validate. Needs a credential for the configured `[synth]` provider,
     unless `dry_run`.
 
-    `contract=False` is the one place this differs from `okragged build`, which
-    always regenerates layer 3; see `pipeline.ingest`. `only` limits the run to
-    the given source paths, which also suppresses the vanished-source sweep (§6.1).
+    Behaves as `okragged build` does, `contract` included: it regenerates
+    `agent/AGENTS.md` beside the bundle, which is one derived file describing the
+    bundle you just asked for. It does **not** register an MCP server — that is
+    `register()`, and nothing calls it for you. `contract=False` skips AGENTS.md
+    for a caller who wants the bundle and nothing else.
+
+    `only` limits the run to the given source paths, which also suppresses the
+    vanished-source sweep (§6.1).
     """
     from .pipeline import ingest
 
@@ -151,11 +178,27 @@ def add_source(
 
 
 def write_contract(project: str | Path | Config) -> list[Path]:
-    """Write layer 3 — `agent/AGENTS.md` and the `.mcp.json` entry — beside the
-    bundle. Explicit here because `build()` does not do it. Offline."""
+    """Regenerate `agent/AGENTS.md` beside the bundle. Offline.
+
+    `build()` already does this; call it directly to refresh the contract without
+    rebuilding. It does not register the server — see `register()`.
+    """
     from .agent import write_contract as write
 
     return write(_config(project))
+
+
+def register(project: str | Path | Config) -> Path:
+    """Register `okragged mcp` for this project in `.mcp.json`, preserving any
+    other servers already there. Offline.
+
+    The only function here that writes a file okragged does not own — `.mcp.json`
+    is the MCP config for whatever agent works in that directory. Nothing calls
+    it for you, which is why it is a function rather than a flag on `build()`.
+    """
+    from .agent import register as do_register
+
+    return do_register(_config(project))
 
 
 def _config(project: str | Path | Config) -> Config:
@@ -167,8 +210,11 @@ def _config(project: str | Path | Config) -> Config:
 
 
 def __getattr__(name: str) -> Any:
-    """`Config` and `Progress` on demand: naming them at import time would pull in
-    pydantic and the whole pipeline for a caller who only wanted `__version__`."""
+    """`Config`, `Progress` and `__version__` on demand: naming them at import time
+    would pull in pydantic, the whole pipeline, and a metadata read off disk for a
+    caller who only wanted one function."""
+    if name == "__version__":
+        return _installed_version()
     if name == "Config":
         from .config import Config
 
@@ -184,7 +230,7 @@ def __dir__() -> list[str]:
     """The curated surface, and only it (PEP 562).
 
     `__getattr__` alone leaves `Config` and `Progress` out of `dir()` and out of
-    every completion that reads it, so two of the twelve public names would be
+    every completion that reads it, so two of the thirteen public names would be
     undiscoverable — while `Path`, `Any`, `TYPE_CHECKING` and `annotations` leak
     in from this module's own imports. Answering from `__all__` fixes both, and
     keeps the one list that has to be right.

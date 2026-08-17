@@ -8,8 +8,9 @@ import typer
 
 from . import config as config_module
 from . import okf, vectors
-from .agent import write_contract
-from .api.app import WEB_DIST, create_app
+from .agent import is_registered, write_contract
+from .agent import register as agent_register
+from .api.app import STATIC_DIR, create_app
 from .config import Config
 from .lock import LockHeld
 from .pipeline import IngestSummary, ingest, inspect_extraction
@@ -71,6 +72,14 @@ def build(
         raise typer.Exit(2) from None
 
     _print_summary(summary, dry_run=dry_run)
+    if not dry_run and cfg.bundle_root.exists() and not is_registered(cfg):
+        # mentioned, not done: registering edits the machine's MCP config, which a
+        # build has no business writing (see agent/contract.py)
+        typer.secho(
+            "\nthe MCP server is not registered - `okragged agent --register` adds it "
+            "to .mcp.json",
+            fg="bright_black",
+        )
     raise typer.Exit(_exit_code(summary))
 
 
@@ -103,14 +112,30 @@ def index() -> None:
 
 
 @app.command()
-def agent() -> None:
-    """Regenerate the agent contract: agent/AGENTS.md and .mcp.json."""
+def agent(
+    register: bool = typer.Option(
+        False,
+        "--register",
+        help="Also register the MCP server in .mcp.json. Edits a file okragged does not own.",
+    ),
+) -> None:
+    """Regenerate the agent contract: agent/AGENTS.md. --register also writes .mcp.json."""
     cfg = config_module.load()
     if not cfg.bundle_root.exists():
         typer.secho(f"no bundle at {cfg.bundle_root}", fg="red")
         raise typer.Exit(2)
-    for path in write_contract(cfg):
+    written = write_contract(cfg)
+    # asked for, never assumed: .mcp.json is the machine's MCP config, shared with
+    # every other server registered there, and it is not derived from the bundle
+    if register:
+        written.append(agent_register(cfg))
+    for path in written:
         typer.secho(f"  wrote {path.relative_to(cfg.project_root)}", fg="green")
+    if not register and not is_registered(cfg):
+        typer.secho(
+            "  the MCP server is not registered - `okragged agent --register` adds it",
+            fg="bright_black",
+        )
 
 
 @app.command()
@@ -148,7 +173,7 @@ def serve(
     host: str = typer.Option("127.0.0.1", help="Interface to bind."),
     port: int = typer.Option(8000, help="Port to bind."),
 ) -> None:
-    """Serve the read-only API, and the graph view when web/dist is built."""
+    """Serve the read-only API, and the graph view when it has been built."""
     cfg = _load()
     if not cfg.bundle_root.exists():
         typer.secho(f"no bundle at {cfg.bundle_root}", fg="red")
@@ -165,9 +190,9 @@ def serve(
             f"  no {vectors.GRAPH_NAME} - /api/graph will 404 until `okragged index` runs",
             fg="yellow",
         )
-    if not (cfg.project_root / WEB_DIST).is_dir():
+    if not STATIC_DIR.is_dir():
         typer.secho(
-            f"  no {WEB_DIST} - API only; `npm run build` in web/ to serve the view",
+            "  no built view - API only; `npm run build` in web/ to serve it",
             fg="bright_black",
         )
 
