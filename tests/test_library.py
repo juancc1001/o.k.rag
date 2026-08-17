@@ -131,6 +131,17 @@ def test_the_two_re_exported_names_resolve_and_nothing_else_does():
         okragged.Bundle  # noqa: B018 - a bundle is a directory, not an object (§2)
 
 
+def test_every_public_name_is_discoverable_and_nothing_else_is():
+    """A name reached only through `__getattr__` is absent from `dir()` unless
+    `__dir__` says otherwise, so two of the twelve would not complete; and this
+    module's own `Path`/`Any` imports would list as though they were surface."""
+    assert dir(okragged) == sorted(okragged.__all__)
+    for name in okragged.__all__:
+        assert getattr(okragged, name) is not None
+    for leaked in ("Path", "Any", "TYPE_CHECKING", "annotations"):
+        assert leaked not in dir(okragged)
+
+
 # --- configure -------------------------------------------------------------------
 
 

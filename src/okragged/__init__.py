@@ -178,3 +178,15 @@ def __getattr__(name: str) -> Any:
 
         return Progress
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    """The curated surface, and only it (PEP 562).
+
+    `__getattr__` alone leaves `Config` and `Progress` out of `dir()` and out of
+    every completion that reads it, so two of the twelve public names would be
+    undiscoverable — while `Path`, `Any`, `TYPE_CHECKING` and `annotations` leak
+    in from this module's own imports. Answering from `__all__` fixes both, and
+    keeps the one list that has to be right.
+    """
+    return sorted(__all__)
