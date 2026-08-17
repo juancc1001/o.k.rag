@@ -103,9 +103,46 @@ Two provider-specific notes:
 
 Swapping between them is a config edit: `embeddings_meta.json` records which provider and model produced the matrix, so a change re-embeds rather than mixing two vector spaces in one file. `bundle/` is untouched either way.
 
-Without a credential, `okragged build --dry-run`, `okragged extract`, `okragged check` and `okragged agent` all still work — they never call a model, and neither do three of the four MCP tools. `okragged build` fails immediately with a pointer to `.env` rather than after extracting your whole corpus, and so does `okragged index`.
+### Credentials
 
-`.env` is gitignored; `.env.example` is the committed template.
+**There are two, and they are configured separately.** `[synth]` is the writing provider; `[vectors]` is the embedding provider. They exist independently because the embedding question is open (Risk 4) and because nothing in the build path uses a vector — so a missing embedding key says nothing about whether you can build, and vice versa. They happen to default to the same Gemini key, which is why one `GEMINI_API_KEY` usually covers both.
+
+**What needs which:**
+
+| | `[synth]` | `[vectors]` |
+|---|---|---|
+| `build`, `add_source` | **required** | — |
+| `index` | — | **required** |
+| `search` — embedding path | — | required, per query |
+| `search` — traversal fallback | — | — |
+| `build --dry-run`, `extract`, `check`, `agent`, `serve` | — | — |
+| `read_concept`, `lint` | — | — |
+
+Anything that calls a model **fails its pre-flight before doing work**: `build` refuses before extracting your corpus rather than after, and `add_source` refuses before writing the source file, so a missing key never leaves debris.
+
+**Where each entry point looks:**
+
+| Entry point | Reads |
+|---|---|
+| `okragged <command>` | `.env` beside `okragged.toml`, then the environment |
+| `okragged mcp --project X` | `X/.env`, then the environment |
+| the Python API | **nothing** — see below |
+
+The library deliberately reads no `.env`. `okragged` the command loads one because a human typed the command; a function call has no business going looking for a dotfile in whatever directory it was invoked from. Put the key in the environment, or hand `build` a `Config` for a project whose keys you loaded yourself.
+
+**For a consumer registering the server against someone else's bundle**, `X/.env` is the *producer's* file and may not exist on your machine or may not be yours to use. Two options, and the second is usually right:
+
+```json
+{"mcpServers": {"okragged": {
+  "command": "okragged",
+  "args": ["mcp", "--project", "/path/to/the/bundle"],
+  "env": {"GEMINI_API_KEY": "your-own-key"}
+}}}
+```
+
+Or supply nothing at all: three of the four tools need no credential, so reading and linting a bundle works with an empty `env` — `search` simply answers by traversal instead of by embedding kNN, and says which path answered.
+
+`.env` is gitignored; `.env.example` is the committed template. `okragged doctor` reports both providers, whether each credential was found, and whether the configured model exists for your key.
 
 ---
 
@@ -283,7 +320,7 @@ The ghost list is capped at the 20 strongest, with `ghosts_total` and a note say
 
 The result shape is identical, and the response names which path answered — plus, on the traversal path, why the other one did not. Retrieval strategy is deliberately out of scope ([`DESIGN.md` §7](DESIGN.md)); this ranking is meant to be simple enough to explain in a sentence and test without a model.
 
-`ingest` goes through the same pipeline as `okragged build`, credential and all, so a client that disconnects mid-run cannot strand model calls already paid for. Given a `paths` subset it also skips the vanished-source sweep: a partial run never looked at the other sources, so their absence is not evidence that they are gone.
+`add_source` goes through the same pipeline as `okragged build`, credential and all, so a client that disconnects mid-run cannot strand model calls already paid for — `_finalize` runs in a `finally`. Because it ingests one path rather than sweeping, it also skips the vanished-source check: a partial run never looked at the other sources, so their absence is not evidence that they are gone. That is what makes it safe to expose where `ingest` was not.
 
 **The contract itself is served over the protocol**, because a consumer in another checkout cannot open `agent/AGENTS.md`:
 
