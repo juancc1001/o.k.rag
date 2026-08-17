@@ -2,7 +2,7 @@
 
 **One line:** drop files in, get out a portable OKF v0.2 knowledge bundle, a generated agent contract, and a served graph that shows both the links the knowledge *has* and the ones it *should* have.
 
-**Status: M2, M3 and M4 built** — the pipeline and the bundle; `embed`, `project` and `graph.json` behind `okragged index`, with the read API and the sigma.js view behind `okragged serve`; and the agent contract (`agent/AGENTS.md` + the stdio MCP server) behind `okragged agent`. **M5, distribution, is next.** See [§13 Milestones](#13-milestones) for what exists and what comes next. `README.md` covers installation and usage.
+**Status: M2, M3 and M4 built; M5 half-done** — the pipeline and the bundle; `embed`, `project` and `graph.json` behind `okragged index`, with the read API and the sigma.js view behind `okragged serve`; and the agent contract (`agent/AGENTS.md` + the stdio MCP server) behind `okragged agent`. **M5 is under way**: the package is renamed `okragged`, the contract is served over the protocol rather than named as a file, and `add_source` has replaced `ingest` on the agent surface. The Python API and the write lock remain. See [§13 Milestones](#13-milestones) for what exists and what comes next. `README.md` covers installation and usage.
 
 ## Contents
 
@@ -638,7 +638,7 @@ random_state = 42
 | **M2** | Real bundle | **done** |
 | **M3** | Vectors + graph | **done** |
 | **M4** | Agent contract | **done** |
-| **M5** | Distribution — package, MCP export, Python API | next |
+| **M5** | Distribution — package, MCP export, Python API | **in progress** — 3 of 6 |
 | **M6** | Hosted server — one bundle, many consumers | proposed |
 | **M7** | Connectors | phase 2 |
 | **M8** | Extract `okf/` as a standalone library | gated — see below |
@@ -729,7 +729,7 @@ The URI scheme is the one irreversible choice here: `okf://` would claim the for
 
 **Three pieces.**
 
-1. **Package.** Console-script entry points rather than generated paths. This does not fix the `.mcp.json` defect so much as delete it: a pip-installed `okragged` on `PATH`, invoked as `okragged mcp`, needs no interpreter path, no script path, and nothing relative to a cwd. The server then needs an explicit target — `--project` or `OKRAGGED_PROJECT` — because a launcher that infers its bundle from `__file__` cannot survive being installed.
+1. **Package. Built.** Console-script entry points rather than generated paths. This does not fix the `.mcp.json` defect so much as delete it: a pip-installed `okragged` on `PATH`, invoked as `okragged mcp`, needs no interpreter path, no script path, and nothing relative to a cwd. The server then needs an explicit target — `--project` or `OKRAGGED_PROJECT` — because a launcher that infers its bundle from `__file__` cannot survive being installed.
 
 2. **Export the contract over the protocol, not the filesystem. Built** (§10). Three levels of disclosure: `instructions` short and self-contained at the handshake, the rendered `AGENTS.md` as `okragged://contract`, `bundle/index.md` as `okragged://index`. Both handlers call functions that already exist (`contract.py::render_agents_md`, `query.py::read_concept`), so there is no second renderer to drift from the file on disk. **The invariant this establishes:** *layer 3 crosses the process boundary over the protocol, never over the filesystem — no generated instruction text may name a path relative to the producer's root.* Checkable offline, so it is a test rather than a convention, and it has a meta-test pointing it at the M4 handshake and the M4 registration entry — both of which it catches.
 
