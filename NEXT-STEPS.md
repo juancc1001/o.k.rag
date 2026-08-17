@@ -113,6 +113,16 @@ Considered while planning M6 and **deliberately left here.** §13 M6 settles *wh
 2. **Can one server serve more than one bundle?** `--project` is one root per process. Hosted, `https://host/<bundle>` is the obvious shape and is not designed. Cheap to answer, but it depends on (1) for what `<bundle>` is.
 3. **How does a consumer find out a bundle exists at all?** Out of scope for anything soon — that is a directory service, and it is a different product.
 
+**On the hosted answer, since it is the obvious one.** The natural fix is a URL per bundle — `https://…/<owner>/<bundle>` — with a reverse proxy routing each to whatever serves it. The routing is well-understood and is the easy half. Three things are worth writing down before anyone builds it:
+
+- **"A library or a web service" is a false choice, and this design already dissolved it.** Layer 2 is a directory and the sidecar rule keeps everything derived out of it, so one bundle can be a folder someone tars, a local stdio server, a Python import and a URL behind a proxy *at the same time*. Shipping a library forecloses nothing, which is why M5 precedes M6 rather than competing with it: you cannot host what is not installable and cannot be pointed at an explicit project.
+
+- **A URL is a better location, not an identity.** It survives the consumer's machine, which a filesystem path does not. It does not survive the service, and it makes whoever runs the service the source of the name — so the same bundle then has two locations, its owner's disk and that URL, with nothing in the bundle asserting they are the same thing. Question (1) does not go away here; it takes more load.
+
+- **The routing unit and question (2) are one decision seen from two sides.** `--project` is one root per process, so per-bundle routing implies one process per bundle: simple, blast-radius-isolated, and wasteful across many small bundles. One process serving several changes what `okragged mcp` is. Deciding it once, as *how a server addresses bundles*, is cheaper than deciding it twice — as routing and as CLI shape — and finding out later that the two disagree.
+
+**The cheap version, which is probably the right first one.** A per-bundle URL does not require multi-tenancy. One owner, one machine, one DNS name they control, a tunnel — that is "live on the web" without becoming a service provider, and it is what "expose it when I want" means in practice. Multi-tenant routing is for when other people's corpora live on your hardware, which is a company rather than a feature: the proxy is a weekend, and M6's five criteria plus uptime, backups and someone else's private legal corpus on your disk are permanent. §12 Risk 7 stops being a design note at that point and becomes a question someone's lawyer asks.
+
 **The trap to avoid.** Do not let (1) become an `access:`-style key or a registry the bundle depends on to be readable. The sidecar rule's logic applies: a bundle must stay something you can `tar` and `cat`. An id is a *fact about* the bundle written into it; a lookup a reader must perform to understand it is not.
 
 **Gate.** (1) before M6 ships anything anyone registers against. (2) with M6. (3) not scheduled, and possibly never here.
