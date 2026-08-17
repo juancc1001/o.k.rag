@@ -151,31 +151,35 @@ def test_a_non_200_does_not_abort_the_run(project, monkeypatch):
     assert summary.report is not None and summary.report.ok
 
 
-def test_an_interrupted_run_leaves_the_bundle_the_last_one_published(project, monkeypatch):
-    """The emit is staged, so a crash mid-run publishes nothing (§6.6).
+def test_an_interrupted_run_leaves_a_bundle_of_the_sources_that_committed(project, monkeypatch):
+    """The commit boundary is the source, not the run (§6.6).
 
-    Ids come from model-written titles, so half an emit is not a subset of the
-    previous tree — it is a mix of two namings. The concept this run did write is
-    complete and sitting in `.okragged/staging/`; `tests/test_writers.py` covers
-    what the next run does with it, and that the ledger stayed behind with it.
+    The source this run finished is published; the one it was in the middle of is
+    not, and nothing half of a source's emit is on disk — that is the window the
+    pending record fences, because ids come from model-written titles and half an
+    emit is a mix of two namings rather than a subset. `tests/test_writers.py`
+    covers what the next run pays for.
     """
     monkeypatch.setattr(pipeline, "synthesize", fake_synthesize)
     cfg = config_module.load(project)
     pipeline.ingest(cfg, dry_run=False)
-    published = (cfg.bundle_root / "revenue-policy.md").read_text(encoding="utf-8-sig")
 
-    (project / "sources" / "zz-interrupted.md").write_text(SAMPLE, encoding="utf-8")
+    (project / "sources" / "zz-one.md").write_text(SAMPLE + "\nOne.\n", encoding="utf-8")
+    (project / "sources" / "zz-two.md").write_text(SAMPLE + "\nTwo.\n", encoding="utf-8")
 
-    def interrupt_the_weave(**_):
-        raise KeyboardInterrupt
+    def interrupt_the_second_new_source(**kwargs):
+        if kwargs["source_uri"].endswith("zz-two.md"):
+            raise KeyboardInterrupt
+        return fake_synthesize(**kwargs)
 
-    monkeypatch.setattr(pipeline, "weave", interrupt_the_weave)
+    monkeypatch.setattr(pipeline, "synthesize", interrupt_the_second_new_source)
     with pytest.raises(KeyboardInterrupt):
         pipeline.ingest(cfg, dry_run=False)
 
-    assert not (cfg.bundle_root / "zz-interrupted.md").exists()
-    assert (cfg.bundle_root / "revenue-policy.md").read_text(encoding="utf-8-sig") == published
-    assert "zz-interrupted" not in (cfg.bundle_root / "index.md").read_text(encoding="utf-8-sig")
+    assert (cfg.bundle_root / "zz-one.md").exists()  # committed by its own emit
+    assert not (cfg.bundle_root / "zz-two.md").exists()  # was still in flight
+    index = (cfg.bundle_root / "index.md").read_text(encoding="utf-8-sig")
+    assert "zz-one.md" in index and "zz-two.md" not in index
     assert okf.validate(cfg.bundle_root).ok
 
 

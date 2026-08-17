@@ -18,11 +18,16 @@ def write_concept(bundle_root: Path, concept: Concept) -> Path:
     return path
 
 
-def set_status(bundle_root: Path, concept_id: str, status: str) -> bool:
+def set_status(
+    bundle_root: Path, concept_id: str, status: str, out_root: Path | None = None
+) -> bool:
     """Rewrite one concept's `status`, leaving the body and every other field.
 
     Used to mark a concept deprecated when its source disappears: the spec keeps
     such concepts for links and history rather than deleting them.
+
+    `out_root` writes the rewrite somewhere other than where it was read — a
+    staging area whose commit publishes it — leaving `bundle_root` untouched.
     """
     path = bundle_root / f"{concept_id}.md"
     if not path.exists():
@@ -31,7 +36,7 @@ def set_status(bundle_root: Path, concept_id: str, status: str) -> bool:
     if concept.status == status:
         return False
     concept.status = status
-    _atomic_write(path, render(concept))
+    _atomic_write((out_root or bundle_root) / f"{concept_id}.md", render(concept))
     return True
 
 

@@ -161,14 +161,14 @@ def ingest(
 
     `progress` is called as the run moves through its stages; see `Progress`.
 
-    A real run **holds the project lock and emits into `.okragged/staging/`**,
-    published in one fenced commit at the end (§6.6, `staging.py`). Three things
-    follow. A second writer is refused rather than interleaved. An interrupted run
-    leaves the previous bundle *and* the previous ledger — ids come from
-    model-written titles, so a half-applied emit is a mix of two namings rather
-    than a subset, and a ledger that outran the bundle would make the next run
-    skip sources it never published. And what such a run did stage stays in the
-    sidecar, unpublished, until the next run reports and clears it.
+    A real run **holds the project lock and stages each source's emit**, and
+    **the commit boundary is the source, not the run** (§6.6, `staging.py`).
+    Three things follow. A second writer is refused rather than interleaved. An
+    interrupted run leaves every source it finished published *and* recorded, so
+    the next one pays only for the remainder — the two-namings hazard lives inside
+    one source's emit, and across sources a partial run is a valid bundle. And the
+    one source that was in flight stays in the sidecar, unpublished, until the next
+    run reports and clears it.
     """
     if dry_run:
         # no lock and no staging: a dry run writes no bundle and no ledger, so
@@ -184,19 +184,15 @@ def ingest(
         notes = [note for note in (held.note, staging.reconcile(config)) if note]
         require_credential(config)  # before extracting a whole corpus, not after
         area = staging.prepare(config)
-        summary = _run(
-            config.model_copy(update={"staged_bundle": area.bundle}),
-            dry_run=False,
-            only=only,
-            ledger_out=area.ledger,
-            progress=progress,
-        )
+        summary = _run(config, dry_run=False, only=only, area=area, progress=progress)
         summary.recovered = notes
-        staging.commit(area)
+        staging.discard(area)  # a run that reached here staged nothing it did not commit
         if contract and config.bundle_root.exists():
-            # after the commit and never before: layer 3 describes layer 2, and a
-            # contract written beside a bundle that did not land would describe
-            # one that does not exist (§10)
+            # after the commits and never before: layer 3 describes layer 2, and a
+            # contract written beside concepts that did not land would describe
+            # ones that do not exist (§10). A run that dies leaves the previous
+            # contract, which under-describes the bundle until the next run — the
+            # same self-healing direction as the indexes
             write_contract(config)
         return _validated(config, summary, progress)
 
@@ -206,7 +202,7 @@ def _validated(
     summary: IngestSummary,
     progress: Callable[[Progress], None] | None,
 ) -> IngestSummary:
-    """Validate the published bundle — after the commit, so the report is about
+    """Validate the published bundle — after every commit, so the report is about
     the tree a reader will actually find."""
     if config.bundle_root.exists():
         _report(progress, Progress(VALIDATE))
@@ -220,14 +216,15 @@ def _run(
     dry_run: bool,
     only: list[str] | None,
     progress: Callable[[Progress], None] | None,
-    ledger_out: Path | None = None,
+    area: staging.Area | None = None,
 ) -> IngestSummary:
     """The stages themselves.
 
-    `config.bundle_root` is the staging area on a real run and `ledger_out` is the
-    ledger that commits with it, so nothing below has to know that the emit is
-    staged: it writes a whole tree, and the commit decides whether that tree
-    becomes the bundle.
+    Every *read* is of the published bundle, `config.bundle_root`: what is on disk
+    is what previous sources and previous runs left there. Every *write* goes into
+    `area`, and one commit per source publishes it (§6.6). The two roots are the
+    whole of what "staged" means here — there is no copy of the bundle to keep in
+    step with the real one.
     """
     selected = _selected(config, only)
     source = LocalFileSource(
@@ -237,10 +234,10 @@ def _run(
         project_root=config.project_root,
     )
     summary = IngestSummary()
-    # loaded from the published ledger, saved to the staged one: this run's
-    # record of itself is only true once its bundle has landed
-    ledger_path = config.sidecar_root / LEDGER_NAME
-    ledger = Ledger() if dry_run else Ledger.load(ledger_path)
+    # loaded from the published ledger and saved only by a commit: a record of
+    # this run is only true once the files it describes have landed
+    ledger = Ledger() if dry_run else Ledger.load(config.sidecar_root / LEDGER_NAME)
+    ledger.bundle_root = config.bundle.root
     # snapshotted once: the synthesis prefix has to stay byte-identical all run
     existing = [] if dry_run else _index(config.bundle_root)
     # every id the last run wrote stays spoken for until its own source releases
@@ -291,9 +288,12 @@ def _run(
 
             source_id = okf.slugify(item.title) or "source"
             worker = _ingest_segmented if needs_segmenting(text) else _ingest_single
+            assert area is not None  # only a dry run has none, and it continued above
+            staging.discard(area)  # whatever a previous unit left is not ours to place
             try:
                 lines = worker(
                     config=config,
+                    area=area,
                     ledger=ledger,
                     item=item,
                     text=text,
@@ -323,7 +323,18 @@ def _run(
                 # it and losing that section until the bytes happen to change
                 complete=not outcome.section_errors,
             )
-            outcome.removed = _remove_stale(config, ledger, previous - set(produced))
+            outcome.removed = _stale(config, ledger, previous - set(produced))
+            # the source is the commit boundary (§6.6): the concepts it wrote under
+            # their new ids, the removal of what its rename left behind, and its own
+            # ledger entry land together or not at all. A concept a human owns was
+            # never staged, so it is not placed and not removed
+            staging.commit(
+                area,
+                ledger,
+                unit=f"`{item.uri}`",
+                place=[cid for cid in produced if cid not in outcome.protected],
+                remove=outcome.removed,
+            )
             log_entries.extend(
                 f"**Deprecation**: Removed `{cid}`, no longer produced by `{item.uri}`."
                 for cid in outcome.removed
@@ -335,22 +346,22 @@ def _run(
             )
 
         if not dry_run:
+            assert area is not None
             # after every concept for the run exists: a link can only point at
             # a concept that has been written
-            _weave_run(config, ledger, summary, progress)
+            _weave_run(config, area, ledger, summary, progress)
             if selected is None:
                 # a partial run never looked at the other sources, so their
                 # absence from `discovered` is not evidence that they are gone
-                _deprecate_vanished(config, ledger, discovered, summary, log_entries)
+                _deprecate_vanished(config, area, ledger, discovered, summary, log_entries)
     finally:
-        # Concepts are written per file, but only the indexes, log and ledger
-        # make them a bundle. Run on the way out however we leave, so that what
-        # the staging area holds is a whole tree and not a pile of files — a
-        # Ctrl-C leaves it complete and inspectable in the sidecar even though
-        # the commit it never reached is what would have published it.
+        # Concepts are published per source, but only the indexes, the log and the
+        # okflint manifest make them a bundle. Run on the way out however we leave,
+        # so an interrupted run's committed sources are indexed and logged rather
+        # than sitting there unlisted.
         if not dry_run and config.bundle_root.exists():
             _report(progress, Progress(FINALIZE))
-            _finalize(config, log_entries, ledger, ledger_out or ledger_path)
+            _finalize(config, log_entries)
 
     return summary
 
@@ -367,6 +378,7 @@ def _report(progress: Callable[[Progress], None] | None, event: Progress) -> Non
 def _ingest_single(
     *,
     config: Config,
+    area: staging.Area,
     ledger: Ledger,
     item: SourceItem,
     text: str,
@@ -396,7 +408,9 @@ def _ingest_single(
 
     concept_id = _claim_id(item.title, taken)
     outcome.candidates[concept_id] = result.candidate_links
-    verb = _write(config, ledger, _build(config, item, result, concept_id, source_id), outcome)
+    verb = _write(
+        config, area, ledger, _build(config, item, result, concept_id, source_id), outcome
+    )
     outcome.concept_id = concept_id
     return _log_lines(verb, result.title, concept_id, item.uri)
 
@@ -404,6 +418,7 @@ def _ingest_single(
 def _ingest_segmented(
     *,
     config: Config,
+    area: staging.Area,
     ledger: Ledger,
     item: SourceItem,
     text: str,
@@ -474,7 +489,9 @@ def _ingest_segmented(
 
         child_id = _claim_child_id(parent_id, result.title or section.title, taken)
         outcome.candidates[child_id] = result.candidate_links
-        verb = _write(config, ledger, _build(config, item, result, child_id, source_id), outcome)
+        verb = _write(
+            config, area, ledger, _build(config, item, result, child_id, source_id), outcome
+        )
         # recorded even when a human owns it: the file is still this source's
         # output, and dropping it here would delete it as stale
         outcome.child_ids.append(child_id)
@@ -488,6 +505,7 @@ def _ingest_segmented(
 
     verb = _write(
         config,
+        area,
         ledger,
         _build_parent(config, item, outline, parent_id, source_id, children),
         outcome,
@@ -497,8 +515,18 @@ def _ingest_segmented(
     return log_lines
 
 
-def _write(config: Config, ledger: Ledger, concept: Concept, outcome: ItemOutcome) -> str:
-    """Write a concept unless a human owns it (§6.4). Returns the log verb.
+def _write(
+    config: Config,
+    area: staging.Area,
+    ledger: Ledger,
+    concept: Concept,
+    outcome: ItemOutcome,
+) -> str:
+    """Stage a concept unless a human owns it (§6.4). Returns the log verb.
+
+    Read from the published bundle, written into the staging area: what protects a
+    concept and whether one existed are facts about the tree a reader can see, and
+    the source's commit is what makes this write one of them.
 
     A protected concept's replacement goes to `.okragged/proposed/` for the human
     to resolve. This is the one place where "the LLM owns layer 2" yields.
@@ -512,7 +540,7 @@ def _write(config: Config, ledger: Ledger, concept: Concept, outcome: ItemOutcom
         outcome.protected[concept_id] = why
         return ""
     existed = (config.bundle_root / f"{concept_id}.md").exists()
-    okf.write_concept(config.bundle_root, concept)
+    okf.write_concept(area.bundle, concept)
     ledger.note_concept(concept_id, outcome.uri, concept.body)
     return "Update" if existed else "Creation"
 
@@ -547,6 +575,7 @@ def _index(bundle_root: Path) -> list[tuple[str, str]]:
 
 def _weave_run(
     config: Config,
+    area: staging.Area,
     ledger: Ledger,
     summary: IngestSummary,
     progress: Callable[[Progress], None] | None = None,
@@ -557,6 +586,13 @@ def _weave_run(
     rewriting it would cost a model call to produce a file nobody asked for. The
     consequence is that links point forward from new concepts to old ones and not
     the other way round until the old one is itself re-ingested.
+
+    This runs after every source has committed, so it rewrites concepts that are
+    already published — and each rewrite is a commit of its own, because the body
+    and the hash the ledger notes for it have to agree. An interrupt here leaves
+    every concept either woven and re-recorded or unwoven and recorded; a concept
+    left unwoven is the state a *failed* weave already produces (§6.5), so its
+    source stays `complete` and is not retried for it.
     """
     # titles as well as descriptions: the pass has to choose link labels, and
     # prune_links needs a title when the model puts a raw path in the label
@@ -602,30 +638,38 @@ def _weave_run(
         if result.body_markdown == concept.body:
             continue
         concept.body = result.body_markdown
-        okf.write_concept(config.bundle_root, concept)
-        # the post-weave hash, or the next run reads every concept as edited
+        staging.discard(area)
+        okf.write_concept(area.bundle, concept)
+        # the post-weave hash, or the next run reads every concept as edited — and
+        # committed with the body it describes, or an interrupt would leave exactly
+        # that mismatch on disk for the next run to believe
         ledger.note_concept(concept_id, outcome.uri, concept.body)
+        staging.commit(area, ledger, unit=f"the weave of `{concept_id}`", place=[concept_id])
         outcome.linked.append(concept_id)
 
 
-def _remove_stale(config: Config, ledger: Ledger, stale: set[str]) -> list[str]:
+def _stale(config: Config, ledger: Ledger, stale: set[str]) -> list[str]:
     """Concepts the previous run produced for this source and this one did not.
 
     Ids come from model-written titles, so a rebuild renames the tree as a matter
-    of course; without this nothing ever removes what the rename left behind.
+    of course; without this nothing ever removes what the rename left behind. The
+    files go in the source's commit rather than here, so the moment when both
+    namings are on disk is inside the window the pending record fences.
     """
     removed: list[str] = []
     for concept_id in sorted(stale):
         if ledger.protection(config.bundle_root, concept_id) is not None:
             continue  # a human owns it now; orphaned beats deleted
-        if okf.delete_concept(config.bundle_root, concept_id):
-            removed.append(concept_id)
-            ledger.forget_concept(concept_id)
+        if not (config.bundle_root / f"{concept_id}.md").exists():
+            continue
+        removed.append(concept_id)
+        ledger.forget_concept(concept_id)
     return removed
 
 
 def _deprecate_vanished(
     config: Config,
+    area: staging.Area,
     ledger: Ledger,
     discovered: set[str],
     summary: IngestSummary,
@@ -635,15 +679,23 @@ def _deprecate_vanished(
 
     The spec keeps deprecated concepts for links and history (§6.1) — deletion
     is an explicit `okragged prune`, never a side effect of removing an input file.
+
+    One commit per vanished source, for the same reason the boundary is the source
+    everywhere else: the status change and the ledger forgetting it are one fact.
     """
     for uri in sorted(set(ledger.sources) - discovered):
+        staging.discard(area)
+        staged: list[str] = []
         for concept_id in ledger.forget_source(uri):
-            if okf.set_status(config.bundle_root, concept_id, "deprecated"):
-                summary.deprecated.append(concept_id)
-                log_entries.append(
-                    f"**Deprecation**: `{uri}` is gone; "
-                    f"[{concept_id}](/{concept_id}.md) marked deprecated."
-                )
+            if okf.set_status(config.bundle_root, concept_id, "deprecated", out_root=area.bundle):
+                staged.append(concept_id)
+        staging.commit(area, ledger, unit=f"the deprecation of `{uri}`", place=staged)
+        for concept_id in staged:
+            summary.deprecated.append(concept_id)
+            log_entries.append(
+                f"**Deprecation**: `{uri}` is gone; "
+                f"[{concept_id}](/{concept_id}.md) marked deprecated."
+            )
 
 
 def _parses(bundle_root: Path, concept_id: str) -> bool:
@@ -670,12 +722,23 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
-def _finalize(
-    config: Config,
-    log_entries: list[str],
-    ledger: Ledger,
-    ledger_path: Path,
-) -> None:
+def _finalize(config: Config, log_entries: list[str]) -> None:
+    """The three artifacts that make published concepts a bundle rather than files.
+
+    None of them is fenced by a commit, and none needs to be, because each is
+    derivable from the bundle on disk: `write_indexes` reads the whole tree rather
+    than accumulating during the run (§6.6), and `okf-base.yaml` is generated from
+    the config. A run that dies before this point leaves indexes that do not
+    mention its newest concepts, and *any* later run regenerates them — including
+    one that changes nothing. `log.md` is the exception in kind but not in
+    consequence: it is a narration nothing reads back, and it is appended here in
+    a `finally`, so an interrupt still records the sources that did commit.
+
+    **The ledger is deliberately not here.** It lands with the source it describes
+    (§6.6) and is the one thing that must never be written outside a commit: a
+    ledger saved on the way out could describe a concept whose file never landed,
+    and the next run's content-hash skip would believe work was done that was not.
+    """
     title = config.bundle_title
     okf.write_indexes(config.bundle_root, config.bundle.okf_version, title)
     if log_entries:
@@ -686,12 +749,6 @@ def _finalize(
             log_entries,
         )
     okf.write_manifest(config.project_root, config.bundle.root, title)
-    # last, and staged: the ledger is only true once every file it describes has
-    # landed, so it lands in the same commit as the tree it describes or not at
-    # all. Layer 3 is written by the caller after that commit, for the same
-    # reason — a contract beside a bundle that did not land describes nothing.
-    ledger.bundle_root = config.bundle.root
-    ledger.save(ledger_path)
 
 
 def _build(

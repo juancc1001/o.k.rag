@@ -75,9 +75,8 @@ ragged/
 │  ├─ extracted/               # cached plain-text extractions, keyed by content hash
 │  ├─ proposed/                # replacements for concepts a human owns (§6.4)
 │  ├─ lock.json                # the one writer holding the project (§6.6)
-│  ├─ staging/                 # the emit in flight: bundle/ + its manifest.json
-│  ├─ pending-commit.json      # a swap to finish, if one was interrupted
-│  ├─ superseded/              # the previous tree, until that swap finishes
+│  ├─ staging/                 # the source in flight: its concepts + its manifest.json
+│  ├─ pending-commit.json      # a commit to finish, if one was interrupted
 │  ├─ embeddings.npy           # float32 [n_concepts, dim], L2-normalized
 │  ├─ embeddings_meta.json     # provider, model, dim + row → concept id, embedded hash
 │  ├─ layout.json              # 2D projection coordinates
@@ -97,7 +96,7 @@ ragged/
 │  ├─ api/                     # FastAPI app
 │  ├─ ledger.py                # the idempotency ledger (.okragged/manifest.json)
 │  ├─ lock.py                  # one writer per project (.okragged/lock.json)
-│  ├─ staging.py               # the staged emit and its pending-commit record
+│  ├─ staging.py               # the per-source commit and its pending-commit record
 │  └─ cli.py
 │
 ├─ web/                        # Vite + React + TS + sigma.js
@@ -194,16 +193,15 @@ The idempotency ledger, written by `ledger.py`. Everything about re-ingest corre
 
 Losing the ledger costs a full re-ingest, never correctness — so every read path degrades to "no record" rather than raising, and a skip additionally requires the recorded concept files to still be on disk.
 
-### `lock.json`, `staging/`, `pending-commit.json`, `superseded/`
+### `lock.json`, `staging/`, `pending-commit.json`
 
-Four entries, one job: make one writer at a time, and make the emit recoverable (§6.6). All four are sidecar state, so losing them costs a re-run and never correctness — a missing lock means "no holder", and a missing pending record means "no commit was in flight".
+Three entries, one job: make one writer at a time, and make each source's emit recoverable (§6.6). All three are sidecar state, so losing them costs a re-run and never correctness — a missing lock means "no holder", and a missing pending record means "no commit was in flight".
 
 | | |
 |---|---|
 | `lock.json` | the writer holding the project: `operation`, `pid`, `host`, `started`. Created with `O_CREAT\|O_EXCL` — atomic on both platforms, which `fcntl` is not, and Windows is the primary one. Read paths never take it. |
-| `staging/` | the emit in flight — `staging/bundle/` seeded from the published tree, plus `staging/manifest.json`, the ledger that commits with it |
-| `pending-commit.json` | written immediately before the swap and deleted after it; while it exists, the swap is replayable |
-| `superseded/` | where the published tree is parked for the duration of the swap, so the previous bundle is never deleted before its replacement is in place |
+| `staging/` | the **one unit** in flight — the concepts a single source produced, under `staging/bundle/`, plus `staging/manifest.json`, the ledger that commits with them. Emptied by each commit, so it never holds two sources' work |
+| `pending-commit.json` | written immediately before that unit's files move and deleted after; while it exists, the commit is replayable. It names the unit, the concept ids to place and the stale ids to remove |
 
 **A stale lock must not need a human.** The record names its holder so a dead one can be told from a live one: same host, the pid is probed (never with `os.kill(pid, 0)`, which on Windows *terminates* the process it asks about); another host, and age is the only test available, so a foreign lock goes stale after six hours. A crashed run leaving a lock file behind would otherwise replace the failure this fixes with a worse one.
 
@@ -350,6 +348,8 @@ Prompt wording is not the fix for any of these. A repair that runs after the res
 
 **The ledger must record the post-weave `body_sha256`** (§5). Recording the pre-weave hash would make the next run read every concept as hand-edited and refuse to touch any of them.
 
+Which is why each rewrite is its own commit (§6.6). The pass runs after every source has published, so it overwrites concepts a reader can already see; a body and a hash that disagree *is* the pre-weave-hash failure, reached by interruption rather than by design, so an interrupt here leaves every concept either woven and re-recorded or unwoven and recorded.
+
 ### 6.6 emit
 
 Write concept files, then generate every `index.md` bottom-up, then append to `log.md` under today's ISO date, newest first. Log entries use the conventional bold leading word: `**Creation**`, `**Update**`, `**Deprecation**`.
@@ -360,28 +360,40 @@ An entry for a concept that owns a subdirectory states how many concepts are bel
 
 The root index's heading comes from `[bundle].title`, falling back to the project directory name — which names the tool rather than the knowledge unless the two happen to agree.
 
-Writes are atomic per file (temp + rename). The tree is a separate problem, and the honest claim about it is **recoverable, not atomic**: a multi-file directory swap cannot be made atomic on Windows, and pretending otherwise would be worse than not trying, because `bundle/` → `bundle.old/` → `staging/` → `bundle/` has a window in which there is no bundle at all.
+Writes are atomic per file (temp + rename). A *set* of files is a separate problem, and the honest claim about it is **recoverable, not atomic**: no filesystem call publishes several files at once on Windows, and pretending otherwise would be worse than not trying.
 
-So the emit is staged. A run writes into `.okragged/staging/bundle/`, seeded from the published tree — a copy, whose cost is honest, and which is what lets indexes be read off the whole bundle (above) and stale output be removed from it rather than reconstructed. The swap is then fenced by a record on disk:
+**The unit that commits is the source, not the run.** One source's emit lands whole or not at all: the concepts it wrote under their new ids, the removal of the stale output its rename left behind, and that source's ledger entry. Concept ids come from model-written titles (§5), so a rebuild renames that source's tree wholesale — and the window that has to be fenced is *inside* one source's emit, between writing the new names and deleting the old ones. A half-applied emit there is not a subset of the old tree, it is a mix of two namings, and stale-output cleanup reconciles against a complete emit or not at all.
 
-1. write `.okragged/pending-commit.json` — from here the swap is replayable
-2. `bundle/` → `.okragged/superseded/`
-3. `.okragged/staging/bundle/` → `bundle/`
-4. `.okragged/staging/manifest.json` → `.okragged/manifest.json`
-5. delete the staging area, the superseded tree, and the record
+**Across sources there is no such window.** Source A's new concepts beside source B's untouched old ones is a complete, valid, self-consistent bundle; stale-output cleanup is already scoped per source, and link-weave already tolerates a concept whose links are missing. So making the *run* the unit fenced nothing extra and cost everything an interrupted run had paid for: a forty-source build interrupted at source thirty-nine re-paid thirty-nine sources' worth of model calls. Resumability is worth more than whole-run atomicity, and this is where that is decided.
 
-Every step is idempotent and guarded by what is on disk rather than by a step counter, so the next run replays from wherever a crash landed. **The record is what says which of the two answers is right**, and it is written only once the staged tree is complete:
+A run stages one unit at a time, and each commit is fenced by a record on disk:
 
-- **a record, with or without a staging area → finish it.** Its presence means the tree was worth publishing and only the swap is unfinished.
-- **a staging area with no record → roll it back.** The run was interrupted before it earned one. The previous tree stands, and the staged work is left in the sidecar — unpublished, but not deleted at the moment of failure — until the next run reports it and clears it.
+1. save the ledger into `.okragged/staging/manifest.json`
+2. write `.okragged/pending-commit.json` — from here the commit is replayable
+3. move each staged concept into `bundle/`
+4. delete the stale output the record names
+5. `.okragged/staging/manifest.json` → `.okragged/manifest.json`
+6. delete the staging area and the record
+
+Every step is idempotent and guarded by what is on disk rather than by a step counter, so the next run replays from wherever a crash landed. Nothing moves or deletes the published tree as a whole, so unlike the whole-run swap this replaced there is no moment with no bundle at all. **The record is what says which of the two answers is right**, and it is written only once the unit is complete:
+
+- **a record, with or without a staging area → finish it.** Its presence means the unit was worth publishing and only the placing is unfinished.
+- **a staging area with no record → roll it back.** That one source was interrupted before it earned one. The sources committed before it stand, only that one is redone, and its staged files are left in the sidecar — unpublished, but not deleted at the moment of failure — until the next run reports them and clears them.
 
 Either way the next run *says* what it found; a build that repaired this silently would be hiding the fact that an earlier one died.
 
-**The ledger commits with the bundle or not at all**, which is why it stages too. It is only true once every file it describes has landed: a ledger that outran the bundle would have the next run's content-hash skip believe work was done that was not, and the corpus would quietly lose those sources. Layer 3 is written after the commit for the same reason — a contract beside a bundle that never landed describes one that does not exist (§10).
+**The ledger lands with the unit it describes or not at all**, which is why it stages too. A ledger that outran the bundle would have the next run's content-hash skip believe work was done that was not, and the corpus would quietly lose those sources — so the property is *per source* now rather than per run: a source recorded in the ledger is a source whose concepts are published. Layer 3 is written after the commits for the same reason — a contract beside concepts that never landed describes ones that do not exist (§10).
 
-**What this costs, stated rather than discovered.** A run interrupted before its commit loses the model calls it paid for; the previous bundle and the previous ledger both stand, and the next run redoes that source. The extraction cache survives, so what is re-paid is synthesis and not extraction. `_finalize` still runs in a `finally` — indexes, log and ledger are written on the way out however the run leaves — but into the staging area, so what an interrupted run leaves behind is a complete tree that was never published rather than a published tree that is a mix of two namings. Ids come from model-written titles (§5), so that mix is the real hazard: a half-applied emit is not a subset of the old tree.
+**Link-weave runs after every source has committed, and rewrites concepts that are already published.** That is deliberate and it is why the pass sees the full index of what the run wrote (§6.5). Two consequences, both already sanctioned rather than new:
 
-**One writer at a time.** The CLI, the MCP server's `add_source` and the Python API are three writers to one directory, so a real run holds `.okragged/lock.json` (§5) for its duration. `okragged index` takes it too — it reads a bundle a build may be swapping under it. **Read paths never take it**: `search`, `read_concept`, `lint`, `check` and `serve` keep answering while a write is in flight, and so does `build --dry-run`, which writes no bundle and no ledger. The revision model that many *remote* writers need is M6's problem (§13).
+- A source committed before the pass is published with a pre-weave body hash and no cross-links. That is exactly the state a *failed* weave produces, and §6.5 already says such a source is not marked incomplete, because the concept is valid and only its links are missing. An interrupt before the pass therefore needs no new state and is not retried for the links it lacks.
+- Each rewrite is a commit of its own, so an interrupt mid-weave leaves every concept either woven and re-recorded or unwoven and recorded. Never woven against a stale hash — that mismatch is read as a human edit (§6.4), which would protect the concept from every later run.
+
+**Indexes, `log.md` and `okf-base.yaml` are outside all of this, and do not need to be in it.** `write_indexes` reads the whole bundle off disk rather than accumulating during the run (above), so a run that dies leaves indexes that do not yet mention its newest concepts and *any* later run regenerates them, including one that changes nothing. `okf-base.yaml` is the same. `log.md` is a narration nothing reads back; `_finalize` still runs in a `finally`, so an interrupt still records the sources that did commit.
+
+**What this costs, stated rather than discovered.** A source interrupted mid-emit loses the model calls it paid for and is redone; every source before it is not. The extraction cache survives, so even that re-payment is synthesis and not extraction. The remaining sharp edge is that a run interrupted before link-weave publishes concepts that stay unwoven until their source changes — the price of publishing early, and the same outcome the pass already has when the provider refuses.
+
+**One writer at a time.** The CLI, the MCP server's `add_source` and the Python API are three writers to one directory, so a real run holds `.okragged/lock.json` (§5) for its duration. `okragged index` takes it too — it reads a bundle a build may be committing into. **Read paths never take it**: `search`, `read_concept`, `lint`, `check` and `serve` keep answering while a write is in flight, and so does `build --dry-run`, which writes no bundle and no ledger. The revision model that many *remote* writers need is M6's problem (§13).
 
 ### 6.7 validate
 
@@ -577,7 +589,7 @@ Both call the function that writes the file, rather than a second renderer, so w
 Two consequences of the layering worth keeping:
 
 - **`search` returns pointers and `read_concept` returns whole files.** That is progressive disclosure (§7) expressed as a tool boundary — an agent cannot accidentally be handed chunks, because no tool returns one.
-- **`add_source` goes through `pipeline.ingest`, not around it.** So it takes the project lock, and its emit is staged and committed like any other (§6.6): a client that disconnects mid-run leaves the bundle it had rather than half of a new one. A `paths` subset additionally suppresses the vanished-source sweep (§6.1): a partial run never looked at the other sources, so their absence is not evidence that they are gone.
+- **`add_source` goes through `pipeline.ingest`, not around it.** So it takes the project lock, and its emit is staged and committed like any other (§6.6): a client that disconnects mid-run leaves a bundle with that source whole or without it at all, never half of it. A `paths` subset additionally suppresses the vanished-source sweep (§6.1): a partial run never looked at the other sources, so their absence is not evidence that they are gone.
 
 Nothing in this layer writes to the bundle, and nothing writes a `verified` block (§4.4) — the contract *explains* the trust tiers so that a consuming agent does not try to write one either. The MCP SDK is an optional extra: it pulls starlette, uvicorn and opentelemetry for a server that speaks over a pipe, and none of that is needed to produce or validate a bundle.
 
@@ -808,11 +820,13 @@ The URI scheme is the one irreversible choice here: `okf://` would claim the for
 
 6. **A lock and a staged emit. Built**, in `lock.py` and `staging.py` (§5, §6.6). Not deferred to hosting: after M5 the CLI, the MCP server and the Python API are three writers to one directory, and nothing detected them interleaving. `.okragged/lock.json` makes it one writer per project — exclusive creation rather than `fcntl`, because Windows is the primary platform — and the emit stages into `.okragged/staging/` and commits behind a pending-commit record.
 
-   **The claim is recoverable, not atomic, and the difference is the whole design.** A genuinely atomic multi-file directory swap is not available on Windows, and asserting one would be worse than not trying. What the record buys instead is that an interrupted swap is *detectable and completable*: a record means finish it, a staging area with no record means roll it back, and the next run says which it found. Concept ids derive from model-written titles, so the alternative is not a partially updated tree but a mix of two namings — and stale-output cleanup reconciles against a complete emit or not at all.
+   **The claim is recoverable, not atomic, and the difference is the whole design.** No filesystem call publishes several files at once on Windows, and asserting one would be worse than not trying. What the record buys instead is that an interrupted commit is *detectable and completable*: a record means finish it, a staging area with no record means roll it back, and the next run says which it found.
 
-   **The ledger and the bundle commit together or neither**, so an interrupted run leaves the ledger describing the tree that is still published. The cost, stated in §6.6 rather than discovered later, is that such a run loses the synthesis it paid for: the extraction cache survives and the staged tree waits in the sidecar, but the next run redoes that source. A ledger that outran the bundle would be the worse trade — the content-hash skip would believe work was done that was not, and the corpus would lose sources silently.
+   **The unit is the source, not the run**, which is a correction of what this first shipped as. Concept ids derive from model-written titles, so the hazard is not a partially updated tree but a mix of two namings — and that hazard lives *inside* one source's emit, between writing its new concepts and removing the stale output its rename left behind. Across sources there is nothing to fence: source A's new concepts beside source B's untouched old ones is a complete, valid bundle, and stale-output cleanup is already scoped per source. Fencing the whole run therefore protected nothing extra and cost every source an interrupted run had paid for — a forty-source build interrupted at thirty-nine re-paid thirty-nine. Resumability is worth more than whole-run atomicity; §6.6 states the trade and what an interrupt at each phase leaves.
 
-   **Two things this deliberately does not do.** No revision model: `expectedRevision` and conflict resolution are for many remote writers, and that is M6 criterion 3. And no lock on any read path — `search`, `read_concept`, `lint`, `check` and `serve` answer while a write is in flight, because a consumer holding a directory of markdown files needs permission from nobody, and a reader a build could refuse would undo the point of the format.
+   **The ledger lands with the source it describes or not at all.** That is the half that must not be relaxed: a ledger that outran the bundle would have the content-hash skip believe work was done that was not, and the corpus would lose sources silently. The other direction only costs a re-synthesis, which is why the boundary could move at all.
+
+   **Three things this deliberately does not do.** No revision model: `expectedRevision` and conflict resolution are for many remote writers, and that is M6 criterion 3. No lock on any read path — `search`, `read_concept`, `lint`, `check` and `serve` answer while a write is in flight, because a consumer holding a directory of markdown files needs permission from nobody, and a reader a build could refuse would undo the point of the format. And no attempt to make the indexes, the log or `okf-base.yaml` transactional: they are derived from the bundle on disk, so a later run regenerates them (§6.6).
 
 **What this must not become.** The API is an entry point to the pipeline, not an abstraction over it. `synth/` stays unpublished for the reason M7 gives below, and it applies with more force to a public API: a `provider=` argument in a documented signature is a promise to track every vendor's drift forever. Nor does the first version return a `Bundle` object — the load-bearing property of this design is that a bundle *is* a directory (§2), and an object hands back a different answer to a question nobody has asked yet. Summaries and paths.
 

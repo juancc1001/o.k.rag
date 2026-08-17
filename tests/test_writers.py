@@ -1,14 +1,22 @@
-"""§13 M5 item 6: one writer per project, and an emit that commits or does not.
+"""§13 M5 item 6: one writer per project, and an emit that commits per source.
 
 After M5 the CLI, the MCP server's `add_source` and the Python API are three
 writers to one directory. Concept ids come from model-written titles, so two of
 them interleaving do not overwrite each other's names — they write two different
-trees into one directory, and a half-applied emit is a mix of two namings rather
-than a subset of the old one.
+trees into one directory, and half of one source's emit is a mix of two namings
+rather than a subset of the old one.
 
-These tests drive the failures rather than the happy path: a live holder refusing
-a second writer, a dead one reclaimed with no human in the loop, a run
-interrupted before its commit, and a commit interrupted half way through its swap.
+**The commit boundary is the source.** That hazard lives inside one source's emit,
+between writing its new concepts and removing the stale output its rename left
+behind, and that window is what the pending record fences. Across sources there is
+nothing to fence: source A's new concepts beside source B's untouched old ones is a
+complete, valid bundle — so a run interrupted at source thirty-nine of forty keeps
+what it paid for.
+
+These tests drive the failures rather than the happy path: a live holder refusing a
+second writer, a dead one reclaimed with no human in the loop, a run interrupted
+between sources, a commit interrupted half way through placing one, and the two
+interrupts around the weave.
 """
 
 from __future__ import annotations
@@ -25,7 +33,8 @@ import pytest
 
 from okragged import agent, lock, okf, pipeline, staging
 from okragged import config as config_module
-from okragged.ledger import LEDGER_NAME, Ledger
+from okragged.ledger import LEDGER_NAME, Ledger, body_hash
+from okragged.synth import WeaveResult
 
 # tests/ has no __init__.py, so pytest imports these as top-level modules
 from test_pipeline import (  # noqa: F401  (project is used as a fixture)
@@ -188,24 +197,60 @@ def test_every_read_path_answers_while_a_write_holds_the_lock(project, monkeypat
         assert okf.validate(cfg.bundle_root).ok
 
 
-# --- the staged emit ------------------------------------------------------------
+# --- the staged emit, one source at a time --------------------------------------
 
 
-def test_a_run_writes_nothing_into_the_bundle_until_it_commits(project, monkeypatch):
-    monkeypatch.setattr(pipeline, "synthesize", fake_synthesize)
+def three_sources(project: Path) -> list[str]:
+    """Two more sources beside the fixture's, in discovery order. Returns their ids."""
+    for name in ("zz-one", "zz-two"):
+        (project / "sources" / f"{name}.md").write_text(
+            SAMPLE + f"\nAbout {name}.\n", encoding="utf-8"
+        )
+    return ["revenue-policy", "zz-one", "zz-two"]
+
+
+def counting(fake, stop_before: str | None = None):
+    """A synthesis stub that counts its calls, and optionally dies on one source."""
+    calls: list[str] = []
+
+    def synthesize(**kwargs):
+        if stop_before is not None and kwargs["source_uri"].endswith(stop_before):
+            raise KeyboardInterrupt
+        calls.append(kwargs["source_uri"])
+        return fake(**kwargs)
+
+    synthesize.calls = calls  # type: ignore[attr-defined]
+    return synthesize
+
+
+def test_a_source_is_published_by_its_own_commit_and_not_by_the_run(project, monkeypatch):
+    """Across sources there is no hazard to fence: the first source's new concepts
+    beside the third's absence is a complete, self-consistent bundle."""
+    ids = three_sources(project)
     cfg = config_module.load(project)
     staged = cfg.sidecar_root / staging.STAGING / staging.BUNDLE
-    seen: dict[str, bool] = {}
+    seen: list[tuple[str, bool, bool]] = []
 
     def watch(event):
-        if event.stage == pipeline.SOURCE:
-            seen["published"] = (cfg.bundle_root / "revenue-policy.md").exists()
-            seen["staged"] = (staged / "revenue-policy.md").exists()
+        if event.stage == pipeline.SYNTHESIZE:
+            seen.append(
+                (
+                    event.unit,
+                    (cfg.bundle_root / f"{ids[0]}.md").exists(),
+                    (staged / f"{ids[0]}.md").exists(),
+                )
+            )
 
+    monkeypatch.setattr(pipeline, "synthesize", fake_synthesize)
     pipeline.ingest(cfg, dry_run=False, progress=watch)
 
-    assert seen == {"published": False, "staged": True}
-    assert (cfg.bundle_root / "revenue-policy.md").exists()
+    first, second, third = seen
+    # while the first source is being synthesized it is neither staged nor published
+    assert first == ("sources/revenue-policy.md", False, False)
+    # by the time the others run it is published, and nothing of it is left staged
+    assert second == ("sources/zz-one.md", True, False)
+    assert third == ("sources/zz-two.md", True, False)
+    assert all((cfg.bundle_root / f"{cid}.md").exists() for cid in ids)
 
 
 def test_a_finished_build_leaves_no_staging_area_behind(project, monkeypatch):
@@ -215,128 +260,264 @@ def test_a_finished_build_leaves_no_staging_area_behind(project, monkeypatch):
 
     for leftover in (
         cfg.sidecar_root / staging.STAGING,
-        cfg.sidecar_root / staging.SUPERSEDED,
         cfg.sidecar_root / staging.PENDING_NAME,
     ):
         assert not leftover.exists(), leftover
 
 
-def test_an_interrupted_run_leaves_the_ledger_describing_the_published_bundle(
+def test_the_ledger_never_describes_a_source_whose_concepts_are_not_published(
     project, monkeypatch
 ):
-    """The ledger and the bundle commit together or neither does.
+    """Per source now rather than per run, and this is the direction that matters.
 
     A ledger that outran the bundle would have the next run's content-hash skip
     believe work was done that was not, and the corpus would lose that source
-    silently — which is worse than losing the model calls the run had paid for.
+    silently. The other direction only costs a re-synthesis.
+    """
+    ids = three_sources(project)
+    monkeypatch.setattr(pipeline, "synthesize", counting(fake_synthesize, stop_before="zz-two.md"))
+    cfg = config_module.load(project)
+    with pytest.raises(KeyboardInterrupt):
+        pipeline.ingest(cfg, dry_run=False)
+
+    ledger = Ledger.load(cfg.sidecar_root / LEDGER_NAME)
+    assert sorted(ledger.sources) == ["sources/revenue-policy.md", "sources/zz-one.md"]
+    for concept_id in ledger.concepts:
+        assert (cfg.bundle_root / f"{concept_id}.md").exists(), concept_id
+    assert not (cfg.bundle_root / f"{ids[2]}.md").exists()
+
+
+def test_a_second_run_pays_only_for_the_sources_the_interrupted_one_never_committed(
+    project, monkeypatch
+):
+    """The point of moving the boundary. A forty-source build interrupted at
+    thirty-nine used to re-pay thirty-nine sources' worth of model calls."""
+    ids = three_sources(project)
+    first = counting(fake_synthesize, stop_before="zz-two.md")
+    monkeypatch.setattr(pipeline, "synthesize", first)
+    cfg = config_module.load(project)
+    with pytest.raises(KeyboardInterrupt):
+        pipeline.ingest(cfg, dry_run=False)
+    assert first.calls == ["sources/revenue-policy.md", "sources/zz-one.md"]
+
+    second = counting(fake_synthesize)
+    monkeypatch.setattr(pipeline, "synthesize", second)
+    woven: list[str] = []
+    monkeypatch.setattr(
+        pipeline, "weave", lambda **kw: woven.append(kw["concept_id"]) or fake_weave(**kw)
+    )
+    summary = pipeline.ingest(cfg, dry_run=False)
+
+    assert second.calls == ["sources/zz-two.md"], "the committed sources must cost nothing"
+    assert woven == [ids[2]], "and only the source this run wrote is woven"
+    assert [o.uri for o in summary.synthesized] == ["sources/zz-two.md"]
+    assert len(summary.skipped) == 2
+    assert all((cfg.bundle_root / f"{cid}.md").exists() for cid in ids)
+
+
+def test_the_one_source_in_flight_when_a_run_died_waits_in_the_sidecar(project, monkeypatch):
+    """Nothing is deleted at the moment of failure — but only that source's files
+    are there, because every source before it already committed and cleared."""
+    three_sources(project)
+    cfg = config_module.load(project)
+
+    def die_after_writing_the_third(**kwargs):
+        result = fake_synthesize(**kwargs)
+        if kwargs["source_uri"].endswith("zz-two.md"):
+            # the concept is staged, and then the run dies before its commit
+            okf.write_concept(
+                staging.area_for(cfg).bundle,
+                okf.Concept(
+                    concept_id="zz-two",
+                    type="Policy",
+                    title="Zz Two",
+                    description="staged, never committed",
+                    body="Body.",
+                ),
+            )
+            raise KeyboardInterrupt
+        return result
+
+    monkeypatch.setattr(pipeline, "synthesize", die_after_writing_the_third)
+    with pytest.raises(KeyboardInterrupt):
+        pipeline.ingest(cfg, dry_run=False)
+
+    staged = cfg.sidecar_root / staging.STAGING / staging.BUNDLE
+    assert (staged / "zz-two.md").exists()
+    assert not (staged / "revenue-policy.md").exists(), "a committed source clears itself"
+
+    monkeypatch.setattr(pipeline, "synthesize", fake_synthesize)
+    summary = pipeline.ingest(cfg, dry_run=False)
+
+    assert any("discarded 1 concept file" in note for note in summary.recovered), summary.recovered
+    assert not (cfg.sidecar_root / staging.STAGING).exists()
+
+
+def test_a_no_op_build_reports_nothing_recovered(project, monkeypatch):
+    """A run that stages nothing must not leave an empty area for the next one to
+    report as debris — the report means an earlier run died."""
+    monkeypatch.setattr(pipeline, "synthesize", fake_synthesize)
+    cfg = config_module.load(project)
+    pipeline.ingest(cfg, dry_run=False)
+
+    monkeypatch.setattr(pipeline, "synthesize", no_model)
+    assert pipeline.ingest(cfg, dry_run=False).recovered == []
+
+
+def test_a_commit_interrupted_while_placing_a_concept_is_finished_by_the_next_run(
+    project, monkeypatch
+):
+    """The record is written before the first file moves, and it is what makes a
+    half-applied commit something the next run finishes rather than reconciles."""
+    three_sources(project)
+    monkeypatch.setattr(pipeline, "synthesize", fake_synthesize)
+    cfg = config_module.load(project)
+
+    real_replace = os.replace
+    fail = {"on": True}
+
+    def die_placing_the_last_concept(src, dst):
+        if fail["on"] and Path(dst) == cfg.bundle_root / "zz-two.md":
+            raise OSError("interrupted while placing a concept")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(staging.os, "replace", die_placing_the_last_concept)
+    with pytest.raises(OSError):
+        pipeline.ingest(cfg, dry_run=False)
+
+    assert not (cfg.bundle_root / "zz-two.md").exists()
+    assert (cfg.bundle_root / "zz-one.md").exists(), "the sources before it committed"
+    assert (cfg.sidecar_root / staging.PENDING_NAME).exists()
+
+    fail["on"] = False
+    monkeypatch.setattr(pipeline, "synthesize", no_model)  # every source unchanged
+    summary = pipeline.ingest(cfg, dry_run=False)
+
+    assert any("completed the commit" in note for note in summary.recovered), summary.recovered
+    assert (cfg.bundle_root / "zz-two.md").exists()
+    assert not (cfg.sidecar_root / staging.PENDING_NAME).exists()
+    # the indexes are derived, so a run that finds them stale regenerates them
+    assert "zz-two.md" in (cfg.bundle_root / "index.md").read_text(encoding="utf-8-sig")
+    assert sorted(Ledger.load(cfg.sidecar_root / LEDGER_NAME).sources) == [
+        "sources/revenue-policy.md",
+        "sources/zz-one.md",
+        "sources/zz-two.md",
+    ]
+
+
+def test_a_record_that_cannot_be_read_still_publishes_what_was_staged(project, monkeypatch):
+    """Last resort: the record is the plan, and losing it must not lose the work.
+
+    Its *presence* is the fact that matters — a corrupt one read as debris would
+    roll back a commit that is half applied — so it degrades to placing every file
+    the staging area holds.
     """
     monkeypatch.setattr(pipeline, "synthesize", fake_synthesize)
     cfg = config_module.load(project)
     pipeline.ingest(cfg, dry_run=False)
 
-    (project / "sources" / "zz-second.md").write_text(SAMPLE, encoding="utf-8")
+    area = staging.area_for(cfg)
+    okf.write_concept(
+        area.bundle,
+        okf.Concept(
+            concept_id="zz-staged",
+            type="Policy",
+            title="Zz Staged",
+            description="staged behind a record nothing can read",
+            body="Body.",
+        ),
+    )
+    (cfg.sidecar_root / staging.PENDING_NAME).write_text(
+        "{ not json", encoding="utf-8", newline="\n"
+    )
+
+    note = staging.reconcile(cfg)
+
+    assert "unreadable" in note
+    assert (cfg.bundle_root / "zz-staged.md").exists()
+    assert not (cfg.sidecar_root / staging.PENDING_NAME).exists()
+    assert not (cfg.sidecar_root / staging.STAGING).exists()
+
+
+# --- the weave, which rewrites concepts already published ------------------------
+
+
+def hashes_agree(cfg) -> list[str]:
+    """Concept ids whose body on disk does not hash to what the ledger recorded.
+
+    Empty is the invariant: a mismatch is read as a human edit (§6.4), so a
+    concept woven against a stale hash is one no later run will ever touch again.
+    """
+    ledger = Ledger.load(cfg.sidecar_root / LEDGER_NAME)
+    mismatched = []
+    for concept_id, record in ledger.concepts.items():
+        path = cfg.bundle_root / f"{concept_id}.md"
+        concept = okf.parse(path.read_text(encoding="utf-8-sig"), concept_id)
+        if body_hash(concept.body) != record.body_sha256:
+            mismatched.append(concept_id)
+    return mismatched
+
+
+def test_an_interrupt_before_the_weave_publishes_concepts_with_no_cross_links(
+    project, monkeypatch
+):
+    """The state a *failed* weave already produces (§6.5), so it is not a new one.
+
+    A weave failure leaves a valid, link-less concept and deliberately does not
+    mark the source incomplete — linking is an upgrade to a concept, not a
+    precondition for one — and an interrupt before the pass must land there too.
+    """
+    ids = three_sources(project)
+    monkeypatch.setattr(pipeline, "synthesize", fake_synthesize)
     monkeypatch.setattr(pipeline, "weave", interrupt)
+    cfg = config_module.load(project)
     with pytest.raises(KeyboardInterrupt):
         pipeline.ingest(cfg, dry_run=False)
 
     ledger = Ledger.load(cfg.sidecar_root / LEDGER_NAME)
-    assert list(ledger.sources) == ["sources/revenue-policy.md"]
-    assert list(ledger.concepts) == ["revenue-policy"]
-    assert not (cfg.bundle_root / "zz-second.md").exists()
-
-
-def test_the_next_run_redoes_the_source_an_interrupted_one_never_published(
-    project, monkeypatch
-):
-    monkeypatch.setattr(pipeline, "synthesize", fake_synthesize)
-    cfg = config_module.load(project)
-    pipeline.ingest(cfg, dry_run=False)
-
-    (project / "sources" / "zz-second.md").write_text(SAMPLE, encoding="utf-8")
-    monkeypatch.setattr(pipeline, "weave", interrupt)
-    with pytest.raises(KeyboardInterrupt):
-        pipeline.ingest(cfg, dry_run=False)
-
-    monkeypatch.setattr(pipeline, "weave", fake_weave)
-    summary = pipeline.ingest(cfg, dry_run=False)
-
-    assert [o.uri for o in summary.synthesized] == ["sources/zz-second.md"]
-    assert (cfg.bundle_root / "zz-second.md").exists()
-
-
-def test_the_work_an_interrupted_run_staged_waits_in_the_sidecar(project, monkeypatch):
-    """Nothing is deleted at the moment of failure. The staged tree is complete —
-    indexes and all — and the next run is what reports it and clears it."""
-    monkeypatch.setattr(pipeline, "synthesize", fake_synthesize)
-    cfg = config_module.load(project)
-    pipeline.ingest(cfg, dry_run=False)
-
-    (project / "sources" / "zz-second.md").write_text(SAMPLE, encoding="utf-8")
-    monkeypatch.setattr(pipeline, "weave", interrupt)
-    with pytest.raises(KeyboardInterrupt):
-        pipeline.ingest(cfg, dry_run=False)
-
-    staged = cfg.sidecar_root / staging.STAGING / staging.BUNDLE
-    assert (staged / "zz-second.md").exists()
-
-    monkeypatch.setattr(pipeline, "weave", fake_weave)
-    summary = pipeline.ingest(cfg, dry_run=False)
-
-    assert any("discarded" in note for note in summary.recovered), summary.recovered
-    assert not (cfg.sidecar_root / staging.STAGING).exists()
-
-
-def test_a_swap_interrupted_between_the_two_renames_is_finished_by_the_next_run(
-    project, monkeypatch
-):
-    """The pending record is written before the first rename, and it is what makes
-    a half-applied swap something the next run can finish rather than reconcile."""
-    monkeypatch.setattr(pipeline, "synthesize", fake_synthesize)
-    cfg = config_module.load(project)
-    pipeline.ingest(cfg, dry_run=False)
-    (project / "sources" / "zz-second.md").write_text(SAMPLE, encoding="utf-8")
-
-    real_rename = os.rename
-    fail = {"on": True}
-
-    def die_moving_the_new_tree_in(src, dst):
-        if fail["on"] and Path(dst) == cfg.bundle_root:
-            raise OSError("interrupted between the two renames")
-        return real_rename(src, dst)
-
-    monkeypatch.setattr(staging.os, "rename", die_moving_the_new_tree_in)
-    with pytest.raises(OSError):
-        pipeline.ingest(cfg, dry_run=False)
-
-    # the window §6.6 admits to: for this moment the project has no bundle
-    assert not cfg.bundle_root.exists()
-    assert (cfg.sidecar_root / staging.PENDING_NAME).exists()
-
-    fail["on"] = False
-    monkeypatch.setattr(pipeline, "synthesize", no_model)  # both sources unchanged
-    summary = pipeline.ingest(cfg, dry_run=False)
-
-    assert any("completed" in note for note in summary.recovered), summary.recovered
-    assert (cfg.bundle_root / "zz-second.md").exists()
-    assert (cfg.bundle_root / "revenue-policy.md").exists()
-    assert not (cfg.sidecar_root / staging.PENDING_NAME).exists()
-    assert sorted(Ledger.load(cfg.sidecar_root / LEDGER_NAME).sources) == [
+    assert sorted(ledger.sources) == [
         "sources/revenue-policy.md",
-        "sources/zz-second.md",
+        "sources/zz-one.md",
+        "sources/zz-two.md",
     ]
+    assert all(record.complete for record in ledger.sources.values()), "not a failed section"
+    assert hashes_agree(cfg) == []
+    for concept_id in ids:
+        body = (cfg.bundle_root / f"{concept_id}.md").read_text(encoding="utf-8-sig")
+        assert "](/zz-" not in body, "nothing was woven, so nothing links"
+
+    # and the next run skips them rather than retrying for the links it lacks
+    monkeypatch.setattr(pipeline, "synthesize", no_model)
+    monkeypatch.setattr(pipeline, "weave", no_model)
+    assert len(pipeline.ingest(cfg, dry_run=False).skipped) == 3
 
 
-def test_a_bundle_parked_by_a_swap_whose_record_is_gone_is_put_back(project, monkeypatch):
-    """Last resort: the record is the plan, and losing it must not lose the tree."""
+def test_an_interrupt_during_the_weave_leaves_no_concept_woven_against_a_stale_hash(
+    project, monkeypatch
+):
+    """Each rewrite is its own commit, so every concept is either woven and
+    re-recorded or unwoven and recorded — never one against the other's hash."""
+    ids = three_sources(project)
+
+    def weave_the_first_then_die(**kwargs):
+        if kwargs["concept_id"] != ids[0]:
+            raise KeyboardInterrupt
+        return WeaveResult(
+            body_markdown=kwargs["body"] + f"\n\nSee [Zz One](/{ids[1]}.md).\n", invented=[]
+        )
+
     monkeypatch.setattr(pipeline, "synthesize", fake_synthesize)
+    monkeypatch.setattr(pipeline, "weave", weave_the_first_then_die)
     cfg = config_module.load(project)
-    pipeline.ingest(cfg, dry_run=False)
+    with pytest.raises(KeyboardInterrupt):
+        pipeline.ingest(cfg, dry_run=False)
 
-    area = staging.area_for(cfg)
-    os.rename(cfg.bundle_root, area.superseded)
+    assert hashes_agree(cfg) == []
+    woven = (cfg.bundle_root / f"{ids[0]}.md").read_text(encoding="utf-8-sig")
+    unwoven = (cfg.bundle_root / f"{ids[1]}.md").read_text(encoding="utf-8-sig")
+    assert f"](/{ids[1]}.md)" in woven
+    assert f"](/{ids[1]}.md)" not in unwoven
 
-    note = staging.reconcile(cfg)
-
-    assert "restored" in note
-    assert (cfg.bundle_root / "revenue-policy.md").exists()
-    assert not area.superseded.exists()
+    # the hashes agreeing is what stops the next run reading either as hand-edited
+    ledger = Ledger.load(cfg.sidecar_root / LEDGER_NAME)
+    assert [cid for cid in ids if ledger.protection(cfg.bundle_root, cid)] == []

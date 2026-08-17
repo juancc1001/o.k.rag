@@ -63,16 +63,11 @@ class Config(BaseModel):
     vectors: VectorsConfig = Field(default_factory=VectorsConfig)
     projection: ProjectionConfig = Field(default_factory=ProjectionConfig)
 
-    staged_bundle: Path | None = None
-    """Set only while a run is staging its emit (§6.6): every write then lands
-    here and the published bundle is untouched until the commit. The pipeline
-    sets it on a copy of the config; nothing reads `okragged.toml` for it."""
-
     @property
     def bundle_root(self) -> Path:
-        """Where a bundle write goes — the staging area during a staged run."""
-        if self.staged_bundle is not None:
-            return self.staged_bundle
+        """The published bundle. One answer, always — a staged run reads from here
+        and writes into `.okragged/staging/` (§6.6), which is `staging.Area`'s job
+        rather than a second meaning for this path."""
         return self.project_root / self.bundle.root
 
     @property
