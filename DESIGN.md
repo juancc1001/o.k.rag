@@ -74,6 +74,10 @@ ragged/
 │  ├─ manifest.json            # source hash → concept ids; the idempotency ledger
 │  ├─ extracted/               # cached plain-text extractions, keyed by content hash
 │  ├─ proposed/                # replacements for concepts a human owns (§6.4)
+│  ├─ lock.json                # the one writer holding the project (§6.6)
+│  ├─ staging/                 # the emit in flight: bundle/ + its manifest.json
+│  ├─ pending-commit.json      # a swap to finish, if one was interrupted
+│  ├─ superseded/              # the previous tree, until that swap finishes
 │  ├─ embeddings.npy           # float32 [n_concepts, dim], L2-normalized
 │  ├─ embeddings_meta.json     # provider, model, dim + row → concept id, embedded hash
 │  ├─ layout.json              # 2D projection coordinates
@@ -92,6 +96,8 @@ ragged/
 │  ├─ agent/                   # layer 3: search/lint, the contract, the MCP server
 │  ├─ api/                     # FastAPI app
 │  ├─ ledger.py                # the idempotency ledger (.okragged/manifest.json)
+│  ├─ lock.py                  # one writer per project (.okragged/lock.json)
+│  ├─ staging.py               # the staged emit and its pending-commit record
 │  └─ cli.py
 │
 ├─ web/                        # Vite + React + TS + sigma.js
@@ -187,6 +193,19 @@ The idempotency ledger, written by `ledger.py`. Everything about re-ingest corre
 `body_sha256` is the hash of the concept body *as okragged last wrote it*. A file on disk that hashes differently was edited by a human, and is protected (§6.4). This is **computed at read time, not stored as a flag**: a stored `human_edited: true` goes stale the moment the human reverts their edit, and a ledger that has to be told the truth twice will eventually be told it once.
 
 Losing the ledger costs a full re-ingest, never correctness — so every read path degrades to "no record" rather than raising, and a skip additionally requires the recorded concept files to still be on disk.
+
+### `lock.json`, `staging/`, `pending-commit.json`, `superseded/`
+
+Four entries, one job: make one writer at a time, and make the emit recoverable (§6.6). All four are sidecar state, so losing them costs a re-run and never correctness — a missing lock means "no holder", and a missing pending record means "no commit was in flight".
+
+| | |
+|---|---|
+| `lock.json` | the writer holding the project: `operation`, `pid`, `host`, `started`. Created with `O_CREAT\|O_EXCL` — atomic on both platforms, which `fcntl` is not, and Windows is the primary one. Read paths never take it. |
+| `staging/` | the emit in flight — `staging/bundle/` seeded from the published tree, plus `staging/manifest.json`, the ledger that commits with it |
+| `pending-commit.json` | written immediately before the swap and deleted after it; while it exists, the swap is replayable |
+| `superseded/` | where the published tree is parked for the duration of the swap, so the previous bundle is never deleted before its replacement is in place |
+
+**A stale lock must not need a human.** The record names its holder so a dead one can be told from a live one: same host, the pid is probed (never with `os.kill(pid, 0)`, which on Windows *terminates* the process it asks about); another host, and age is the only test available, so a foreign lock goes stale after six hours. A crashed run leaving a lock file behind would otherwise replace the failure this fixes with a worse one.
 
 ### `embeddings.npy` + `embeddings_meta.json`
 
@@ -341,7 +360,28 @@ An entry for a concept that owns a subdirectory states how many concepts are bel
 
 The root index's heading comes from `[bundle].title`, falling back to the project directory name — which names the tool rather than the knowledge unless the two happen to agree.
 
-Writes are atomic per file (temp + rename) and the whole emit is transactional at the manifest level: the manifest is updated only after every file lands, so a crash mid-emit leaves the previous manifest and the next run reconciles.
+Writes are atomic per file (temp + rename). The tree is a separate problem, and the honest claim about it is **recoverable, not atomic**: a multi-file directory swap cannot be made atomic on Windows, and pretending otherwise would be worse than not trying, because `bundle/` → `bundle.old/` → `staging/` → `bundle/` has a window in which there is no bundle at all.
+
+So the emit is staged. A run writes into `.okragged/staging/bundle/`, seeded from the published tree — a copy, whose cost is honest, and which is what lets indexes be read off the whole bundle (above) and stale output be removed from it rather than reconstructed. The swap is then fenced by a record on disk:
+
+1. write `.okragged/pending-commit.json` — from here the swap is replayable
+2. `bundle/` → `.okragged/superseded/`
+3. `.okragged/staging/bundle/` → `bundle/`
+4. `.okragged/staging/manifest.json` → `.okragged/manifest.json`
+5. delete the staging area, the superseded tree, and the record
+
+Every step is idempotent and guarded by what is on disk rather than by a step counter, so the next run replays from wherever a crash landed. **The record is what says which of the two answers is right**, and it is written only once the staged tree is complete:
+
+- **a record, with or without a staging area → finish it.** Its presence means the tree was worth publishing and only the swap is unfinished.
+- **a staging area with no record → roll it back.** The run was interrupted before it earned one. The previous tree stands, and the staged work is left in the sidecar — unpublished, but not deleted at the moment of failure — until the next run reports it and clears it.
+
+Either way the next run *says* what it found; a build that repaired this silently would be hiding the fact that an earlier one died.
+
+**The ledger commits with the bundle or not at all**, which is why it stages too. It is only true once every file it describes has landed: a ledger that outran the bundle would have the next run's content-hash skip believe work was done that was not, and the corpus would quietly lose those sources. Layer 3 is written after the commit for the same reason — a contract beside a bundle that never landed describes one that does not exist (§10).
+
+**What this costs, stated rather than discovered.** A run interrupted before its commit loses the model calls it paid for; the previous bundle and the previous ledger both stand, and the next run redoes that source. The extraction cache survives, so what is re-paid is synthesis and not extraction. `_finalize` still runs in a `finally` — indexes, log and ledger are written on the way out however the run leaves — but into the staging area, so what an interrupted run leaves behind is a complete tree that was never published rather than a published tree that is a mix of two namings. Ids come from model-written titles (§5), so that mix is the real hazard: a half-applied emit is not a subset of the old tree.
+
+**One writer at a time.** The CLI, the MCP server's `add_source` and the Python API are three writers to one directory, so a real run holds `.okragged/lock.json` (§5) for its duration. `okragged index` takes it too — it reads a bundle a build may be swapping under it. **Read paths never take it**: `search`, `read_concept`, `lint`, `check` and `serve` keep answering while a write is in flight, and so does `build --dry-run`, which writes no bundle and no ledger. The revision model that many *remote* writers need is M6's problem (§13).
 
 ### 6.7 validate
 
@@ -498,7 +538,7 @@ BigQuery specifically: `INFORMATION_SCHEMA.COLUMNS` + `TABLES` + table descripti
 
 ## 10. Agent contract
 
-**Built** (M4), as `src/okragged/agent/`. `pipeline._finalize` regenerates the whole contract on every ingest, and `okragged agent` regenerates it offline from an existing bundle.
+**Built** (M4), as `src/okragged/agent/`. `pipeline.ingest` regenerates the whole contract on every run, after the commit that publishes the bundle (§6.6), and `okragged agent` regenerates it offline from an existing bundle.
 
 ### `agent/AGENTS.md` (generated)
 
@@ -537,7 +577,7 @@ Both call the function that writes the file, rather than a second renderer, so w
 Two consequences of the layering worth keeping:
 
 - **`search` returns pointers and `read_concept` returns whole files.** That is progressive disclosure (§7) expressed as a tool boundary — an agent cannot accidentally be handed chunks, because no tool returns one.
-- **`add_source` goes through `pipeline.ingest`, not around it.** Its `_finalize` runs in a `finally`, so a client that disconnects mid-run cannot strand model calls already paid for. A `paths` subset additionally suppresses the vanished-source sweep (§6.1): a partial run never looked at the other sources, so their absence is not evidence that they are gone.
+- **`add_source` goes through `pipeline.ingest`, not around it.** So it takes the project lock, and its emit is staged and committed like any other (§6.6): a client that disconnects mid-run leaves the bundle it had rather than half of a new one. A `paths` subset additionally suppresses the vanished-source sweep (§6.1): a partial run never looked at the other sources, so their absence is not evidence that they are gone.
 
 Nothing in this layer writes to the bundle, and nothing writes a `verified` block (§4.4) — the contract *explains* the trust tiers so that a consuming agent does not try to write one either. The MCP SDK is an optional extra: it pulls starlette, uvicorn and opentelemetry for a server that speaks over a pipe, and none of that is needed to produce or validate a bundle.
 
@@ -638,7 +678,7 @@ random_state = 42
 | **M2** | Real bundle | **done** |
 | **M3** | Vectors + graph | **done** |
 | **M4** | Agent contract | **done** |
-| **M5** | Distribution — package, MCP export, Python API | **in progress** — 4 of 6 |
+| **M5** | Distribution — package, MCP export, Python API | **in progress** — 6 of 6 built, exit criterion open |
 | **M6** | Hosted server — one bundle, many consumers | proposed |
 | **M7** | Connectors | phase 2 |
 | **M8** | Extract `okf/` as a standalone library | gated — see below |
@@ -702,11 +742,11 @@ What it does **not** settle: whether the fix is a higher absolute τ, a threshol
 
 The credential-free requirement is what shaped `search`: it falls back from embedding kNN to a traversal ranking over the indexes, the bodies and the link graph, and reports which path answered. That fallback is not a stub — it is the path the exit criterion exercises, and on the real corpus it is the only one available, because `okragged index` needs the same credential.
 
-The contract is regenerated by `pipeline._finalize`, so it can never describe a bundle that no longer exists, and by `okragged agent` for a bundle that was built elsewhere. It is generated *beside* `bundle/`, never inside it — layer 3 is a sibling of layer 2, and the sidecar rule (§2) is why.
+The contract is regenerated at the end of every ingest — after the commit that publishes the bundle (§6.6) — so it can never describe a bundle that no longer exists, and by `okragged agent` for a bundle that was built elsewhere. It is generated *beside* `bundle/`, never inside it — layer 3 is a sibling of layer 2, and the sidecar rule (§2) is why.
 
 Exit criterion: a session with no credential registers the server, answers a real question from the bundle, and reports lint findings. **Met** on the same 3-PDF Spanish corpus, driving the generated `agent/mcp_server.py` over stdio exactly as the `.mcp.json` entry spawns it: `search` answered a question about Ley 26.388 by traversal (reporting `no stored embeddings for this provider; run okragged index`) with the right concept first, `read_concept` returned it whole, and `lint` reported 18 concepts, okflint exit 0, no orphans, and no ghost edges *because the index has not run* rather than because there are none.
 
-**M5 — distribution. Next, and deliberately ahead of connectors.**
+**M5 — distribution. All six pieces built, and deliberately ahead of connectors.**
 
 Everything built so far assumes the reader is standing inside the producer's working tree. `.mcp.json` names a venv-relative interpreter and a relative script path; the server tells its client that `agent/AGENTS.md` is the contract; the only way to drive the pipeline is a CLI rooted at a cwd. §10 claims that registering the server "makes any MCP-capable agent a consumer of the bundle with no okragged-specific code", and **for a consumer outside that tree, it does not.** M5 makes that claim true.
 
@@ -743,7 +783,7 @@ The URI scheme is the one irreversible choice here: `okf://` would claim the for
 
    **The two real changes are behavioural, and both were defects for a caller who is not a terminal:**
 
-   - **`_finalize` wrote layer 3 unasked.** It now takes `contract`, which `ingest` defaults to on — `okragged build` must regenerate the contract, because §10 depends on it never describing a bundle that no longer exists — and which `okragged.build()` defaults to *off*, because a function call that drops `.mcp.json` into somebody's repository is a surprise. `okragged.write_contract()` is how a library caller asks. The asymmetry is documented where the parameter is defined rather than in one of the two callers.
+   - **`_finalize` wrote layer 3 unasked.** `ingest` now takes `contract`, defaulting to on — `okragged build` must regenerate the contract, because §10 depends on it never describing a bundle that no longer exists — and which `okragged.build()` defaults to *off*, because a function call that drops `.mcp.json` into somebody's repository is a surprise. `okragged.write_contract()` is how a library caller asks. The asymmetry is documented where the parameter is defined rather than in one of the two callers.
    - **`ingest` reported only on completion.** It now takes an optional `progress` callable receiving a frozen `Progress(stage, unit, index, total, detail)` — one event per stage per unit, over the eight stages in `pipeline.STAGES`. This is the callback whose absence deferred `POST /api/ingest` and its SSE stream (§11); the endpoint still needs a job registry, and that is M6's problem or a later one's. A reporter that raises is swallowed: a caller's broken logging must not abort a run that has already paid for model calls.
 
    **`import okragged` is silent and cheap, and that is a requirement rather than a nicety.** `markitdown` prints an ffmpeg warning when imported and `extract/` imports it, so a package whose import writes to somebody else's stderr is unusable in a pipe — and for `okragged mcp`, stdout *is* the protocol. Every import in the facade is function-local, with a module `__getattr__` (PEP 562) for the two names, and a test asserts both that the import prints nothing and that it pulls in neither the extraction path nor a provider.
@@ -766,7 +806,13 @@ The URI scheme is the one irreversible choice here: `okf://` would claim the for
 
    **One honest limitation to state rather than discover.** Asserting "x relates to y" mints a *third* concept that links to both; it does not rewrite x and y to link back. Link-weave only touches concepts written in the current run, which is the forward-only property M2 settled. The relationship is in the graph and it is traceable — it just lives in its own node, and the reverse direction is what ghost edges are for.
 
-6. **A lock and a staged emit.** Not deferred to hosting: after M5 the CLI, the MCP server and the Python API are three writers to one directory, and today nothing detects them interleaving. The minimum is a lock file in `.okragged/` and an emit that stages then swaps, so a crash mid-write leaves the previous tree rather than a mix of two namings. The revision model that many *remote* writers need is M6's problem, not this one's.
+6. **A lock and a staged emit. Built**, in `lock.py` and `staging.py` (§5, §6.6). Not deferred to hosting: after M5 the CLI, the MCP server and the Python API are three writers to one directory, and nothing detected them interleaving. `.okragged/lock.json` makes it one writer per project — exclusive creation rather than `fcntl`, because Windows is the primary platform — and the emit stages into `.okragged/staging/` and commits behind a pending-commit record.
+
+   **The claim is recoverable, not atomic, and the difference is the whole design.** A genuinely atomic multi-file directory swap is not available on Windows, and asserting one would be worse than not trying. What the record buys instead is that an interrupted swap is *detectable and completable*: a record means finish it, a staging area with no record means roll it back, and the next run says which it found. Concept ids derive from model-written titles, so the alternative is not a partially updated tree but a mix of two namings — and stale-output cleanup reconciles against a complete emit or not at all.
+
+   **The ledger and the bundle commit together or neither**, so an interrupted run leaves the ledger describing the tree that is still published. The cost, stated in §6.6 rather than discovered later, is that such a run loses the synthesis it paid for: the extraction cache survives and the staged tree waits in the sidecar, but the next run redoes that source. A ledger that outran the bundle would be the worse trade — the content-hash skip would believe work was done that was not, and the corpus would lose sources silently.
+
+   **Two things this deliberately does not do.** No revision model: `expectedRevision` and conflict resolution are for many remote writers, and that is M6 criterion 3. And no lock on any read path — `search`, `read_concept`, `lint`, `check` and `serve` answer while a write is in flight, because a consumer holding a directory of markdown files needs permission from nobody, and a reader a build could refuse would undo the point of the format.
 
 **What this must not become.** The API is an entry point to the pipeline, not an abstraction over it. `synth/` stays unpublished for the reason M7 gives below, and it applies with more force to a public API: a `provider=` argument in a documented signature is a promise to track every vendor's drift forever. Nor does the first version return a `Bundle` object — the load-bearing property of this design is that a bundle *is* a directory (§2), and an object hands back a different answer to a question nobody has asked yet. Summaries and paths.
 

@@ -151,21 +151,31 @@ def test_a_non_200_does_not_abort_the_run(project, monkeypatch):
     assert summary.report is not None and summary.report.ok
 
 
-def test_an_interrupted_run_still_leaves_a_readable_bundle(project, monkeypatch):
+def test_an_interrupted_run_leaves_the_bundle_the_last_one_published(project, monkeypatch):
+    """The emit is staged, so a crash mid-run publishes nothing (§6.6).
+
+    Ids come from model-written titles, so half an emit is not a subset of the
+    previous tree — it is a mix of two namings. The concept this run did write is
+    complete and sitting in `.okragged/staging/`; `tests/test_writers.py` covers
+    what the next run does with it, and that the ledger stayed behind with it.
+    """
+    monkeypatch.setattr(pipeline, "synthesize", fake_synthesize)
+    cfg = config_module.load(project)
+    pipeline.ingest(cfg, dry_run=False)
+    published = (cfg.bundle_root / "revenue-policy.md").read_text(encoding="utf-8-sig")
+
     (project / "sources" / "zz-interrupted.md").write_text(SAMPLE, encoding="utf-8")
 
-    def interrupt_on_the_second(**kwargs):
-        if kwargs["source_uri"].endswith("zz-interrupted.md"):
-            raise KeyboardInterrupt
-        return fake_synthesize(**kwargs)
+    def interrupt_the_weave(**_):
+        raise KeyboardInterrupt
 
-    monkeypatch.setattr(pipeline, "synthesize", interrupt_on_the_second)
-    cfg = config_module.load(project)
+    monkeypatch.setattr(pipeline, "weave", interrupt_the_weave)
     with pytest.raises(KeyboardInterrupt):
         pipeline.ingest(cfg, dry_run=False)
 
-    assert (cfg.bundle_root / "revenue-policy.md").exists()
-    assert "revenue-policy.md" in (cfg.bundle_root / "index.md").read_text(encoding="utf-8")
+    assert not (cfg.bundle_root / "zz-interrupted.md").exists()
+    assert (cfg.bundle_root / "revenue-policy.md").read_text(encoding="utf-8-sig") == published
+    assert "zz-interrupted" not in (cfg.bundle_root / "index.md").read_text(encoding="utf-8-sig")
     assert okf.validate(cfg.bundle_root).ok
 
 

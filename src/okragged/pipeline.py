@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import okf
+from . import lock, okf, staging
 from .agent import write_contract
 from .config import Config
 from .extract import ExtractionError, extract
@@ -110,6 +110,9 @@ class IngestSummary:
     """Concepts whose source is gone. Marked, not deleted (§6.1)."""
     invented_links: list[str] = field(default_factory=list)
     """Weave targets outside the bundle. Unwrapped to plain text, never silent."""
+    recovered: list[str] = field(default_factory=list)
+    """What this run found a previous one had left behind, and what it did about
+    it (§6.6). Reported rather than repaired quietly: it says a build died."""
 
     @property
     def written(self) -> list[ItemOutcome]:
@@ -148,7 +151,7 @@ def ingest(
 ) -> IngestSummary:
     """Run the pipeline over `config`'s sources.
 
-    `contract` regenerates layer 3 (`agent/AGENTS.md`, `.mcp.json`) in `_finalize`,
+    `contract` regenerates layer 3 (`agent/AGENTS.md`, `.mcp.json`) after the emit
     and it defaults to on because that is what `okragged build` must do: §10 relies
     on the contract never describing a bundle that no longer exists, and a CLI run
     is the moment the bundle changed. The public `okragged.build()` defaults it
@@ -157,6 +160,74 @@ def ingest(
     a caller who wants it.
 
     `progress` is called as the run moves through its stages; see `Progress`.
+
+    A real run **holds the project lock and emits into `.okragged/staging/`**,
+    published in one fenced commit at the end (§6.6, `staging.py`). Three things
+    follow. A second writer is refused rather than interleaved. An interrupted run
+    leaves the previous bundle *and* the previous ledger — ids come from
+    model-written titles, so a half-applied emit is a mix of two namings rather
+    than a subset, and a ledger that outran the bundle would make the next run
+    skip sources it never published. And what such a run did stage stays in the
+    sidecar, unpublished, until the next run reports and clears it.
+    """
+    if dry_run:
+        # no lock and no staging: a dry run writes no bundle and no ledger, so
+        # there is nothing to serialize, and refusing one because a build is in
+        # flight would put a new failure mode in the command whose whole point is
+        # that it is safe to run at any time
+        swept = _run(config, dry_run=True, only=only, progress=progress)
+        return _validated(config, swept, progress)
+
+    with lock.hold(config.sidecar_root, "ingest") as held:
+        # before the credential check: a commit some earlier run left half applied
+        # is finished even by a run that then cannot proceed for its own reasons
+        notes = [note for note in (held.note, staging.reconcile(config)) if note]
+        require_credential(config)  # before extracting a whole corpus, not after
+        area = staging.prepare(config)
+        summary = _run(
+            config.model_copy(update={"staged_bundle": area.bundle}),
+            dry_run=False,
+            only=only,
+            ledger_out=area.ledger,
+            progress=progress,
+        )
+        summary.recovered = notes
+        staging.commit(area)
+        if contract and config.bundle_root.exists():
+            # after the commit and never before: layer 3 describes layer 2, and a
+            # contract written beside a bundle that did not land would describe
+            # one that does not exist (§10)
+            write_contract(config)
+        return _validated(config, summary, progress)
+
+
+def _validated(
+    config: Config,
+    summary: IngestSummary,
+    progress: Callable[[Progress], None] | None,
+) -> IngestSummary:
+    """Validate the published bundle — after the commit, so the report is about
+    the tree a reader will actually find."""
+    if config.bundle_root.exists():
+        _report(progress, Progress(VALIDATE))
+        summary.report = okf.validate(config.bundle_root)
+    return summary
+
+
+def _run(
+    config: Config,
+    *,
+    dry_run: bool,
+    only: list[str] | None,
+    progress: Callable[[Progress], None] | None,
+    ledger_out: Path | None = None,
+) -> IngestSummary:
+    """The stages themselves.
+
+    `config.bundle_root` is the staging area on a real run and `ledger_out` is the
+    ledger that commits with it, so nothing below has to know that the emit is
+    staged: it writes a whole tree, and the commit decides whether that tree
+    becomes the bundle.
     """
     selected = _selected(config, only)
     source = LocalFileSource(
@@ -166,8 +237,8 @@ def ingest(
         project_root=config.project_root,
     )
     summary = IngestSummary()
-    if not dry_run:
-        require_credential(config)  # before extracting a whole corpus, not after
+    # loaded from the published ledger, saved to the staged one: this run's
+    # record of itself is only true once its bundle has landed
     ledger_path = config.sidecar_root / LEDGER_NAME
     ledger = Ledger() if dry_run else Ledger.load(ledger_path)
     # snapshotted once: the synthesis prefix has to stay byte-identical all run
@@ -273,15 +344,14 @@ def ingest(
                 _deprecate_vanished(config, ledger, discovered, summary, log_entries)
     finally:
         # Concepts are written per file, but only the indexes, log and ledger
-        # make them a bundle. Run on the way out however we leave — a Ctrl-C or
-        # an unforeseen crash must not strand the model calls already paid for.
+        # make them a bundle. Run on the way out however we leave, so that what
+        # the staging area holds is a whole tree and not a pile of files — a
+        # Ctrl-C leaves it complete and inspectable in the sidecar even though
+        # the commit it never reached is what would have published it.
         if not dry_run and config.bundle_root.exists():
             _report(progress, Progress(FINALIZE))
-            _finalize(config, log_entries, ledger, ledger_path, contract)
+            _finalize(config, log_entries, ledger, ledger_out or ledger_path)
 
-    if config.bundle_root.exists():
-        _report(progress, Progress(VALIDATE))
-        summary.report = okf.validate(config.bundle_root)
     return summary
 
 
@@ -605,7 +675,6 @@ def _finalize(
     log_entries: list[str],
     ledger: Ledger,
     ledger_path: Path,
-    contract: bool,
 ) -> None:
     title = config.bundle_title
     okf.write_indexes(config.bundle_root, config.bundle.okf_version, title)
@@ -617,13 +686,10 @@ def _finalize(
             log_entries,
         )
     okf.write_manifest(config.project_root, config.bundle.root, title)
-    # layer 3 describes layer 2, so it is regenerated from the bundle that just
-    # landed rather than from what this run happened to write (§10). Asked for
-    # rather than unconditional: `okragged build` always wants it, and a library
-    # call that writes `agent/` and `.mcp.json` into the caller's tree does not.
-    if contract:
-        write_contract(config)
-    # last: the ledger is only true once every file it describes has landed
+    # last, and staged: the ledger is only true once every file it describes has
+    # landed, so it lands in the same commit as the tree it describes or not at
+    # all. Layer 3 is written by the caller after that commit, for the same
+    # reason — a contract beside a bundle that did not land describes nothing.
     ledger.bundle_root = config.bundle.root
     ledger.save(ledger_path)
 

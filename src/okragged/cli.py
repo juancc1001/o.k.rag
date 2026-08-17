@@ -11,6 +11,7 @@ from . import okf, vectors
 from .agent import write_contract
 from .api.app import WEB_DIST, create_app
 from .config import Config
+from .lock import LockHeld
 from .pipeline import IngestSummary, ingest, inspect_extraction
 from .synth import MissingCredential, resolve
 from .vectors import MissingEmbedCredential
@@ -65,6 +66,9 @@ def build(
         typer.secho(str(exc), fg="red")
         typer.secho("  copy .env.example to .env and add your key, or run `okragged doctor`", fg="bright_black")
         raise typer.Exit(2) from None
+    except LockHeld as exc:
+        typer.secho(str(exc), fg="red")
+        raise typer.Exit(2) from None
 
     _print_summary(summary, dry_run=dry_run)
     raise typer.Exit(_exit_code(summary))
@@ -91,7 +95,7 @@ def index() -> None:
         raise typer.Exit(2)
     try:
         summary = vectors.index(cfg)
-    except MissingEmbedCredential as exc:
+    except (MissingEmbedCredential, LockHeld) as exc:
         typer.secho(str(exc), fg="red")
         raise typer.Exit(2) from None
     _print_index(summary)
@@ -274,6 +278,10 @@ def _report_path(label: str, path: Path, hint: str) -> None:
 
 
 def _print_summary(summary: IngestSummary, dry_run: bool) -> None:
+    # first: what an earlier run left behind explains anything else that looks odd
+    for note in summary.recovered:
+        typer.secho(f"\n{note}", fg="yellow")
+
     verb = "would write" if dry_run else "wrote"
     total = sum(o.concept_count for o in summary.synthesized)
     noun = f"{total} concept(s) from {len(summary.synthesized)} source(s)"

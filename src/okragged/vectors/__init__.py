@@ -19,6 +19,7 @@ import numpy as np
 
 from .. import okf
 from ..config import Config
+from ..lock import hold
 from .base import EmbedError, MissingEmbedCredential
 from .embed import EmbedSummary, chunk, embed_bundle, embedding_text
 from .graph import GRAPH_NAME, LAYOUT_NAME, build_graph, is_stale, trust, write_graph, write_layout
@@ -68,6 +69,14 @@ class IndexSummary:
 
 
 def index(config: Config) -> IndexSummary:
+    """Embed, project, write the graph. Holds the project lock: this reads the
+    bundle a `build` may be swapping under it, and two of these interleaving
+    would write one matrix and another's meta beside it (§13 M5 item 6)."""
+    with hold(config.sidecar_root, "index"):
+        return _index(config)
+
+
+def _index(config: Config) -> IndexSummary:
     embedded = embed_bundle(config)
     store = load_store(config.sidecar_root, embedded.provider, embedded.model)
     matrix = store.matrix if store.matrix is not None else np.zeros((0, 0), np.float32)

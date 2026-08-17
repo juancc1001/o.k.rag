@@ -15,6 +15,10 @@ cleanup, deprecation and human-edit detection are all built on.
 The run is a partial one over the file just written, which suppresses the
 vanished-source sweep (§6.1): safe by construction rather than by a check.
 
+The project lock and the staged emit come with `ingest` (§6.6), so two of these at
+once serialize on the bundle rather than on the source file — which needs no lock,
+because the path is generated per assertion and identical bytes reuse it.
+
 Not imported by `agent/__init__.py`, for the same reason `server` is not: it
 imports `pipeline`, which imports that package to regenerate the contract.
 """
