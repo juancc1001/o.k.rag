@@ -106,15 +106,17 @@ def build_server(config: Config):
         """Record knowledge no source document states, as a new source.
 
         Takes prose, not a concept: it is written into the corpus as a source
-        file - the path is generated here and never accepted - and the pipeline
-        authors the concept from it, so the concept has real provenance. Submit
-        no frontmatter. Nothing on this surface writes a `verified` block: that
-        records a confirmation event that actually happened, and a human promotes
-        a concept by editing the file. Needs a credential.
+        file - the path is generated here and never accepted - and `okragged
+        build` authors the concept from it later, so the concept has real
+        provenance. Submit no frontmatter. Nothing on this surface writes a
+        `verified` block: that records a confirmation event that actually
+        happened, and a human promotes a concept by editing the file.
 
-        `ingested: false` means the prose was recorded but nothing was synthesized
-        from it yet - another writer held the project, most likely. The source is
-        in the corpus and the next build picks it up; do not submit it again.
+        This records only. **No concept appears until someone runs `okragged
+        build`**, which is deliberate: synthesis costs money, and nothing
+        reachable over this protocol may spend somebody's credential. Say so
+        rather than waiting for a concept that is not coming. `recorded: false`
+        means identical prose was already on file, so nothing was written.
         """
         return asdict(run_add_source(config, text, title))
 

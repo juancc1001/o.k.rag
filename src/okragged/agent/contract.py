@@ -177,19 +177,20 @@ def render_agents_md(config: Config) -> str:
         "",
         "## Operations",
         "",
-        "Four tools, over the MCP server. Three of them need no credential at all.",
+        "Four tools, over the MCP server. **None of them needs a credential.**",
         "",
-        "| tool | signature | credential |",
-        "|---|---|---|",
+        "| tool | signature |",
+        "|---|---|",
         "| `search` | `(query: str, k: int = 8)` → pointers: `concept_id`, `title`, "
-        "`description`, `score` | none |",
-        "| `read_concept` | `(concept_id: str)` → the raw file, frontmatter included | none |",
-        "| `lint` | `()` → conformance, ghost edges, stale concepts, orphans | none |",
-        "| `add_source` | `(text: str, title: str \\| None)` → the source it wrote and the "
-        "concepts synthesized from it | **required** |",
+        "`description`, `score` |",
+        "| `read_concept` | `(concept_id: str)` → the raw file, frontmatter included |",
+        "| `lint` | `()` → conformance, ghost edges, stale concepts, orphans |",
+        "| `add_source` | `(text: str, title: str \\| None)` → the source file it wrote |",
         "",
-        "**Only `add_source` needs a credential**, because it is the only one that calls a "
-        "model. Querying and linting an existing bundle are entirely offline.",
+        "**Nothing here calls a model, so nothing here spends anybody's credential.** "
+        "Querying and linting read the bundle; `add_source` writes a file. The one step "
+        "that costs money — turning a source into a concept — is `okragged build`, run by "
+        "whoever owns the corpus and the key.",
         "",
         "- **query** — `search`, then `read_concept` on what it points at. "
         "`read_concept(\"index\")` returns the root index itself.",
@@ -198,14 +199,15 @@ def render_agents_md(config: Config) -> str:
         "by `okragged index`, so run that if it reports having none to read.",
         "- **add_source** — for knowledge no document states: two things are related in a "
         "way no source says, and somebody knows it. Give it prose and it writes that prose "
-        "into the corpus as a new source, generating the path itself, then synthesizes "
-        "concepts from that one file. Every concept traces to a source, which is why "
-        "nothing here writes a concept — or a `verified` block — directly. Asserting that "
-        "x relates to y mints a third concept linking to both; it does not rewrite x and y "
-        "to link back.",
+        "into the corpus as a new source, generating the path itself. **It records only** — "
+        "the concept is authored by the next `okragged build`, so do not wait for one or "
+        "report that it appeared. Every concept traces to a source, which is why nothing "
+        "here writes a concept — or a `verified` block — directly. Asserting that x relates "
+        "to y will mint a third concept linking to both; it does not rewrite x and y to "
+        "link back.",
         "",
-        "**Re-ingesting the whole corpus is not on this surface**, deliberately: it is "
-        "`okragged build`, where the sources and the credential already are.",
+        "**Synthesis is not on this surface**, deliberately: it is `okragged build`, where "
+        "the sources and the credential already are, run by whoever owns them.",
         "",
         "## Registering the server",
         "",

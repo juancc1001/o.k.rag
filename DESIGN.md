@@ -580,7 +580,7 @@ Four tools:
 |---|---|---|
 | `search` | `(query: str, k: int = 8) -> list[{concept_id, title, description, score}]` | Embedding kNN, or index traversal without a credential. Returns pointers, never bodies — the agent decides what to read. |
 | `read_concept` | `(concept_id: str) -> str` | Raw file contents, frontmatter included. |
-| `add_source` | `(text: str, title: str \| None) -> AddedSource` | Records knowledge no document states. Writes prose into `sources/` — **the path is generated, never accepted** — then ingests that path alone. Needs a credential. |
+| `add_source` | `(text: str, title: str \| None) -> AddedSource` | Records knowledge no document states. Writes prose into `sources/` — **the path is generated, never accepted** — and stops there; the concept is authored by the next `okragged build`. Calls no model, so it needs no credential. |
 | `lint` | `() -> LintReport` | okflint results + ghost edges + stale concepts + orphans. Ghosts are capped at the 20 strongest, with `ghosts_total` and a note; and a `graph.json` whose nodes no longer match the bundle is reported out of date rather than trusted, because a rebuild renames ids and the old graph is then about *different* concepts. |
 
 And two resources, which is the other half of what makes that claim true. A consumer in another checkout cannot open `agent/AGENTS.md`, so the contract crosses the process boundary over the protocol instead of over the filesystem:
@@ -592,7 +592,7 @@ And two resources, which is the other half of what makes that claim true. A cons
 
 Both call the function that writes the file, rather than a second renderer, so what is served cannot drift from what is on disk. Above them sits the handshake `instructions`: short, self-contained, and naming **no** path — it says what the bundle is and to fetch the contract. Three levels of disclosure, and the invariant they establish is checkable offline, which by §6.5's standard makes it a test rather than a convention: **no generated instruction text may name a path relative to the producer's root.** `tests/test_agent.py` asserts it over everything the server declares over the wire, with a meta-test pointing the check at the M4 text it replaced.
 
-**Three of the four tools take no credential, and `search` is the one that has to work for it.** The fourth is `add_source`, and it is deliberately additive: `ingest` came off this surface in M5 because a full sweep can deprecate a whole bundle (§13 M5), so nothing reachable over the protocol can sweep the corpus.
+**No tool takes a credential, and that is a boundary rather than a convenience.** `search` has to work without one, and `add_source` is the tool that could most easily have needed one — it does not, because it records prose and leaves synthesis to `okragged build`. Nothing reachable over this protocol calls a model, so nothing reachable over it spends anybody's key; MCP over stdio has no identity to charge, and "whose key" would otherwise be settled by environment precedence. `add_source` is also deliberately additive: `ingest` came off this surface in M5 because a full sweep can deprecate a whole bundle (§13 M5), so nothing here can sweep the corpus either. Spending over the protocol is §13 M6.
 
 **Why `add_source` and not `add_concept`.** Every concept traces to a source (§4.2): `sources:` carries at least one entry, each concept records `x_okragged_source_hash`, and the ledger maps source hash → concept ids. A concept written straight into the bundle would fabricate provenance or omit it, and would exist in the bundle while being absent from the ledger — so what the ledger describes and what the bundle contains would stop agreeing, which is the assumption stale-output cleanup, deprecation and human-edit detection all rest on. Writing the assertion as a source keeps every one of those and costs no new machinery. The run is partial, which suppresses the vanished-source sweep (§6.1) — safe by construction rather than by a check. One consequence to state rather than discover: asserting "x relates to y" mints a *third* concept linking to both; it does not rewrite x and y to link back, because link-weave only touches concepts written in the current run.
 
@@ -703,11 +703,12 @@ random_state = 42
 | **M3** | Vectors + graph | **done** |
 | **M4** | Agent contract | **done** |
 | **M5** | Distribution — package, MCP export, Python API | **in progress** — 6 of 6 built, exit criterion open |
-| **M6** | Publish — PyPI, and shipping the view | next |
-| **M7** | Hosted server — one bundle, many consumers | proposed |
-| **M8** | Connectors | phase 2 |
-| **M9** | Extract `okf/` as a standalone library | gated — see below |
-| **M10** | Grounded answers | proposed |
+| **M6** | Security layer — identity, and who may spend | **next** |
+| **M7** | Publish — PyPI, and shipping the view | next |
+| **M8** | Hosted server — one bundle, many consumers | proposed |
+| **M9** | Connectors | phase 2 |
+| **M10** | Extract `okf/` as a standalone library | gated — see below |
+| **M11** | Grounded answers | proposed |
 
 **M3 and M4 were deliberately swapped, and then the execution went the other way.** The reason for the swap still stands: the objective is that any model *consumes* the bundle, and that is served by the agent contract, not by the graph. The graph is diagnostic; MCP is the product.
 
@@ -790,7 +791,7 @@ Everything built so far assumes the reader is standing inside the producer's wor
 
 **No hyphen, and one script.** A hyphenated distribution reads fine in `pip install` and badly everywhere else, and a second `okragged-mcp` binary buys nothing a subcommand does not — the registration entry becomes `{"command": "okragged", "args": ["mcp", "--project", "…"]}`, which is one name to learn and one thing on `PATH`. `okragged` is unclaimed on PyPI, so the distribution and the module can be the same word, which is the arrangement that never surprises anyone.
 
-The URI scheme is the one irreversible choice here: `okf://` would claim the format's name for one tool's server, which is only defensible if the format library (M9) ever ships and owns it. `okragged://` is honest about who serves it.
+The URI scheme is the one irreversible choice here: `okf://` would claim the format's name for one tool's server, which is only defensible if the format library (M10) ever ships and owns it. `okragged://` is honest about who serves it.
 
 **Six pieces.**
 
@@ -800,7 +801,7 @@ The URI scheme is the one irreversible choice here: `okf://` would claim the for
 
    Built with it, because it is the same defect: `okragged mcp` with `--project` / `OKRAGGED_PROJECT`, the portable `{"command": "okragged", "args": ["mcp", …]}` entry, and the deletion of the generated `agent/mcp_server.py` — which existed only to be the thing `.mcp.json` pointed at, and after the entry names a console script nothing points at it.
 
-   Credentials are a smaller problem than they look. MCP config carries `env` per server, so a consumer supplies its own key; and **three of the four tools need none at all**. Auth covers `add_source` and `search`'s embedding upgrade, not the server.
+   Credentials are a smaller problem than they look. MCP config carries `env` per server, so a consumer supplies its own key; and **no tool needs one at all**. Auth covers `add_source` and `search`'s embedding upgrade, not the server.
 
 3. **A Python API, thin. Built**, in `src/okragged/__init__.py`. `Config` was already a pydantic model with derived roots, and `load_dotenv` already lived in `cli.py` and `server.py` rather than in the pipeline, so the core was credential-agnostic and constructible in memory before this landed.
 
@@ -809,7 +810,7 @@ The URI scheme is the one irreversible choice here: `okf://` would claim the for
    **The two real changes are behavioural, and both were defects for a caller who is not a terminal:**
 
    - **`_finalize` wrote layer 3 unasked.** `ingest` now takes `contract`, defaulting to on for every caller: §10 depends on `agent/AGENTS.md` never describing a bundle that no longer exists, and a run that committed is the moment the bundle changed. This originally defaulted *off* for `okragged.build()`, because a function call that drops `.mcp.json` into somebody's repository is a surprise — and that asymmetry is now gone, because [the split below](#the-two-layer-3-artifacts-are-not-one-artifact) took `.mcp.json` off the build path entirely. What remains is one derived file written beside the bundle the caller just asked for, which needs no exception.
-   - **`ingest` reported only on completion.** It now takes an optional `progress` callable receiving a frozen `Progress(stage, unit, index, total, detail)` — one event per stage per unit, over the eight stages in `pipeline.STAGES`. This is the callback whose absence deferred `POST /api/ingest` and its SSE stream (§11); the endpoint still needs a job registry, and that is M7's problem or a later one's. A reporter that raises is swallowed: a caller's broken logging must not abort a run that has already paid for model calls.
+   - **`ingest` reported only on completion.** It now takes an optional `progress` callable receiving a frozen `Progress(stage, unit, index, total, detail)` — one event per stage per unit, over the eight stages in `pipeline.STAGES`. This is the callback whose absence deferred `POST /api/ingest` and its SSE stream (§11); the endpoint still needs a job registry, and that is M8's problem or a later one's. A reporter that raises is swallowed: a caller's broken logging must not abort a run that has already paid for model calls.
 
    **`import okragged` is silent and cheap, and that is a requirement rather than a nicety.** `markitdown` prints an ffmpeg warning when imported and `extract/` imports it, so a package whose import writes to somebody else's stderr is unusable in a pipe — and for `okragged mcp`, stdout *is* the protocol. Every import in the facade is function-local, with a module `__getattr__` (PEP 562) for the two names, and a test asserts both that the import prints nothing and that it pulls in neither the extraction path nor a provider.
 
@@ -819,7 +820,7 @@ The URI scheme is the one irreversible choice here: `okf://` would claim the for
 
    **Partial ingest goes too, and that is not an oversight.** `ingest(paths)` is safe, since a partial run suppresses the sweep. But the consumer this milestone exists for works in a different tree and cannot see the producer's `sources/`, so it cannot name a path; the only caller who could is the owner, who has a terminal. It is a tool nobody able to reach it can use. Re-ingest is `okragged build`, and it stays where the credential and the sources already are.
 
-   The surface therefore stays four tools and changes which four: `search`, `read_concept`, `lint`, `add_source`. Three credential-free, one that writes — the same shape as M4, with the destructive member replaced by an additive one. §10 is rewritten when this is built, not before.
+   The surface therefore stays four tools and changes which four: `search`, `read_concept`, `lint`, `add_source`. All credential-free, one that writes — the same shape as M4, with the destructive member replaced by an additive one. §10 is rewritten when this is built, not before.
 
 5. **`add_source` — the write tool that replaces it, and the reason it is not `add_concept`. Built**, in `agent/write.py`. Knowledge worth recording is not always in a document: two tables are related in a way no paper states, and someone knows it. That has to be able to enter the bundle.
 
@@ -849,7 +850,22 @@ The URI scheme is the one irreversible choice here: `okf://` would claim the for
 2. **Safe.** That same consumer, handed the sidecar as well, has no tool that can sweep the corpus: the surface offers no `ingest`, and the bundle cannot be deprecated wholesale by anything reachable over the protocol.
 3. **Additive.** `add_source` asserts a relationship that no source document states, and after the partial run that follows, the assertion is a concept with real provenance, linked into the graph, and a second `okragged build` over the corpus leaves it alone.
 
-**M6 — publish. Next, and M5's exit criterion depends on it.**
+**M6 — security layer. Next, and it is what M5's own audit turned up.**
+
+M5 made the bundle reachable from another tree. It did not give the protocol an answer to *who is asking*, and until it does, nothing reachable over the protocol may spend money.
+
+**The problem, stated exactly.** MCP over stdio has no identity. The server is a subprocess of whatever client spawned it, running as whoever ran the client; there is no channel on which a caller could present a credential and no way to attribute a call to a person. So a tool that called a model would spend a key chosen by environment precedence — `load_dotenv` does not override an existing variable, so the consumer's environment wins and the producer's `.env` is the fallback. Three outcomes, selected by accident: the consumer's key pays, *the producer's key pays for a stranger's writes*, or the tool errors. §10's own reasoning does not cover this. It argues that authenticated **reads** are theatre under M5 because the consumer holds the bytes and can `cat` them, which is true; filesystem permissions decided nothing about an API quota.
+
+**What M5 did about it, and why that is not the milestone.** `add_source` was cut back to recording: it writes prose into `sources/` and the concept is authored by the next `okragged build`, on the operator's machine with the operator's key. That removes the question rather than answering it, and it is the right trade for a milestone whose model is single-tenant — but it also means the one genuinely useful write is deferred to a human running a command. Answering the question is this milestone.
+
+1. **An identity to attribute a call to.** Not necessarily a person: a token bound to a project, or a client-supplied key the server refuses to fall back from, is enough to make "whose spend is this" answerable rather than accidental. What is not enough is inferring it from the environment.
+2. **`.env` stops being ambient to the server.** `okragged mcp` should not inherit the producer's secrets merely because it was pointed at their directory. `okragged build` keeps reading `.env` — a human typed it there — but a subprocess somebody else's client spawned is a different trust position, and today they are the same code path.
+3. **Spending is a scope, not a capability.** A tool that costs money needs an authorization scope the ordinary consumer's token does not carry, plus a rate limit: bounded per call is not bounded per hour. This is the item M8 lists as hosting's problem; it is not, it is this milestone's, and hosting inherits it.
+4. **Writes become opt-in per server instance.** `okragged mcp` should be able to serve a bundle read-only. M5 introduced a producer/consumer split and gave it no way to say "readable by others, writable by me".
+
+**Exit criterion.** A synthesizing `add_source` back on the tool surface, refused for a consumer with no scope, charged to a named identity for one with it, with a rate limit that survives a loop — and `okragged mcp` able to serve the same bundle with writes off entirely.
+
+**M7 — publish. M5's exit criterion depends on it.**
 
 M5 made the tool installable. Nothing has been installed *from anywhere*: `okragged` exists as an editable checkout, and M5's own exit criterion opens with `pip install okragged`, which nothing can satisfy until something is published. So this is not packaging polish — it is the sentence that closes the previous milestone.
 
@@ -871,7 +887,7 @@ The first is preferred: its ugliness is one file, regenerated deliberately, vers
 
 **Exit criterion.** M5's first clause, run for real: on a machine that is not the producer's, `pip install okragged` from the index, register `okragged mcp` against a bundle, read the contract over the wire, answer a question from it — and `okragged serve` renders the graph without Node installed.
 
-**M7 — hosted server. Proposed, and a different product from M5.**
+**M8 — hosted server. Proposed, and a different product from M5.**
 
 M5 makes the bundle *portable*: you hand someone a directory, they install a package, they run their own server over their own copy. M7 makes it *shared*: one machine holds the bundle and many consumers connect to it. That inverts several properties, which is why it is a separate milestone rather than the end of M5.
 
@@ -891,14 +907,14 @@ M5 makes the bundle *portable*: you hand someone a directory, they install a pac
 
    **Access control never enters the bundle, in any milestone.** No `access:` or `visibility:` frontmatter key. OKF has no notion of permissions, and a bundle whose meaning depends on a policy engine is no longer something you can `tar` up and read with `cat` — the sidecar rule (§2) applied to authority instead of to derived data. Access lives in the server, which is disposable.
 3. **Concurrency stops being an assumption and becomes a guarantee.** M5 ships a lock and a staged emit, which is enough for one machine's three writers. Many clients need the revision model: a mutation carries an expected revision and a stale one fails *before* anything becomes visible. Ids derive from model-written titles, so a half-applied rewrite is not a subset of the old tree — it is a mix of two namings.
-4. **Writing becomes remote spend on the host's key.** M5 already makes this smaller than it was: with `ingest` off the surface, the only write is `add_source`, and one file's synthesis is a **bounded** cost where a full sweep is unbounded. What remains is still an authorization scope the ordinary consumer's token should not carry, not merely a capability check — and a rate limit, because bounded per call is not bounded per hour.
+4. **Writing becomes remote spend on the host's key** — but the scope model and the rate limit that answers it are **M6's**, not this milestone's, because the same question already exists over stdio. What hosting adds is that the host's key is the *only* key: under M6 a consumer can be made to bring their own, and here there is nowhere else for the cost to land.
 5. **`verified` loses its referent.** §4.4's trust tiers assume one owner who confirms. With several humans able to promote a concept, "a human reviewed it" has to say *which* human, and the spec's actor field is where that lands.
 
 Transport is the least of it: the SDK speaks streamable HTTP, and M3 already brings uvicorn.
 
-**M8 — connectors.** `BigQuerySource` (asset family) and `BlobSource` (document family). Note the `Source` protocol they implement is settled by M5, not by them.
+**M9 — connectors.** `BigQuerySource` (asset family) and `BlobSource` (document family). Note the `Source` protocol they implement is settled by M5, not by them.
 
-**M9 — extract `okf/` as a standalone library.** Gated, not scheduled.
+**M10 — extract `okf/` as a standalone library.** Gated, not scheduled.
 
 `okf/` is the one part of this codebase with standalone value: it is bound to a published spec rather than to a provider, it has an objective conformance definition, it contains no model call, and nothing equivalent exists in Python today (`okflint` is a linter, not a read/write model). Anyone producing or consuming OKF needs it regardless of how they synthesize.
 
@@ -920,7 +936,7 @@ Transport is the least of it: the SDK speaks streamable HTTP, and M3 already bri
 
 ---
 
-**M10 — grounded answers. Proposed.**
+**M11 — grounded answers. Proposed.**
 
 M4 made the bundle consumable, and M5 made it distributable. It did not make an *answer about* the bundle checkable, and those are different problems. `agent/AGENTS.md` says read `index.md` first, cite what you read, never write `verified` — but it is prose handed to a model, which makes every line of it a request. The bundle is verifiable; a sentence claiming to come from the bundle is not.
 

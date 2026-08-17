@@ -398,11 +398,20 @@ def test_the_contract_describes_the_bundles_directory_structure(project):
     assert "pricing/  (1 concept(s))" in text
 
 
-def test_the_contract_says_only_add_source_needs_a_credential(project):
+def test_the_contract_says_no_tool_needs_a_credential(project):
     text = agent.render_agents_md(cfg(project))
-    assert "**Only `add_source` needs a credential**" in text
-    for tool in ("search", "read_concept", "lint"):
+    assert "**None of them needs a credential.**" in text
+    assert "nothing here spends anybody's credential" in text
+    for tool in ("search", "read_concept", "lint", "add_source"):
         assert f"`{tool}`" in text
+
+
+def test_the_contract_says_a_recorded_source_is_not_yet_a_concept(project):
+    """The half a client would otherwise get wrong: it records, and the concept
+    arrives with a `build` nobody on this surface can trigger."""
+    text = agent.render_agents_md(cfg(project))
+    assert "records only" in text
+    assert "okragged build" in text
 
 
 def test_the_contract_no_longer_offers_a_way_to_re_ingest_the_corpus(project):
@@ -698,28 +707,49 @@ def test_add_source_writes_the_assertion_into_the_corpus_as_a_real_source(ingest
 
     assert result.uri.startswith("sources/conversations/")
     assert path.read_text(encoding="utf-8-sig") == ASSERTION + "\n"
-    assert result.concepts and not result.errors
+    assert result.recorded
 
 
-def test_a_concept_from_an_added_source_carries_the_provenance_a_concept_requires(
-    ingestable,
-):
-    """The reason it is not `add_concept`: provenance points at a file that exists."""
-    result = added(ingestable)
-    concept = okf.parse(
-        (ingestable / "bundle" / f"{result.concepts[0]}.md").read_text(encoding="utf-8-sig"),
-        result.concepts[0],
-    )
-    assert [source.resource for source in concept.sources]
-    assert result.uri in concept.sources[0].resource
-    assert concept.extra["x_okragged_source_hash"]
+def test_add_source_records_without_calling_a_model(ingestable, monkeypatch):
+    """The security boundary, and why all four tools are credential-free.
 
-
-def test_add_source_synthesizes_only_the_file_it_wrote(ingestable, monkeypatch):
-    pipeline.ingest(config_module.load(ingestable))
+    Synthesis costs money, and stdio MCP has no identity — the server is a
+    subprocess of whatever client spawned it — so "whose key pays" would be
+    settled by environment precedence, with the producer's `.env` funding a
+    stranger's writes. Not calling a model removes the question.
+    """
     seen = calls(monkeypatch)
     result = added(ingestable)
-    assert seen == [result.uri]
+
+    assert seen == [], "nothing on this surface may spend a credential"
+    assert (ingestable / result.uri).is_file()
+    assert not (ingestable / "bundle").exists(), "the concept waits for a build"
+
+
+def test_add_source_needs_no_credential_at_all(ingestable, monkeypatch):
+    for var in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "GEMINI_API_KEY", "GOOGLE_API_KEY"):
+        monkeypatch.delenv(var, raising=False)
+    result = added(ingestable)
+    assert (ingestable / result.uri).is_file()
+
+
+def test_the_next_build_authors_the_concept_the_added_source_describes(
+    ingestable, monkeypatch
+):
+    """Recording and synthesizing are split across a trust boundary, not dropped:
+    the operator's own `build`, with the operator's own key, finishes the job."""
+    result = added(ingestable)
+    monkeypatch.setattr(pipeline, "synthesize", fake_synthesize)
+    summary = pipeline.ingest(config_module.load(ingestable))
+
+    produced = next(o for o in summary.outcomes if o.uri == result.uri)
+    assert produced.concept_id and not produced.error
+    concept = okf.parse(
+        (ingestable / "bundle" / f"{produced.concept_id}.md").read_text(encoding="utf-8-sig"),
+        produced.concept_id,
+    )
+    assert result.uri in concept.sources[0].resource
+    assert concept.extra["x_okragged_source_hash"]
 
 
 def test_adding_a_source_leaves_the_rest_of_the_corpus_alone_and_undeprecated(ingestable):
@@ -738,14 +768,12 @@ def test_adding_a_source_leaves_the_rest_of_the_corpus_alone_and_undeprecated(in
         assert (ingestable / "bundle" / f"{name}.md").read_text(encoding="utf-8-sig") == text
 
 
-def test_re_adding_the_same_assertion_costs_no_model_call(ingestable, monkeypatch):
+def test_re_adding_the_same_assertion_writes_nothing_a_second_time(ingestable):
     first = added(ingestable)
-    seen = calls(monkeypatch)
     again = added(ingestable)
 
     assert again.uri == first.uri
-    assert again.skipped and seen == []
-    assert again.concepts == first.concepts
+    assert first.recorded and not again.recorded
 
 
 def test_add_source_generates_its_path_and_a_title_cannot_escape_the_directory(ingestable):
@@ -776,51 +804,20 @@ def test_add_source_refuses_when_the_configured_globs_would_never_discover_it(in
     assert not list((ingestable / "sources" / "conversations").glob("*.md"))
 
 
-def test_add_source_writes_nothing_when_there_is_no_credential(ingestable, monkeypatch):
-    for var in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"):
-        monkeypatch.delenv(var, raising=False)
-    with pytest.raises(MissingCredential):
-        added(ingestable)
-    assert not (ingestable / "sources" / "conversations").exists()
-
-
-def test_a_source_another_writer_blocked_is_reported_rather_than_lost(
-    ingestable, monkeypatch
+def test_add_source_takes_no_lock_and_is_not_refused_by_a_writer_holding_one(
+    ingestable,
 ):
-    """The credential check happens before the write, so it can raise. Everything
-    after it has a source file on disk behind it - and a held lock is now a routine
-    outcome - so raising would tell the caller their prose was lost while it sat in
-    the corpus waiting for the next build.
-    """
+    """It writes one file into `sources/`, which okragged never reads back as
+    state: the path is generated per assertion and identical bytes reuse it, so
+    there is nothing for a concurrent build to collide with. Taking the lock would
+    make recording an assertion fail for the duration of somebody's rebuild."""
     from okragged import lock
 
     config = config_module.load(ingestable)
     with lock.hold(config.sidecar_root, "some other build"):
         result = added(ingestable)
 
-    assert result.ingested is False
-    assert result.concepts == []
-    assert any("LockHeld" in error for error in result.errors), result.errors
-
-    written = ingestable / result.uri
-    assert written.is_file(), "the assertion is in the corpus, not discarded"
-    assert ASSERTION in written.read_text(encoding="utf-8-sig")
-
-
-def test_a_source_the_next_build_picks_up_costs_nothing_extra(ingestable, monkeypatch):
-    """The other half of reporting rather than raising: the file it left behind is
-    an ordinary source, so the next run ingests it like any other."""
-    from okragged import lock
-
-    config = config_module.load(ingestable)
-    with lock.hold(config.sidecar_root, "some other build"):
-        blocked = added(ingestable)
-
-    monkeypatch.setattr(pipeline, "synthesize", fake_synthesize)
-    summary = pipeline.ingest(config)
-
-    assert blocked.uri in [outcome.uri for outcome in summary.outcomes]
-    assert not summary.failed, [o.error for o in summary.failed]
+    assert (ingestable / result.uri).is_file()
 
 
 # --- the server ------------------------------------------------------------------
@@ -899,22 +896,26 @@ def test_a_session_with_no_credential_searches_reads_and_lints_over_the_protocol
     assert report.structured_content["concepts"] == 4
 
 
-def test_add_source_without_a_credential_is_a_tool_error_and_the_server_still_answers(
-    project, monkeypatch
-):
+def test_a_whole_session_with_no_credential_can_also_write(project, monkeypatch):
+    """The M5 exit criterion's shape: a consumer holding somebody else's bundle and
+    no key of their own drives every tool, `add_source` included. Recording an
+    assertion must not be the one thing that demands a credential over a protocol
+    that has nobody to charge."""
     pytest.importorskip("mcp", reason='the MCP SDK is an optional extra: pip install -e ".[mcp]"')
-    for var in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"):
+    for var in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "GEMINI_API_KEY", "GOOGLE_API_KEY"):
         monkeypatch.delenv(var, raising=False)
     import anyio
     from mcp import Client
 
     async def go():
         async with Client(server_for(project)) as client:
-            failed = await client.call_tool("add_source", {"text": "Two tables are related."})
-            return failed, await client.call_tool("lint", {})
+            wrote = await client.call_tool("add_source", {"text": "Two tables are related."})
+            return wrote, await client.call_tool("lint", {})
 
-    failed, report = anyio.run(go)
-    assert failed.is_error and "credential" in failed.content[0].text
+    wrote, report = anyio.run(go)
+    assert not wrote.is_error, wrote.content[0].text
+    assert wrote.structured_content["uri"].startswith("sources/conversations/")
+    assert (project / wrote.structured_content["uri"]).is_file()
     assert report.structured_content["concepts"] == 4
 
 

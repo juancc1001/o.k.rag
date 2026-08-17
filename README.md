@@ -2,10 +2,10 @@
 
 Turns a folder of files into a conformant **Open Knowledge Format (OKF) v0.2** bundle — a directory of markdown concepts with YAML frontmatter that agents and humans can both read, with no SDK required.
 
-**Status: M2, M3 and M4 done.** A long source is planned into sections and each becomes its own concept under a parent, a second pass weaves cross-links into the prose, every directory gets an `index.md`, and a rebuild only touches the sources that changed. `okragged index` then embeds the bundle, projects it to 2D and writes a `graph.json` with both edge layers, and `okragged serve` renders it — a sigma.js map where proximity is semantic similarity and a **ghost edge** is a pair the embeddings say is about one thing that nobody linked. Every build also generates the **agent contract**: `agent/AGENTS.md` plus a stdio MCP server exposing `search` / `read_concept` / `add_source` / `lint`, three of which need no credential at all. See [Not implemented yet](#not-implemented-yet).
+**Status: M2, M3 and M4 done.** A long source is planned into sections and each becomes its own concept under a parent, a second pass weaves cross-links into the prose, every directory gets an `index.md`, and a rebuild only touches the sources that changed. `okragged index` then embeds the bundle, projects it to 2D and writes a `graph.json` with both edge layers, and `okragged serve` renders it — a sigma.js map where proximity is semantic similarity and a **ghost edge** is a pair the embeddings say is about one thing that nobody linked. Every build also generates the **agent contract**: `agent/AGENTS.md` plus a stdio MCP server exposing `search` / `read_concept` / `add_source` / `lint`, none of which needs a credential at all. See [Not implemented yet](#not-implemented-yet).
 
 - Architecture, data model and rationale: [`DESIGN.md`](DESIGN.md)
-- **Roadmap and milestones (M1–M10): [`DESIGN.md` §13](DESIGN.md#13-milestones)**
+- **Roadmap and milestones (M1–M11): [`DESIGN.md` §13](DESIGN.md#13-milestones)**
 
 ---
 
@@ -111,14 +111,16 @@ Swapping between them is a config edit: `embeddings_meta.json` records which pro
 
 | | `[synth]` | `[vectors]` |
 |---|---|---|
-| `build`, `add_source` | **required** | — |
+| `build` | **required** | — |
 | `index` | — | **required** |
 | `search` — embedding path | — | required, per query |
 | `search` — traversal fallback | — | — |
 | `build --dry-run`, `extract`, `check`, `agent`, `serve` | — | — |
-| `read_concept`, `lint` | — | — |
+| `read_concept`, `lint`, `add_source` | — | — |
 
-Anything that calls a model **fails its pre-flight before doing work**: `build` refuses before extracting your corpus rather than after, and `add_source` refuses before writing the source file, so a missing key never leaves debris.
+**Nothing on the MCP surface needs a credential, `add_source` included.** It records prose as a source file and stops there; the concept is authored by the next `okragged build`. That is a security boundary rather than a convenience: stdio MCP has no identity — the server is a subprocess of whatever client spawned it — so "whose key pays for this synthesis" would be settled by an accident of environment precedence, with the producer's `.env` funding a stranger's writes whenever the consumer happened to have no key. Removing the model call removes the question. Spending over the protocol belongs to the security layer in [§13 M6](DESIGN.md#13-milestones).
+
+`build` **fails its pre-flight before doing work** — it refuses before extracting your corpus rather than after, so a missing key never leaves debris.
 
 **Where each entry point looks:**
 
@@ -130,17 +132,16 @@ Anything that calls a model **fails its pre-flight before doing work**: `build` 
 
 The library deliberately reads no `.env`. `okragged` the command loads one because a human typed the command; a function call has no business going looking for a dotfile in whatever directory it was invoked from. Put the key in the environment, or hand `build` a `Config` for a project whose keys you loaded yourself.
 
-**For a consumer registering the server against someone else's bundle**, `X/.env` is the *producer's* file and may not exist on your machine or may not be yours to use. Two options, and the second is usually right:
+**For a consumer registering the server against someone else's bundle**, supply nothing at all — no `env` block, no key:
 
 ```json
 {"mcpServers": {"okragged": {
   "command": "okragged",
-  "args": ["mcp", "--project", "/path/to/the/bundle"],
-  "env": {"GEMINI_API_KEY": "your-own-key"}
+  "args": ["mcp", "--project", "/path/to/the/bundle"]
 }}}
 ```
 
-Or supply nothing at all: three of the four tools need no credential, so reading and linting a bundle works with an empty `env` — `search` simply answers by traversal instead of by embedding kNN, and says which path answered.
+All four tools work that way. `search` answers by traversal instead of by embedding kNN and says which path answered; `add_source` records prose without synthesizing it. A key in `env` buys exactly one thing — the embedding search path — and it is yours to spend, since `X/.env` is the *producer's* file and may be neither present on your machine nor yours to use.
 
 `.env` is gitignored; `.env.example` is the committed template. `okragged doctor` reports both providers, whether each credential was found, and whether the configured model exists for your key.
 
@@ -320,14 +321,14 @@ The ghost list is capped at the 20 strongest, with `ghosts_total` and a note say
 
 **`search` returns pointers and never bodies**, because the retrieval path here is progressive disclosure rather than chunk RAG: the agent reads `index.md`, then reads whole concept files, and `AGENTS.md` says so explicitly.
 
-**Three of the four tools work with no credential at all**, and the fourth only ever adds — `ingest` came off this surface in M5, so nothing reachable over the protocol can sweep the corpus. That is what M4 is for — the bundle has to be readable by a session that has no key. That constrains `search`, since concept vectors are computed at build time but embedding a *query* is a read-time model call:
+**All four tools work with no credential at all**, and the one that writes only ever adds — `ingest` came off this surface in M5, so nothing reachable over the protocol can sweep the corpus. That is what M4 is for — the bundle has to be readable by a session that has no key. That constrains `search`, since concept vectors are computed at build time but embedding a *query* is a read-time model call:
 
 - `embeddings.npy` present **and** an embedding credential present → kNN over the stored matrix.
 - otherwise → **index traversal**: a term ranking over concept titles and descriptions (which is what every index entry is made of, verbatim), the bodies at lower weight, and one hop along the authored links, so a concept the bundle links to a hit surfaces behind it. Accents are folded, so `informaticos` matches `Informáticos`.
 
 The result shape is identical, and the response names which path answered — plus, on the traversal path, why the other one did not. Retrieval strategy is deliberately out of scope ([`DESIGN.md` §7](DESIGN.md)); this ranking is meant to be simple enough to explain in a sentence and test without a model.
 
-`add_source` goes through the same pipeline as `okragged build`, credential and all, so a client that disconnects mid-run leaves a bundle with that source whole or without it at all — the emit is staged and commits per source. Because it ingests one path rather than sweeping, it also skips the vanished-source check: a partial run never looked at the other sources, so their absence is not evidence that they are gone. That is what makes it safe to expose where `ingest` was not.
+`add_source` **records and stops**: it writes the prose into `sources/` under a path it generates, and the concept is authored by the next `okragged build`. That split is what makes it safe to expose where `ingest` was not. Synthesis costs money, and stdio MCP has no identity to charge — the server is a subprocess of whatever client spawned it — so a tool that synthesized would spend *somebody's* key chosen by environment precedence, which in practice means the producer's `.env` whenever the consumer has none. It also cannot sweep: there is no run to suppress, so the vanished-source check (§6.1) never enters the picture.
 
 It checks the credential *before* writing anything, so a missing key leaves no source file behind. After that point a failure is **reported rather than raised**: the prose is already in the corpus, so a run blocked by another writer comes back with `ingested: false` and the file it wrote, and the next `okragged build` ingests it like any other source. Raising there would tell the caller their assertion was lost while it sat in `sources/` waiting.
 
@@ -640,9 +641,10 @@ Run against the 3-PDF Spanish corpus: 18 concepts embedded with `gemini-embeddin
 
 - **Calibrate τ on a second corpus.** The first one saturated the similarity space, which rules the default out without ruling anything in. A corpus spanning more than one topic is what distinguishes "raise τ" from "lower k" from "make the threshold relative".
 - **`POST /api/ingest` + SSE progress.** Deferred with M3, not cancelled. It needed a job registry and progress events `pipeline.ingest` did not emit; [the events landed with the Python API](#driving-it-from-python), the job registry did not.
-- **Grounded answers** (M10, proposed). `search` normalizes by the best hit, so its top result always scores `1.000` — including for a question the bundle cannot answer. Absolute confidence with an abstention floor, offline citation checking, and trust tiers carried into results.
+- **Grounded answers** (M11, proposed). `search` normalizes by the best hit, so its top result always scores `1.000` — including for a question the bundle cannot answer. Absolute confidence with an abstention floor, offline citation checking, and trust tiers carried into results.
 - **Distribution** (M5, all six pieces built). The rename and the console script have landed, and so has the half that makes a foreign checkout a consumer: `okragged mcp --project <dir>`, a `.mcp.json` entry naming nothing but a command on `PATH`, and the contract served as `okragged://contract` / `okragged://index` rather than as a file only the producer can open. So have `add_source` replacing `ingest` on the MCP surface, [the Python API](#driving-it-from-python), and [the lock and per-source commit](#one-writer-and-a-commit-per-source) that three writers to one bundle require. What is left is the exit criterion itself — a session driven from a checkout that is not the producer's, which nobody has had yet.
-- **BigQuery/blob sources.** M8.
+- **Synthesis over the protocol** (M6, the security layer). `add_source` records prose and stops; the concept is authored by the next `okragged build`. Stdio MCP has no identity, so a tool that synthesized would spend a key picked by environment precedence. Giving the protocol an identity, a spend scope and a rate limit is its own milestone.
+- **BigQuery/blob sources.** M9.
 
 ### Known rough edges in segmentation
 

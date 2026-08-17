@@ -170,8 +170,12 @@ def lint(project: str | Path | Config) -> LintReport:
 def add_source(
     project: str | Path | Config, text: str, title: str | None = None
 ) -> AddedSource:
-    """Record prose in `sources/` and ingest that one path (§13 M5). The path is
-    generated from the text, never supplied. Needs a `[synth]` credential."""
+    """Record prose in `sources/` as a new source (§13 M5). Offline.
+
+    The path is generated from the text, never supplied. It records only — the
+    concept is authored by the next `build()`, because nothing reachable over the
+    MCP surface this shares may spend a credential.
+    """
     from .agent.write import add_source as add
 
     return add(_config(project), text, title=title)

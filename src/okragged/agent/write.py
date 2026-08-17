@@ -2,8 +2,8 @@
 
 Knowledge worth recording is not always in a document — two tables are related in
 a way no paper states, and someone knows it. This is how that enters the bundle,
-and it enters as a *source*: the assertion is written into the corpus and the
-pipeline authors the concept from it.
+and it enters as a *source*: the assertion is written into the corpus, and
+`okragged build` authors the concept from it later.
 
 A tool that wrote a concept directly would be shorter and would break the
 invariant everything else rests on — **every concept traces to a source** (§4.2).
@@ -12,30 +12,33 @@ bundle while being absent from the ledger, so what the ledger describes and what
 the bundle contains would stop agreeing — which is the assumption stale-output
 cleanup, deprecation and human-edit detection are all built on.
 
-The run is a partial one over the file just written, which suppresses the
-vanished-source sweep (§6.1): safe by construction rather than by a check.
+**It records; it does not synthesize, and so it needs no credential.** That is
+the whole of why this is safe to expose. Synthesis costs money, and over stdio
+there is nobody to charge: MCP has no identity — the server is a subprocess of
+whatever client spawned it — so "whose key pays" would be answered by an accident
+of environment precedence, with the producer's `.env` paying for a stranger's
+writes whenever the consumer happened to have no key of their own. Removing the
+model call removes the question rather than guarding it. Spending over the
+protocol is M6's, where a security layer can decide who may.
 
-The project lock and the staged emit come with `ingest` (§6.6), so two of these at
-once serialize on the bundle rather than on the source file — which needs no lock,
-because the path is generated per assertion and identical bytes reuse it. The
-loser of that race does not raise: its source is already written, so it reports
-`ingested=False` and the next run ingests it. A tool that raised there would tell
-the caller their assertion was lost while it sat in `sources/`.
+So the corpus gains a file and nothing else happens until an operator runs
+`okragged build` on their own machine with their own key — which is also where
+the project lock, the staged emit and the vanished-source rules already live.
+This module therefore touches neither `pipeline` nor a provider.
 
-Not imported by `agent/__init__.py`, for the same reason `server` is not: it
-imports `pipeline`, which imports that package to regenerate the contract.
+Writing the file needs no lock: the path is generated per assertion, and
+identical bytes reuse the path they are already at rather than racing for it.
 """
 
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
 from .. import okf
 from ..config import Config
-from ..pipeline import IngestSummary, ItemOutcome, ingest, require_credential
 from ..sources import LocalFileSource
 
 DIRECTORY = "conversations"
@@ -50,20 +53,18 @@ SLUG_MAX = 60
 class AddedSource:
     uri: str
     """The source file, project-relative. Generated here, never supplied."""
-    concepts: list[str] = field(default_factory=list)
-    errors: list[str] = field(default_factory=list)
-    skipped: bool = False
-    """The bytes were already on disk, so the content-hash skip (§6.1) answered
-    and no model was called."""
-    ingested: bool = True
-    """False when the source was written but the pipeline never ran over it — a
-    lock held by another writer, most often. The prose is recorded either way and
-    `okragged build` will pick it up, which is why this reports rather than
-    raises: the alternative loses the assertion the caller just made."""
+    recorded: bool = True
+    """False when identical bytes were already at this path, so nothing was
+    written. The assertion is in the corpus either way — re-asserting the same
+    thing is a no-op rather than a second source saying it twice."""
 
 
 def add_source(config: Config, text: str, title: str | None = None) -> AddedSource:
-    """Write prose into the corpus as a source, then ingest that path alone."""
+    """Record prose in the corpus as a source. Offline — no model, no credential.
+
+    The concept is authored by the next `okragged build`, not here. See the module
+    docstring for why that separation is the point rather than a limitation.
+    """
     body = _normalized(text)
     if not body.strip():
         raise ValueError("add_source records prose; the text was empty")
@@ -73,8 +74,6 @@ def add_source(config: Config, text: str, title: str | None = None) -> AddedSour
             "frontmatter block. Submit what you know and let the pipeline author "
             "the concept, so it carries the provenance a concept requires."
         )
-    # before writing anything, so a missing key leaves no source file behind
-    require_credential(config)
 
     source = LocalFileSource(
         root=config.sources_root,
@@ -93,27 +92,7 @@ def add_source(config: Config, text: str, title: str | None = None) -> AddedSour
             "the pipeline would never discover it"
         )
 
-    uri = path.relative_to(config.project_root).as_posix()
-    # Everything after this point has a written source file behind it, so a
-    # failure here is reported rather than raised. Raising would hand the caller
-    # an exception while their prose sat in the corpus unmentioned — and it *is*
-    # in the corpus: the next `okragged build` ingests it. The credential check
-    # above is the one failure that still raises, because it happens first and
-    # leaves nothing behind.
-    try:
-        summary = ingest(config, only=[uri])
-    except Exception as exc:
-        return AddedSource(
-            uri=uri,
-            errors=[f"{type(exc).__name__}: {exc}"],
-            ingested=False,
-        )
-    return AddedSource(
-        uri=uri,
-        concepts=[cid for outcome in summary.outcomes for cid in _produced(outcome)],
-        errors=_errors(summary),
-        skipped=bool(summary.skipped),
-    )
+    return AddedSource(uri=path.relative_to(config.project_root).as_posix(), recorded=wrote)
 
 
 def _write(config: Config, slug: str, content: str) -> tuple[Path, bool]:
@@ -156,14 +135,3 @@ def _slug(seed: str) -> str:
 
 def _normalized(text: str) -> str:
     return text.replace("\r\n", "\n").replace("\r", "\n")
-
-
-def _produced(outcome: ItemOutcome) -> list[str]:
-    return [outcome.concept_id, *outcome.child_ids] if outcome.concept_id else []
-
-
-def _errors(summary: IngestSummary) -> list[str]:
-    errors = [f"{o.uri}: {o.error}" for o in summary.failed]
-    for outcome in summary.outcomes:
-        errors += outcome.section_errors + outcome.weave_errors
-    return errors
