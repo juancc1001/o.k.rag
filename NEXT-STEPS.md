@@ -20,7 +20,7 @@ Today `okf/writer.py` writes a directory and nothing else can be true. `@llm-wik
 
 **Cost.** Touches `okf/writer.py`, `okf/validate.py`, `pipeline.py::_finalize`, and every test that asserts on paths. Not small.
 
-**Gate.** Cleared — M4 shipped, and the MCP server is the second consumer it asked for. Now live as a question M5's Python API forces: an API that returns a `Bundle` object answers it silently, in the direction this item warns about. Decide it in M5 or refuse to, deliberately, by returning summaries and paths.
+**Gate.** Cleared — M4 shipped, and the MCP server is the second consumer it asked for. M5's Python API forced the question and **refused it deliberately**: the public functions return the summaries and paths the underlying ones already returned, there is no `Bundle`, and `okragged.__init__` has no name that stands for a bundle. So this item is still open and still undecided — which is the point. Nothing published so far assumes the directory is one serialization among several.
 
 ---
 

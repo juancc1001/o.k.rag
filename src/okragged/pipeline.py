@@ -6,6 +6,7 @@ Deliberately not here yet: general per-directory index generation, vectors.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -29,6 +30,43 @@ from .synth import (
     synthesize,
     weave,
 )
+
+
+DISCOVER = "discover"
+EXTRACT = "extract"
+PLAN = "plan"
+SYNTHESIZE = "synthesize"
+WEAVE = "weave"
+SOURCE = "source"
+"""One source is finished, however it finished. `detail` says how."""
+FINALIZE = "finalize"
+VALIDATE = "validate"
+
+STAGES = (DISCOVER, EXTRACT, PLAN, SYNTHESIZE, WEAVE, SOURCE, FINALIZE, VALIDATE)
+"""Every `stage` a `Progress` event can carry. Adding one is a compatible change;
+removing or renaming one is not, because a caller renders these."""
+
+
+@dataclass(frozen=True)
+class Progress:
+    """One event from a run in flight, for a caller that cannot wait for the summary.
+
+    Frozen and flat on purpose. `ingest` reported only on completion, which is what
+    deferred `POST /api/ingest` and its SSE stream (§11), and an event that has to
+    survive being serialized to a browser is the wrong place for a live object
+    graph. `unit` plus `index`/`total` identify what is happening; `detail` is a
+    short note for a human to read and not for a caller to parse.
+    """
+
+    stage: str
+    unit: str = ""
+    """The source uri, or the concept id at the weave stage. Empty for a stage
+    that is about the run rather than about one unit."""
+    index: int = 0
+    total: int = 0
+    """1-based position and how many there are. `total` is 0 where the count is
+    not yet known — discovery streams, so the source count is one of those."""
+    detail: str = ""
 
 
 @dataclass
@@ -102,8 +140,24 @@ def require_credential(config: Config) -> None:
 
 
 def ingest(
-    config: Config, dry_run: bool = False, only: list[str] | None = None
+    config: Config,
+    dry_run: bool = False,
+    only: list[str] | None = None,
+    contract: bool = True,
+    progress: Callable[[Progress], None] | None = None,
 ) -> IngestSummary:
+    """Run the pipeline over `config`'s sources.
+
+    `contract` regenerates layer 3 (`agent/AGENTS.md`, `.mcp.json`) in `_finalize`,
+    and it defaults to on because that is what `okragged build` must do: §10 relies
+    on the contract never describing a bundle that no longer exists, and a CLI run
+    is the moment the bundle changed. The public `okragged.build()` defaults it
+    *off* for the opposite reason — a library call that drops `.mcp.json` into the
+    caller's repository is a surprise, and `okragged.write_contract()` is there for
+    a caller who wants it.
+
+    `progress` is called as the run moves through its stages; see `Progress`.
+    """
     selected = _selected(config, only)
     source = LocalFileSource(
         root=config.sources_root,
@@ -131,6 +185,7 @@ def ingest(
             outcome = ItemOutcome(uri=item.uri)
             summary.outcomes.append(outcome)
             discovered.add(item.uri)
+            _report(progress, Progress(DISCOVER, item.uri, index=len(summary.outcomes)))
 
             record = ledger.unchanged(item.uri, item.content_sha256, config.bundle_root)
             if record is not None:
@@ -138,9 +193,11 @@ def ingest(
                     outcome.skipped = True
                     outcome.concept_id = record.concepts[0]
                     outcome.child_ids = list(record.concepts[1:])
+                    _report(progress, Progress(SOURCE, item.uri, detail="unchanged"))
                     continue
                 # its parent no longer reads; rebuild rather than trust the ledger
 
+            _report(progress, Progress(EXTRACT, item.uri))
             try:
                 text = extract(
                     config.project_root / item.uri,
@@ -149,10 +206,12 @@ def ingest(
                 ).text
             except ExtractionError as exc:
                 outcome.error = str(exc)
+                _report(progress, Progress(SOURCE, item.uri, detail=f"failed: {exc}"))
                 continue
 
             if dry_run:
                 outcome.concept_id = _claim_id(item.title, taken)
+                _report(progress, Progress(SOURCE, item.uri, detail="extracted"))
                 continue
 
             prior = ledger.sources.get(item.uri)
@@ -172,10 +231,12 @@ def ingest(
                     taken=taken,
                     summary=summary,
                     existing=existing,
+                    progress=progress,
                 )
             except SynthError as exc:
                 outcome.error = str(exc)
                 taken |= previous  # the last run's concepts are still on disk
+                _report(progress, Progress(SOURCE, item.uri, detail=f"failed: {exc}"))
                 continue
 
             produced = [outcome.concept_id, *outcome.child_ids]
@@ -197,11 +258,15 @@ def ingest(
                 for cid in outcome.removed
             )
             log_entries.extend(lines)
+            _report(
+                progress,
+                Progress(SOURCE, item.uri, detail=f"{outcome.concept_count} concept(s)"),
+            )
 
         if not dry_run:
             # after every concept for the run exists: a link can only point at
             # a concept that has been written
-            _weave_run(config, ledger, summary)
+            _weave_run(config, ledger, summary, progress)
             if selected is None:
                 # a partial run never looked at the other sources, so their
                 # absence from `discovered` is not evidence that they are gone
@@ -211,11 +276,22 @@ def ingest(
         # make them a bundle. Run on the way out however we leave — a Ctrl-C or
         # an unforeseen crash must not strand the model calls already paid for.
         if not dry_run and config.bundle_root.exists():
-            _finalize(config, log_entries, ledger, ledger_path)
+            _report(progress, Progress(FINALIZE))
+            _finalize(config, log_entries, ledger, ledger_path, contract)
 
     if config.bundle_root.exists():
+        _report(progress, Progress(VALIDATE))
         summary.report = okf.validate(config.bundle_root)
     return summary
+
+
+def _report(progress: Callable[[Progress], None] | None, event: Progress) -> None:
+    if progress is None:
+        return
+    try:
+        progress(event)
+    except Exception:  # a reporter must not be able to fail a run already paid for
+        pass
 
 
 def _ingest_single(
@@ -229,8 +305,10 @@ def _ingest_single(
     taken: set[str],
     summary: IngestSummary,
     existing: list[tuple[str, str]],
+    progress: Callable[[Progress], None] | None = None,
 ) -> list[str]:
     """Short enough to be one concept (§4.3). Returns its log lines."""
+    _report(progress, Progress(SYNTHESIZE, item.uri, index=1, total=1))
     result = synthesize(
         text=text,
         source_id=source_id,
@@ -264,12 +342,14 @@ def _ingest_segmented(
     taken: set[str],
     summary: IngestSummary,
     existing: list[tuple[str, str]],
+    progress: Callable[[Progress], None] | None = None,
 ) -> list[str]:
     """Plan first, then one call per section, then assemble the parent.
 
     A failed section is recorded and skipped: one refusal or one 429 must not
     discard the sections that did synthesize.
     """
+    _report(progress, Progress(PLAN, item.uri))
     outline = plan(
         text=text,
         source_id=source_id,
@@ -291,6 +371,10 @@ def _ingest_segmented(
     total = len(outline.sections)
 
     for index, section in enumerate(outline.sections, start=1):
+        _report(
+            progress,
+            Progress(SYNTHESIZE, item.uri, index=index, total=total, detail=section.title),
+        )
         try:
             result = synthesize(
                 text=section.text,
@@ -391,7 +475,12 @@ def _index(bundle_root: Path) -> list[tuple[str, str]]:
     return [(ref.concept_id, ref.description) for ref in okf.inventory(bundle_root)]
 
 
-def _weave_run(config: Config, ledger: Ledger, summary: IngestSummary) -> None:
+def _weave_run(
+    config: Config,
+    ledger: Ledger,
+    summary: IngestSummary,
+    progress: Callable[[Progress], None] | None = None,
+) -> None:
     """Rewrite this run's concepts with cross-links woven into their prose (§6.5).
 
     Only what this run wrote: a concept that was skipped is unchanged output and
@@ -407,42 +496,46 @@ def _weave_run(config: Config, ledger: Ledger, summary: IngestSummary) -> None:
     if len(index) < 2:
         return  # nothing to link to
 
-    for outcome in summary.synthesized:
-        for concept_id in [outcome.concept_id, *outcome.child_ids]:
-            if concept_id in outcome.protected:
-                continue
-            path = config.bundle_root / f"{concept_id}.md"
-            try:
-                concept = okf.parse(path.read_text(encoding="utf-8-sig"), concept_id)
-            except (OSError, ValueError):
-                continue
-            try:
-                result = weave(
-                    concept_id=concept_id,
-                    title=concept.title or concept_id,
-                    body=concept.body,
-                    index=index,
-                    parent=concept_id.rsplit("/", 1)[0] if "/" in concept_id else None,
-                    candidates=outcome.candidates.get(concept_id, []),
-                    provider=config.synth.provider,
-                    model=config.synth.model,
-                    effort=config.synth.effort,
-                    max_tokens=config.synth.max_tokens,
-                )
-            except SynthError as exc:
-                # the unwoven concept is still a concept; weaving is an upgrade
-                outcome.weave_errors.append(f"{concept_id}: {exc}")
-                continue
+    targets = [
+        (outcome, concept_id)
+        for outcome in summary.synthesized
+        for concept_id in [outcome.concept_id, *outcome.child_ids]
+        if concept_id not in outcome.protected
+    ]
+    for position, (outcome, concept_id) in enumerate(targets, start=1):
+        _report(progress, Progress(WEAVE, concept_id, index=position, total=len(targets)))
+        path = config.bundle_root / f"{concept_id}.md"
+        try:
+            concept = okf.parse(path.read_text(encoding="utf-8-sig"), concept_id)
+        except (OSError, ValueError):
+            continue
+        try:
+            result = weave(
+                concept_id=concept_id,
+                title=concept.title or concept_id,
+                body=concept.body,
+                index=index,
+                parent=concept_id.rsplit("/", 1)[0] if "/" in concept_id else None,
+                candidates=outcome.candidates.get(concept_id, []),
+                provider=config.synth.provider,
+                model=config.synth.model,
+                effort=config.synth.effort,
+                max_tokens=config.synth.max_tokens,
+            )
+        except SynthError as exc:
+            # the unwoven concept is still a concept; weaving is an upgrade
+            outcome.weave_errors.append(f"{concept_id}: {exc}")
+            continue
 
-            _account(summary, result)
-            summary.invented_links.extend(result.invented)
-            if result.body_markdown == concept.body:
-                continue
-            concept.body = result.body_markdown
-            okf.write_concept(config.bundle_root, concept)
-            # the post-weave hash, or the next run reads every concept as edited
-            ledger.note_concept(concept_id, outcome.uri, concept.body)
-            outcome.linked.append(concept_id)
+        _account(summary, result)
+        summary.invented_links.extend(result.invented)
+        if result.body_markdown == concept.body:
+            continue
+        concept.body = result.body_markdown
+        okf.write_concept(config.bundle_root, concept)
+        # the post-weave hash, or the next run reads every concept as edited
+        ledger.note_concept(concept_id, outcome.uri, concept.body)
+        outcome.linked.append(concept_id)
 
 
 def _remove_stale(config: Config, ledger: Ledger, stale: set[str]) -> list[str]:
@@ -512,6 +605,7 @@ def _finalize(
     log_entries: list[str],
     ledger: Ledger,
     ledger_path: Path,
+    contract: bool,
 ) -> None:
     title = config.bundle_title
     okf.write_indexes(config.bundle_root, config.bundle.okf_version, title)
@@ -524,8 +618,11 @@ def _finalize(
         )
     okf.write_manifest(config.project_root, config.bundle.root, title)
     # layer 3 describes layer 2, so it is regenerated from the bundle that just
-    # landed rather than from what this run happened to write (§10)
-    write_contract(config)
+    # landed rather than from what this run happened to write (§10). Asked for
+    # rather than unconditional: `okragged build` always wants it, and a library
+    # call that writes `agent/` and `.mcp.json` into the caller's tree does not.
+    if contract:
+        write_contract(config)
     # last: the ledger is only true once every file it describes has landed
     ledger.bundle_root = config.bundle.root
     ledger.save(ledger_path)

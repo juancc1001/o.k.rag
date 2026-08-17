@@ -2,7 +2,7 @@
 
 Turns a folder of files into a conformant **Open Knowledge Format (OKF) v0.2** bundle — a directory of markdown concepts with YAML frontmatter that agents and humans can both read, with no SDK required.
 
-**Status: M2, M3 and M4 done.** A long source is planned into sections and each becomes its own concept under a parent, a second pass weaves cross-links into the prose, every directory gets an `index.md`, and a rebuild only touches the sources that changed. `okragged index` then embeds the bundle, projects it to 2D and writes a `graph.json` with both edge layers, and `okragged serve` renders it — a sigma.js map where proximity is semantic similarity and a **ghost edge** is a pair the embeddings say is about one thing that nobody linked. Every build also generates the **agent contract**: `agent/AGENTS.md` plus a stdio MCP server exposing `search` / `read_concept` / `ingest` / `lint`, three of which need no credential at all. See [Not implemented yet](#not-implemented-yet).
+**Status: M2, M3 and M4 done.** A long source is planned into sections and each becomes its own concept under a parent, a second pass weaves cross-links into the prose, every directory gets an `index.md`, and a rebuild only touches the sources that changed. `okragged index` then embeds the bundle, projects it to 2D and writes a `graph.json` with both edge layers, and `okragged serve` renders it — a sigma.js map where proximity is semantic similarity and a **ghost edge** is a pair the embeddings say is about one thing that nobody linked. Every build also generates the **agent contract**: `agent/AGENTS.md` plus a stdio MCP server exposing `search` / `read_concept` / `add_source` / `lint`, three of which need no credential at all. See [Not implemented yet](#not-implemented-yet).
 
 - Architecture, data model and rationale: [`DESIGN.md`](DESIGN.md)
 - **Roadmap and milestones (M1–M9): [`DESIGN.md` §13](DESIGN.md#13-milestones)**
@@ -123,6 +123,8 @@ okragged mcp --project <dir>   # serve a bundle to an MCP client over stdio
 okragged extract <file>        # print extracted text for one file (offline, for debugging)
 ```
 
+Each of these is a function too — see [Driving it from Python](#driving-it-from-python).
+
 Typical first run:
 
 ```powershell
@@ -238,7 +240,7 @@ Four read-only endpoints, all offline, none of which writes anywhere:
 | `GET /api/search?q=&k=` | the same two paths as the MCP tool | pointers, never bodies |
 | `GET /api/lint` | the same report as the MCP tool | conformance, ghosts, stale, orphans |
 
-`search` and `lint` call the same functions `agent/` exposes over MCP, so the view and an agent cannot be told different things about one bundle. `POST /api/ingest` and its SSE progress stream ([`DESIGN.md` §11](DESIGN.md#11-http-api-and-config)) are deferred — they need a job model and progress events the pipeline does not emit, and writing stays on the CLI and the MCP tool until something asks for it over HTTP.
+`search` and `lint` call the same functions `agent/` exposes over MCP, so the view and an agent cannot be told different things about one bundle. `POST /api/ingest` and its SSE progress stream ([`DESIGN.md` §11](DESIGN.md#11-http-api-and-config)) are deferred — they need a job model, and writing stays on the CLI and the MCP tool until something asks for it over HTTP. The progress events they also need [now exist](#driving-it-from-python).
 
 The view itself is sigma.js v3 + graphology over WebGL, in `web/`. Positions are precomputed by UMAP, so nothing simulates a layout in the browser and the map is identical on every load. Node colour is `type`, size is link degree, border is the trust tier, and a faded node is deprecated or past its `stale_after`. Solid edges are authored links; **ghost edges are off by default and the τ slider is the instrument** — it filters upward from the τ `graph.json` was computed at, because the file holds no pair below it. Selecting a node fetches its concept into a side panel. Raw HTML in a body is escaped rather than rendered: the body is model-written.
 
@@ -333,14 +335,52 @@ Broken links are **warnings, not errors** — the spec explicitly permits them, 
 
 ---
 
+## Driving it from Python
+
+Everything the CLI does is a function call, and `okragged` exposes the same set under one import. Nine functions, each taking a project directory or a `Config`:
+
+```python
+import okragged
+
+cfg = okragged.configure("~/corpus", synth={"provider": "gemini"})
+summary = okragged.build(cfg, progress=lambda e: print(e.stage, e.unit))
+print(okragged.check(cfg).ok, [h.concept_id for h in okragged.search(cfg, "revenue").hits])
+```
+
+| | | Needs a credential |
+|---|---|---|
+| `configure(project, **sections)` | a `Config`, reading the project's `okragged.toml` and applying section overrides in memory | no |
+| `build(project, *, dry_run, only, contract, progress)` | the ingest pipeline → `pipeline.IngestSummary` | `[synth]`, unless `dry_run` |
+| `index(project)` | embed → project → `graph.json`, into `.okragged/` only | `[vectors]` |
+| `check(project)` | validate an existing bundle → `okf.Report` | no |
+| `search(project, query, k=8)` | pointers, never bodies — the same ranking as the MCP tool | only for the embedding path |
+| `read_concept(project, concept_id)` | the raw file, frontmatter included | no |
+| `lint(project)` | conformance, ghosts, stale, orphans → `LintReport` | no |
+| `add_source(project, text, title=None)` | record prose in `sources/` and ingest that path alone | `[synth]` |
+| `write_contract(project)` | `agent/AGENTS.md` and the `.mcp.json` entry | no |
+
+The wrappers return what the underlying functions return. There is no `Bundle` object, deliberately: a bundle is a directory ([`DESIGN.md` §2](DESIGN.md#2-the-three-layer-model)), and handing back an object that stands for one would answer a question the design has not decided.
+
+**Two things differ from the CLI, both on purpose:**
+
+- **`build()` does not write layer 3; `okragged build` does.** The CLI regenerates `agent/AGENTS.md` and `.mcp.json` on every build, so the contract can never describe a bundle that no longer exists. A library call that dropped `.mcp.json` into your repository would be a surprise, so `build()` leaves it alone — pass `contract=True`, or call `write_contract()`, to ask for it.
+- **No `.env` is read.** `okragged` the command loads it because a human typed the command; a function call does not go looking through your filesystem for credentials. Put the key in the environment first (`os.environ`, `python-dotenv`, your process manager — your choice).
+
+`progress` is called as the run moves, with a frozen `Progress(stage, unit, index, total, detail)`: `stage` is one of `discover`, `extract`, `plan`, `synthesize`, `weave`, `source`, `finalize`, `validate`; `unit` is the source uri, or the concept id while weaving; `source` fires once per source however it finished. A reporter that raises is swallowed rather than allowed to abort a run that has already paid for model calls.
+
+`import okragged` costs nothing and prints nothing — every import inside it is deferred, because `markitdown` announces a missing ffmpeg on import and a library that writes to your stderr to be imported is broken.
+
+---
+
 ## Important files
 
 ### Source
 
 | File | Purpose |
 |---|---|
+| `src/okragged/__init__.py` | The [public Python API](#driving-it-from-python) and nothing else: nine functions that resolve `str \| Path \| Config` and delegate to the function the CLI calls, plus `Config` and `Progress`. Every import in it is deferred, so importing the package is silent and cheap. |
 | `src/okragged/cli.py` | Typer CLI: `build`, `index`, `check`, `agent`, `extract`, `doctor`. Formatting and exit codes. |
-| `src/okragged/pipeline.py` | Orchestrates the stages; assembles `Concept` objects from synthesis results. |
+| `src/okragged/pipeline.py` | Orchestrates the stages; assembles `Concept` objects from synthesis results. Owns `Progress`, the progress callback's event, and the `contract` flag that decides whether `_finalize` regenerates layer 3. |
 | `src/okragged/ledger.py` | The idempotency ledger, `.okragged/manifest.json`: what each source hashed to, which concepts it produced, and what okragged last wrote into each. Sidecar state — losing it costs a re-ingest, never correctness, so every read path degrades to "no record" rather than raising. Not `okf/manifest.py`, which is the *okflint* manifest. |
 | `src/okragged/config.py` | Loads `okragged.toml` into pydantic models. Owns the `bundle/`, `sources/`, `.okragged/` path resolution. |
 | `src/okragged/sources/base.py` | The `Source` protocol and `SourceItem`. Defines the `document` vs `asset` family split that phase-2 connectors plug into. |
@@ -440,7 +480,7 @@ random_state = 42          # fixed, or the layout reshuffles every run
 .\.venv\Scripts\python.exe -m pytest tests -q
 ```
 
-281 tests. No credentials and no network needed — the end-to-end test stubs the model and asserts the emitted bundle is conformant, so "one file in, one conformant concept out" is covered offline. The embedding provider is stubbed the same way, in a three-dimensional toy space, so what two concepts are "similar" is something the test states rather than something a model decides.
+298 tests. No credentials and no network needed — the end-to-end test stubs the model and asserts the emitted bundle is conformant, so "one file in, one conformant concept out" is covered offline. The embedding provider is stubbed the same way, in a three-dimensional toy space, so what two concepts are "similar" is something the test states rather than something a model decides.
 
 | File | Covers |
 |---|---|
@@ -454,6 +494,7 @@ random_state = 42          # fixed, or the layout reshuffles every run
 | `tests/test_providers.py` | provider registry and interface, dispatch, schema/required-field enforcement, Gemini credential resolution and decline mapping, non-2xx and transport-failure mapping for both providers, fail-fast pre-flight |
 | `tests/test_vectors.py` | the embedding provider registry, hash-based reuse and per-concept failure isolation, mean-pooling past the window with no chunk vector stored, L2 normalization, a model change re-embedding instead of mixing widths, the PCA fallback and its determinism, the ghost rule (τ, top-k, a link in either direction), derived trust tiers, graph stats, and that `index` writes nothing into `bundle/` |
 | `tests/test_agent.py` | each tool's contract: `search` returning pointers and not bodies, the credential-free traversal path and its ranking (title over body, a linked neighbour over an unrelated mention, folded accents), the embedding path and the fallback when a query cannot be embedded, `read_concept` refusing a path out of the bundle, the lint report's orphans/stale/ghosts, the generated `AGENTS.md` content, a `.mcp.json` merge that keeps other servers and an entry that names a console script rather than an interpreter, `okragged mcp` taking its target from `--project` or the environment, the two resources and the contract served over the wire matching the file on disk byte for byte, a partial `ingest` not deprecating what it did not look at, and that none of it writes into `bundle/`. Plus the M5 invariant — nothing the server declares may name a path relative to the producer's root — with a meta-test pointing the check at the M4 text it replaced. The server tests skip without the `mcp` extra. |
+| `tests/test_library.py` | the public API: that importing the package prints nothing and pulls in neither the extraction path nor a provider, `configure` overriding a section in memory, a library `build` writing no `agent/` and no `.mcp.json` while `okragged build` still does, no `.env` read from the library path, the progress callback's stages and units, an event that cannot be mutated, a reporter that raises not failing the run, and a path and a `Config` being interchangeable |
 | `tests/test_env.py` | `.env` loading with and without a BOM, and every `doctor` outcome |
 | `tests/test_encoding.py` | the [encoding policy](#encoding-policy), enforced by AST scan (including the child-process `env` rule), plus BOM tolerance, the piped-child crash reproduced, and LF-only output end to end |
 
@@ -517,9 +558,9 @@ Run against the 3-PDF Spanish corpus: 18 concepts embedded with `gemini-embeddin
 ### Next
 
 - **Calibrate τ on a second corpus.** The first one saturated the similarity space, which rules the default out without ruling anything in. A corpus spanning more than one topic is what distinguishes "raise τ" from "lower k" from "make the threshold relative".
-- **`POST /api/ingest` + SSE progress.** Deferred with M3, not cancelled: it needs a job registry and progress events `pipeline.ingest` does not emit.
+- **`POST /api/ingest` + SSE progress.** Deferred with M3, not cancelled. It needed a job registry and progress events `pipeline.ingest` did not emit; [the events landed with the Python API](#driving-it-from-python), the job registry did not.
 - **Grounded answers** (M9, proposed). `search` normalizes by the best hit, so its top result always scores `1.000` — including for a question the bundle cannot answer. Absolute confidence with an abstention floor, offline citation checking, and trust tiers carried into results.
-- **Distribution** (M5, in progress). The rename and the console script have landed, and so has the half that makes a foreign checkout a consumer: `okragged mcp --project <dir>`, a `.mcp.json` entry naming nothing but a command on `PATH`, and the contract served as `okragged://contract` / `okragged://index` rather than as a file only the producer can open. Still to come: a thin Python API, an `add_source` tool replacing `ingest` on the MCP surface, and the lock plus staged emit that three writers to one bundle now require.
+- **Distribution** (M5, in progress). The rename and the console script have landed, and so has the half that makes a foreign checkout a consumer: `okragged mcp --project <dir>`, a `.mcp.json` entry naming nothing but a command on `PATH`, and the contract served as `okragged://contract` / `okragged://index` rather than as a file only the producer can open. So have `add_source` replacing `ingest` on the MCP surface and [the Python API](#driving-it-from-python). Still to come: the lock plus staged emit that three writers to one bundle now require.
 - **BigQuery/blob sources.** M7.
 
 ### Known rough edges in segmentation

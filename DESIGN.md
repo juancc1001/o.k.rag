@@ -558,7 +558,7 @@ Nothing in this layer writes to the bundle, and nothing writes a `verified` bloc
 
 The four read endpoints are wrappers over `agent/query.py`, `agent/lint.py` and the `graph.json` `okragged index` wrote, so `search` and `lint` cannot answer differently here than over MCP (§10). All four are offline; none writes anywhere.
 
-**The two ingest endpoints are deferred, not cancelled.** They need a job registry and progress events the pipeline does not emit — `ingest` returns a summary at the end and says nothing during — and the graph view needs neither. Writing stays on the CLI and the MCP tool until something asks for it over HTTP. The rest of layer 3 already holds the invariant that matters: nothing in the API path writes to the bundle.
+**The two ingest endpoints are deferred, not cancelled.** They needed a job registry and progress events the pipeline did not emit; **the events exist now** — `ingest` takes a `progress` callback and reports each stage as it reaches it (§13 M5 item 3) — and the job registry does not, which is the half the graph view still does not need. Writing stays on the CLI and the MCP tool until something asks for it over HTTP. The rest of layer 3 already holds the invariant that matters: nothing in the API path writes to the bundle.
 
 FastAPI is an optional extra (`pip install -e ".[api]"`) for the same reason the MCP SDK is: producing and validating a bundle needs neither.
 
@@ -638,7 +638,7 @@ random_state = 42
 | **M2** | Real bundle | **done** |
 | **M3** | Vectors + graph | **done** |
 | **M4** | Agent contract | **done** |
-| **M5** | Distribution — package, MCP export, Python API | **in progress** — 3 of 6 |
+| **M5** | Distribution — package, MCP export, Python API | **in progress** — 4 of 6 |
 | **M6** | Hosted server — one bundle, many consumers | proposed |
 | **M7** | Connectors | phase 2 |
 | **M8** | Extract `okf/` as a standalone library | gated — see below |
@@ -727,7 +727,7 @@ Everything built so far assumes the reader is standing inside the producer's wor
 
 The URI scheme is the one irreversible choice here: `okf://` would claim the format's name for one tool's server, which is only defensible if the format library (M8) ever ships and owns it. `okragged://` is honest about who serves it.
 
-**Three pieces.**
+**Six pieces.**
 
 1. **Package. Built.** Console-script entry points rather than generated paths. This does not fix the `.mcp.json` defect so much as delete it: a pip-installed `okragged` on `PATH`, invoked as `okragged mcp`, needs no interpreter path, no script path, and nothing relative to a cwd. The server then needs an explicit target — `--project` or `OKRAGGED_PROJECT` — because a launcher that infers its bundle from `__file__` cannot survive being installed.
 
@@ -737,7 +737,16 @@ The URI scheme is the one irreversible choice here: `okf://` would claim the for
 
    Credentials are a smaller problem than they look. MCP config carries `env` per server, so a consumer supplies its own key; and **three of the four tools need none at all**. Auth covers `add_source` and `search`'s embedding upgrade, not the server.
 
-3. **A Python API**, thin. `Config` is already a pydantic model with derived roots, and `load_dotenv` lives in `cli.py` and `server.py` rather than in the pipeline, so the core is already credential-agnostic and constructible in memory. What has to change is smaller than it looks: `_finalize` writes `agent/` and `.mcp.json` into the project root, which a library must not do unasked, and `ingest` reports only on completion, which is the same missing progress callback that deferred `POST /api/ingest` (§11).
+3. **A Python API, thin. Built**, in `src/okragged/__init__.py`. `Config` was already a pydantic model with derived roots, and `load_dotenv` already lived in `cli.py` and `server.py` rather than in the pipeline, so the core was credential-agnostic and constructible in memory before this landed.
+
+   **The capability was never missing; the surface was.** `from okragged import config, pipeline; pipeline.ingest(config.load(path))` has worked all along — `__init__.py` was one line. So what this adds is a curated entry point: `configure`, `build`, `index`, `check`, `search`, `read_concept`, `lint`, `add_source`, `write_contract`, each taking `str | Path | Config` and delegating to the function the CLI calls. No new types, no `provider=` argument (see *what this must not become*), and no `Bundle` — a bundle is a directory (§2), so what comes back is what the underlying function already returned. The one thing the facade must earn is being thinner than reaching into the submodules, which is why it is nine functions and two re-exported names.
+
+   **The two real changes are behavioural, and both were defects for a caller who is not a terminal:**
+
+   - **`_finalize` wrote layer 3 unasked.** It now takes `contract`, which `ingest` defaults to on — `okragged build` must regenerate the contract, because §10 depends on it never describing a bundle that no longer exists — and which `okragged.build()` defaults to *off*, because a function call that drops `.mcp.json` into somebody's repository is a surprise. `okragged.write_contract()` is how a library caller asks. The asymmetry is documented where the parameter is defined rather than in one of the two callers.
+   - **`ingest` reported only on completion.** It now takes an optional `progress` callable receiving a frozen `Progress(stage, unit, index, total, detail)` — one event per stage per unit, over the eight stages in `pipeline.STAGES`. This is the callback whose absence deferred `POST /api/ingest` and its SSE stream (§11); the endpoint still needs a job registry, and that is M6's problem or a later one's. A reporter that raises is swallowed: a caller's broken logging must not abort a run that has already paid for model calls.
+
+   **`import okragged` is silent and cheap, and that is a requirement rather than a nicety.** `markitdown` prints an ffmpeg warning when imported and `extract/` imports it, so a package whose import writes to somebody else's stderr is unusable in a pipe — and for `okragged mcp`, stdout *is* the protocol. Every import in the facade is function-local, with a module `__getattr__` (PEP 562) for the two names, and a test asserts both that the import prints nothing and that it pulls in neither the extraction path nor a provider.
 
 4. **`ingest` comes off the tool surface entirely. Built.** It runs `_deprecate_vanished` on any full sweep, so a recipient holding the bundle *and* the sidecar — ledger present, `sources/` absent — gets an empty `discovered`, every recorded source reads as vanished, and **every concept is marked `deprecated`**. The bundle alone is safe (no ledger, nothing to deprecate); it is specifically the combination, which is exactly what you would ship to make search work.
 
