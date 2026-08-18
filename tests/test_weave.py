@@ -341,3 +341,8 @@ def test_the_synthesis_index_is_the_bundle_as_it_was_before_the_run(two_sources,
         (two_sources / "sources" / name).write_text(SAMPLE + "\nMore.\n", encoding="utf-8")
     pipeline.ingest(cfg, dry_run=False)
     assert seen == [("pricing", "revenue-policy"), ("pricing", "revenue-policy")]
+
+def test_a_definition_the_woven_body_left_mid_line_gets_its_own_line(monkeypatch):
+    inlined = "A claim.[^pricing] [^pricing]: Pricing"
+    result = weave_via(monkeypatch, json.dumps({"body_markdown": inlined}))
+    assert result.body_markdown == "A claim.[^pricing]\n\n[^pricing]: Pricing"

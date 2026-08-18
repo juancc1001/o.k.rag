@@ -29,7 +29,7 @@ python -m venv .venv
 Tests — okflint is resolved beside the interpreter, so `PATH` no longer decides whether the okflint-dependent tests run:
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest tests -q              # 347 tests, none skipped
+.\.venv\Scripts\python.exe -m pytest tests -q              # 351 tests, none skipped
 .\.venv\Scripts\python.exe -m pytest tests/test_segment.py -q
 .\.venv\Scripts\python.exe -m pytest tests -q -k "footnote"
 ```
@@ -61,7 +61,7 @@ Module responsibilities:
 
 - `__init__.py` — the public Python API (`DESIGN.md` §13 M5 item 3), and **nothing but re-exports**: ten functions that resolve `str | Path | Config` and delegate to the function the CLI calls, plus `Config` and `Progress`. The capability was never missing — every module has always been importable — so this earns its place only by staying thinner than reaching into the submodules. No new return types, no `Bundle` (§2: a bundle is a directory), no `provider=` in any signature, and no `load_dotenv`: credential discovery belongs to the entry points humans use. **Every import in it is deferred** — function-local, plus a module `__getattr__` (PEP 562) for the two names — because `markitdown` prints an ffmpeg warning when imported and `extract/` imports it, and a library whose import writes to somebody else's stderr is broken. `tests/test_library.py` asserts the import prints nothing and pulls in neither the extraction path nor a provider; keep new public names out of the module body.
 - `okf/` — the format layer, and the only part with standalone value (M10 candidate). Bound to the OKF spec, contains no model call. **Keep it free of any dependency on `synth/`, `pipeline.py`, `vectors/` or `agent/`.**
-- `synth/` — provider dispatch. Everything shared (prompt assembly, JSON parse, required-field checks, footnote repair) lives in `synth/__init__.py` and `synth/base.py` so the provider paths cannot drift. Provider modules stay thin: auth, request shape, decline detection.
+- `synth/` — provider dispatch. Everything shared (prompt assembly, JSON parse, required-field checks, footnote repair) lives in `synth/__init__.py` and `synth/base.py` so the provider paths cannot drift. **The footnote repair has two halves and `body_defines` is why**: `ensure_footnote_defs` appends a definition that was never written, and `anchor_footnote_defs` breaks the line before one the model left mid-line, which renders as literal text rather than as a footnote. `body_defines` is line-anchored like `FOOTNOTE_DEF_RE`, because a substring check accepted the mid-line case as defined and the repair for it never fired. **`weave.py` applies the anchor too** — it rewrites the body, so a definition it inlines is its own to fix, and it is the only pass that runs after the one that appended it. Provider modules stay thin: auth, request shape, decline detection.
 - `sources/base.py` — the `Source` protocol with its `document` vs `asset` family split; phase-2 connectors plug in here.
 - `pipeline.py` — orchestration only; assembles `Concept` objects from synthesis results.
 - `ledger.py` — the idempotency ledger, `.okragged/manifest.json`. Sidecar state, so every read path degrades to "no record" rather than raising. **Not `okf/manifest.py`**, which generates `okf-base.yaml` for okflint.

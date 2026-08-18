@@ -486,8 +486,8 @@ The wrappers return what the underlying functions return. There is no `Bundle` o
 | `src/okragged/extract/__init__.py` | Bytes → text, with the content-hash cache. markitdown plus passthrough. |
 | `src/okragged/synth/prompt.py` | **The synthesis, planning and link-weave system prompts.** Each must stay byte-identical across its pass or prompt caching stops working; the only things that vary are the type vocabulary and the concept index, both snapshotted once per run. Tune concept quality here. |
 | `src/okragged/synth/segment.py` | The planning pass and `cut` — marker matching, document-order sorting, short-section folding. `cut` is pure, so segmentation is testable without a model. |
-| `src/okragged/synth/weave.py` | The link-weave pass and `prune_links` — unwrapping link targets that are not concepts. `prune_links` is pure, so the repair half is testable without a model. |
-| `src/okragged/synth/__init__.py` | Provider dispatch plus everything shared: prompt assembly, JSON parsing, required-field checks, footnote repair. |
+| `src/okragged/synth/weave.py` | The link-weave pass and `prune_links` — unwrapping link targets that are not concepts. `prune_links` is pure, so the repair half is testable without a model. Re-anchors a footnote definition the woven body left mid-line, because this pass rewrites the body after the pass that appended it. |
+| `src/okragged/synth/__init__.py` | Provider dispatch plus everything shared: prompt assembly, JSON parsing, required-field checks, footnote repair — appending a definition never written, and anchoring one left mid-line, where it renders as literal text. |
 | `src/okragged/synth/base.py` | The concept and outline JSON schemas, the §4.3 word bounds, `SynthResult`, `SectionContext`, and the error types (`Refused`, `ProviderHTTPError`, `MissingCredential`, `SynthError`). |
 | `src/okragged/synth/providers/claude.py` | Anthropic: `output_config.format`, cached system block, `stop_reason` handling. |
 | `src/okragged/synth/providers/gemini.py` | Gemini: `response_json_schema`, `system_instruction`, `finish_reason` / `block_reason` handling. |
@@ -578,7 +578,7 @@ random_state = 42          # fixed, or the layout reshuffles every run
 .\.venv\Scripts\python.exe -m pytest tests -q
 ```
 
-347 tests. No credentials and no network needed — the end-to-end test stubs the model and asserts the emitted bundle is conformant, so "one file in, one conformant concept out" is covered offline. The embedding provider is stubbed the same way, in a three-dimensional toy space, so what two concepts are "similar" is something the test states rather than something a model decides.
+351 tests. No credentials and no network needed — the end-to-end test stubs the model and asserts the emitted bundle is conformant, so "one file in, one conformant concept out" is covered offline. The embedding provider is stubbed the same way, in a three-dimensional toy space, so what two concepts are "similar" is something the test states rather than something a model decides.
 
 | File | Covers |
 |---|---|

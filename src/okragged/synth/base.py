@@ -65,6 +65,7 @@ MAX_CONCEPT_WORDS = 1200
 
 FOOTNOTE_REF_RE = re.compile(r"\[\^([^\]]+)\]")
 FOOTNOTE_DEF_RE = re.compile(r"^\[\^([^\]]+)\]:", re.MULTILINE)
+INLINE_DEF_RE = re.compile(r"\[\^[^\]]+\]:")
 
 
 class SynthError(RuntimeError):
@@ -163,5 +164,26 @@ def ensure_footnote_defs(body: str, source_id: str, source_title: str) -> str:
     return body.rstrip() + "\n\n" + "\n".join(lines)
 
 
+def anchor_footnote_defs(body: str) -> str:
+    """A definition left mid-line renders as literal text. Break the line before it.
+
+    Only a line break is inserted: what followed the definition on that line was
+    already going to be its text once it starts one, so nothing moves and nothing
+    is rewritten. A definition that already starts its line is untouched.
+    """
+    lines = []
+    for line in body.split("\n"):
+        parts, cut = [], 0
+        for match in INLINE_DEF_RE.finditer(line):
+            if line[cut : match.start()].strip():
+                parts.append(line[cut : match.start()].rstrip())
+                cut = match.start()
+        parts.append(line[cut:])
+        lines.append("\n\n".join(part for part in parts if part))
+    return "\n".join(lines)
+
+
 def body_defines(body: str, ref: str) -> bool:
-    return f"[^{ref}]:" in body
+    """Line-anchored, like FOOTNOTE_DEF_RE. A substring check accepts a definition
+    sitting mid-line, which is the one case the repair above exists for."""
+    return ref in FOOTNOTE_DEF_RE.findall(body)

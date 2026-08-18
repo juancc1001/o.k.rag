@@ -13,6 +13,8 @@ from okragged.synth import (
     Section,
     SynthResult,
     WeaveResult,
+    anchor_footnote_defs,
+    body_defines,
     ensure_footnote_defs,
 )
 
@@ -348,3 +350,18 @@ def test_missing_footnote_definition_is_appended():
 def test_existing_footnote_definition_is_left_alone():
     body = "A claim.[^src]\n\n[^src]: Already defined"
     assert ensure_footnote_defs(body, "src", "Handbook") == body
+
+def test_a_definition_left_mid_line_gets_its_own_line():
+    body = "A claim.[^src] Another.[^src] [^src]: Handbook"
+    assert anchor_footnote_defs(body) == "A claim.[^src] Another.[^src]\n\n[^src]: Handbook"
+
+
+def test_a_definition_already_starting_its_line_is_left_alone():
+    body = "A claim.[^src]\n\n[^src]: Handbook"
+    assert anchor_footnote_defs(body) == body
+
+
+def test_a_reference_defined_only_mid_line_is_not_read_as_defined():
+    body = "A claim.[^src] [^src]: Handbook"
+    assert not body_defines(body, "src")
+    assert body_defines(anchor_footnote_defs(body), "src")

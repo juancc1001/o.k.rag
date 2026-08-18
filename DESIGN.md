@@ -339,6 +339,8 @@ A concept a human owns is not woven, for the same reason it is not overwritten (
 
 Broken links are permitted and expected: a *human* can reference knowledge not yet written, and `okflint` reports that as a W2 warning rather than an error. A model handed the full concept index is in a different position — a path outside that index is a guess, not a forward reference — so the pass unwraps such links back to plain text and reports the targets. Both halves matter: the tolerance is for authors, the repair is for generators.
 
+The pass repairs one thing that is not a link. A footnote definition belongs at the start of a line; left mid-line it renders as literal text, and the two references pointing at it render as literal text too. Synthesis appends a definition that was never written, and this pass — which rewrites the body afterwards — breaks the line before one that is misplaced. Only the break is inserted: what followed the definition on that line was already going to be its text.
+
 Two further repairs, mechanical because the intent is unambiguous, both found on the first real corpus rather than reasoned about in advance:
 
 - **Inverted syntax** — `[/finance/pricing.md](list prices)`. Swapped back when the label side resolves to a concept and the target side does not.

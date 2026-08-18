@@ -20,6 +20,7 @@ from .base import (
     WEAVE_SCHEMA,
     SynthError,
     WeaveResult,
+    anchor_footnote_defs,
 )
 from .prompt import weave_system_prompt, weave_user_prompt
 from .providers import resolve
@@ -68,7 +69,8 @@ def weave(
         concept_id,
     )
     return WeaveResult(
-        body_markdown=woven,
+        # this pass rewrites the body, so a definition it inlines is its own to fix
+        body_markdown=anchor_footnote_defs(woven),
         invented=invented,
         input_tokens=response.input_tokens,
         output_tokens=response.output_tokens,
