@@ -2,7 +2,7 @@
 
 Turns a folder of files into a conformant **Open Knowledge Format (OKF) v0.2** bundle — a directory of markdown concepts with YAML frontmatter that agents and humans can both read, with no SDK required.
 
-**Status: M2, M3 and M4 done.** A long source is planned into sections and each becomes its own concept under a parent, a second pass weaves cross-links into the prose, every directory gets an `index.md`, and a rebuild only touches the sources that changed. `okragged index` then embeds the bundle, projects it to 2D and writes a `graph.json` with both edge layers, and `okragged serve` renders it — a sigma.js map where proximity is semantic similarity and a **ghost edge** is a pair the embeddings say is about one thing that nobody linked. Every build also generates the **agent contract**: `agent/AGENTS.md` plus a stdio MCP server exposing `search` / `read_concept` / `add_source` / `lint`, none of which needs a credential at all. See [Not implemented yet](#not-implemented-yet).
+**Status: M2, M3 and M4 done.** A long source is planned into sections and each becomes its own concept under a parent, a second pass weaves cross-links into the prose, every directory gets an `index.md`, and a rebuild only touches the sources that changed. `okragged index` then embeds the bundle, projects it to 2D and writes a `graph.json` with both edge layers, and `okragged serve` renders it — a sigma.js map where proximity is semantic similarity and a **ghost edge** is a pair the embeddings say is about one thing that nobody linked. Every build also generates the **agent contract**: `agent/AGENTS.md` plus a stdio MCP server exposing `search` / `read_concept` / `add_source` / `lint`, none of which *requires* a credential. That server is read-only unless you launch it otherwise, and reads no `.env` unless you ask. See [Not implemented yet](#not-implemented-yet).
 
 - Architecture, data model and rationale: [`DESIGN.md`](DESIGN.md)
 - **Roadmap and milestones (M1–M11): [`DESIGN.md` §13](DESIGN.md#13-milestones)**
@@ -116,13 +116,24 @@ Swapping between them is a config edit: `embeddings_meta.json` records which pro
 | `search` — embedding path | — | required, per query |
 | `search` — traversal fallback | — | — |
 | `build --dry-run`, `extract`, `check`, `agent`, `serve` | — | — |
-| `read_concept`, `lint`, `add_source` | — | — |
+| `read_concept`, `lint` | — | — |
+| `add_source` recording | — | — |
+| `add_source` synthesizing (`mcp --write --spend`) | **required** | — |
 | `mcp` without `--spend` | — | — |
-| `mcp --spend` | — | the embedding path only |
+| `mcp --spend` | for `add_source` | the embedding path only |
 
-**Nothing on the MCP surface needs a credential, `add_source` included.** It records prose as a source file and stops there; the concept is authored by the next `okragged build`. That is a security boundary rather than a convenience: stdio MCP has no identity — the server is a subprocess of whatever client spawned it — so "whose key pays for this synthesis" would be settled by an accident of environment precedence, with the producer's `.env` funding a stranger's writes whenever the consumer happened to have no key. Removing the model call removes the question. Spending over the protocol belongs to the security layer in [§13 M6](DESIGN.md#13-milestones).
+**No tool on the MCP surface *requires* a credential, `add_source` included.** Recording prose calls no model, so the whole surface answers for a consumer holding somebody else's bundle and no key of their own — which is what M4 is for. Over stdio there is nobody to charge: MCP has no identity, the server being a subprocess of whatever client spawned it, so "whose key pays" would otherwise be settled by an accident of environment precedence.
 
-**And `okragged mcp` no longer reads your `.env` unless you ask it to.** Not taking a credential is not the same as not having one: the server used to load the project's `.env` merely for being pointed at that directory, and the one thing it buys is the *embedding* key `search` uses to embed a query — so a consumer's search spent the producer's quota. Reads cost money even where writes do not. `--spend` turns that back on for an instance you launched deliberately; without it `search` answers by index traversal and says so. `--write` is the other half: it decides whether `add_source` is offered at all, and without it the tool is absent rather than present-and-refusing. Both default to off, and neither reads an environment variable — a mode a stray variable could turn on is the ambient authority this removes.
+**And `okragged mcp` no longer reads your `.env` unless you ask it to.** The server used to load the project's `.env` merely for being pointed at that directory, and what that buys is the *embedding* key `search` uses to embed a query — so a consumer's search spent the producer's quota. Reads cost money even where writes do not. Two switches, both off by default, and neither reads an environment variable, because a mode a stray variable could turn on is the ambient authority this removes:
+
+| invocation | the corpus | your credentials |
+|---|---|---|
+| `okragged mcp` | read-only; `add_source` is absent, not present-and-refusing | unread — `search` traverses the index and says so |
+| `--spend` | read-only | read; `search` may embed the query |
+| `--write` | `add_source` records prose for the next `okragged build` | unread |
+| `--write --spend` | `add_source` records prose **and authors its concept** | read; the concept costs a `[synth]` call |
+
+**What stands behind the spending mode is that you launched it, and nothing else.** There is no identity and no rate limit: a caller who owns the process could present any token he was asked for and delete any counter kept beside the bundle. So `--write --spend` is for an instance *you* run for *your* agent, where the caller and the payer are the same person; it is not a way to let somebody else spend your key on terms. That needs a channel with someone on the far end, and it is [§13 M6](DESIGN.md#13-milestones) items 1 and 3, still unbuilt.
 
 `build` **fails its pre-flight before doing work** — it refuses before extracting your corpus rather than after, so a missing key never leaves debris.
 
@@ -145,7 +156,7 @@ The library deliberately reads no `.env`. `okragged` the command loads one becau
 }}}
 ```
 
-Every tool that instance offers works that way. `search` answers by traversal instead of by embedding kNN and says which path answered. Add `--write` to the `args` if that instance should also offer `add_source`, which records prose without synthesizing it, and `--spend` if it should read the project's `.env` — a key there buys exactly one thing, the embedding search path. Otherwise put your own key in this entry's `env`: `X/.env` is the *producer's* file and may be neither present on your machine nor yours to use.
+Every tool that instance offers works that way. `search` answers by traversal instead of by embedding kNN and says which path answered. Add `--write` to the `args` if that instance should also offer `add_source`, and `--spend` if it should read the project's `.env`. Those two together turn `add_source` into one that authors the concept as well, which is why they belong to an instance you run for your own agent rather than to one you registered against somebody else's directory — `X/.env` is the *producer's* file, and may be neither present on your machine nor yours to use. Put your own key in this entry's `env` instead.
 
 `.env` is gitignored; `.env.example` is the committed template. `okragged doctor` reports both providers, whether each credential was found, and whether the configured model exists for your key.
 
@@ -320,23 +331,23 @@ Four tools, of which the one that writes is offered only to an instance started 
 |---|---|---|
 | `search` | `(query, k=8)` → `concept_id`, `title`, `description`, `score` | none |
 | `read_concept` | `(concept_id)` → the raw file, frontmatter included | none |
-| `add_source` | `(text, title=null)` → the source written, and whether it was recorded | none |
+| `add_source` | `(text, title=null)` → the source written, whether it was recorded, and the concepts authored if the instance synthesizes | none to record, `[synth]` to synthesize |
 | `lint` | `()` → conformance, ghost edges, stale concepts, orphans | none |
 
 The ghost list is capped at the 20 strongest, with `ghosts_total` and a note saying what was left out — they grow with the square of the corpus and this is a tool result an agent pays for by the token. `lint` also says when `graph.json` no longer describes the bundle, which a rebuild makes routine: ids come from model-written titles, so a rename means the old graph is about *different* concepts, not merely stale ones.
 
 **`search` returns pointers and never bodies**, because the retrieval path here is progressive disclosure rather than chunk RAG: the agent reads `index.md`, then reads whole concept files, and `AGENTS.md` says so explicitly.
 
-**Every tool works with no credential at all**, and the one that writes only ever adds — `ingest` came off this surface in M5, so nothing reachable over the protocol can sweep the corpus. That is what M4 is for — the bundle has to be readable by a session that has no key. That constrains `search`, since concept vectors are computed at build time but embedding a *query* is a read-time model call:
+**Every tool works with no credential at all**, and the one that writes only ever adds — `ingest` came off this surface in M5, so nothing reachable over the protocol can sweep the corpus, in any mode. That is what M4 is for — the bundle has to be readable by a session that has no key. That constrains `search`, since concept vectors are computed at build time but embedding a *query* is a read-time model call:
 
 - `embeddings.npy` present **and** an embedding credential present → kNN over the stored matrix.
 - otherwise → **index traversal**: a term ranking over concept titles and descriptions (which is what every index entry is made of, verbatim), the bodies at lower weight, and one hop along the authored links, so a concept the bundle links to a hit surfaces behind it. Accents are folded, so `informaticos` matches `Informáticos`.
 
 The result shape is identical, and the response names which path answered — plus, on the traversal path, why the other one did not. Retrieval strategy is deliberately out of scope ([`DESIGN.md` §7](DESIGN.md)); this ranking is meant to be simple enough to explain in a sentence and test without a model.
 
-`add_source` **records and stops**: it writes the prose into `sources/` under a path it generates, and the concept is authored by the next `okragged build`. That split is what makes it safe to expose where `ingest` was not. Synthesis costs money, and stdio MCP has no identity to charge — the server is a subprocess of whatever client spawned it — so a tool that synthesized would spend *somebody's* key chosen by environment precedence, which in practice means the producer's `.env` whenever the consumer has none. It also cannot sweep: there is no run to suppress, so the vanished-source check (§6.1) never enters the picture.
+`add_source` **records, and authors the concept only if the instance was launched to spend.** It writes the prose into `sources/` under a path it generates; on a `--write` instance it stops there and the next `okragged build` authors from it, and on a `--write --spend` instance it goes on to ingest that one path and returns the concept ids. The two are registered as separate tools carrying separate descriptions, because the description is the only channel every client shows a model: one that promised a concept where none is coming, or told a caller to run a build that already ran, is worse than saying nothing. Neither can sweep — a partial run over one path suppresses the vanished-source check (§6.1), and recording starts no run at all.
 
-It takes no lock either: the path is generated per assertion and identical bytes reuse it, so there is nothing for a concurrent build to collide with, and taking the lock would make recording an assertion fail for the duration of somebody's rebuild. `recorded: false` means that prose was already on file.
+**Recording takes no lock; synthesizing does.** The path is generated per assertion and identical bytes reuse it, so a recording call has nothing to collide with and taking the lock would make it fail for the duration of somebody's rebuild. Ingesting goes through the pipeline, so it takes the project lock like any other writer — and a build already holding it comes back as a message naming what holds it, not as a traceback. Same for a missing `[synth]` key. In both cases the prose is already recorded and the answer says so: raising there would tell you your assertion was lost while it sat in `sources/` waiting for the build that will pick it up. `recorded: false` means that prose was already on file; `synthesized: false` with an `errors` entry means the file landed and the concept did not.
 
 **The contract itself is served over the protocol**, because a consumer in another checkout cannot open `agent/AGENTS.md`:
 
@@ -388,7 +399,7 @@ Broken links are **warnings, not errors** — the spec explicitly permits them, 
 
 ### One writer, and a commit per source
 
-Two things can write this directory — the CLI and the Python API — so a write takes `.okragged/lock.json` for its duration and a second one is refused with a message naming what holds it:
+Three things can write this directory — the CLI, the Python API, and a synthesizing `add_source` over MCP — so a write takes `.okragged/lock.json` for its duration and a second one is refused with a message naming what holds it:
 
 ```
 another okragged run holds this project: ingest, pid 26104 on DESKTOP-A, since 2026-08-17T18:02:11Z.
@@ -440,7 +451,7 @@ print(okragged.check(cfg).ok, [h.concept_id for h in okragged.search(cfg, "reven
 | `search(project, query, k=8)` | pointers, never bodies — the same ranking as the MCP tool | only for the embedding path |
 | `read_concept(project, concept_id)` | the raw file, frontmatter included | no |
 | `lint(project)` | conformance, ghosts, stale, orphans → `LintReport` | no |
-| `add_source(project, text, title=None)` | record prose in `sources/`; the concept waits for `build` | no |
+| `add_source(project, text, title=None, synthesize=False)` | record prose in `sources/`; the concept waits for `build` unless `synthesize` | `[synth]` to synthesize |
 | `write_contract(project)` | regenerate `agent/AGENTS.md` | no |
 | `register(project)` | register `okragged mcp` in `.mcp.json`, keeping other servers | no |
 
@@ -567,7 +578,7 @@ random_state = 42          # fixed, or the layout reshuffles every run
 .\.venv\Scripts\python.exe -m pytest tests -q
 ```
 
-342 tests. No credentials and no network needed — the end-to-end test stubs the model and asserts the emitted bundle is conformant, so "one file in, one conformant concept out" is covered offline. The embedding provider is stubbed the same way, in a three-dimensional toy space, so what two concepts are "similar" is something the test states rather than something a model decides.
+347 tests. No credentials and no network needed — the end-to-end test stubs the model and asserts the emitted bundle is conformant, so "one file in, one conformant concept out" is covered offline. The embedding provider is stubbed the same way, in a three-dimensional toy space, so what two concepts are "similar" is something the test states rather than something a model decides.
 
 | File | Covers |
 |---|---|
@@ -649,7 +660,7 @@ Run against the 3-PDF Spanish corpus: 18 concepts embedded with `gemini-embeddin
 - **`POST /api/ingest` + SSE progress.** Deferred with M3, not cancelled. It needed a job registry and progress events `pipeline.ingest` did not emit; [the events landed with the Python API](#driving-it-from-python), the job registry did not.
 - **Grounded answers** (M11, proposed). `search` normalizes by the best hit, so its top result always scores `1.000` — including for a question the bundle cannot answer. Absolute confidence with an abstention floor, offline citation checking, and trust tiers carried into results.
 - **Distribution** (M5, all six pieces built). The rename and the console script have landed, and so has the half that makes a foreign checkout a consumer: `okragged mcp --project <dir>`, a `.mcp.json` entry naming nothing but a command on `PATH`, and the contract served as `okragged://contract` / `okragged://index` rather than as a file only the producer can open. So have `add_source` replacing `ingest` on the MCP surface, [the Python API](#driving-it-from-python), and [the lock and per-source commit](#one-writer-and-a-commit-per-source) that three writers to one bundle require. What is left is the exit criterion itself — a session driven from a checkout that is not the producer's, which nobody has had yet.
-- **Synthesis over the protocol** (M6, the security layer). `add_source` records prose and stops; the concept is authored by the next `okragged build`. Stdio MCP has no identity, so a tool that synthesized would spend a key picked by environment precedence. Giving the protocol an identity, a spend scope and a rate limit is its own milestone.
+- **An identity, and a spend scope** (M6, the security layer — 3 of 5 items built). What exists: `okragged mcp` serves read-only and reads no `.env` unless asked, and `--write --spend` gives you back an `add_source` that authors the concept in the same call. What that mode rests on is only that *you* launched it, so caller and payer are the same person. What is missing is the half that makes the question answerable rather than moot — an identity to attribute a call to, and a spend scope with a rate limit — because a token a caller presents is not an identity when the caller owns the process, and a counter beside the bundle is one he can delete. Those bind where there is a channel and a host holding the only key.
 - **BigQuery/blob sources.** M9.
 
 ### Known rough edges in segmentation

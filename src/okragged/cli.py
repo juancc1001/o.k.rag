@@ -157,7 +157,8 @@ def mcp(
     spend: bool = typer.Option(
         False,
         "--spend",
-        help="Read this project's .env, so search may embed a query on your key.",
+        help="Read this project's .env. Search may then embed a query on your key, "
+        "and with --write the recorded source is synthesized on it too.",
     ),
 ) -> None:
     """Serve this bundle to an MCP client over stdio. What .mcp.json registers."""

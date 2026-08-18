@@ -29,7 +29,7 @@ python -m venv .venv
 Tests — okflint is resolved beside the interpreter, so `PATH` no longer decides whether the okflint-dependent tests run:
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest tests -q              # 342 tests, none skipped
+.\.venv\Scripts\python.exe -m pytest tests -q              # 347 tests, none skipped
 .\.venv\Scripts\python.exe -m pytest tests/test_segment.py -q
 .\.venv\Scripts\python.exe -m pytest tests -q -k "footnote"
 ```

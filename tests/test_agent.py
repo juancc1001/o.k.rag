@@ -730,10 +730,15 @@ def test_a_path_outside_the_project_is_refused_rather_than_ingested(ingestable):
 ASSERTION = "Invoices and refunds share a customer id, which no document says."
 
 
-def added(project: Path, text: str = ASSERTION, title: str | None = None):
+def added(
+    project: Path,
+    text: str = ASSERTION,
+    title: str | None = None,
+    synthesize: bool = False,
+):
     from okragged.agent.write import add_source
 
-    return add_source(config_module.load(project), text, title)
+    return add_source(config_module.load(project), text, title, synthesize=synthesize)
 
 
 def calls(monkeypatch) -> list[str]:
@@ -851,6 +856,69 @@ def test_add_source_refuses_when_the_configured_globs_would_never_discover_it(in
     assert not list((ingestable / "sources" / "conversations").glob("*.md"))
 
 
+def test_a_synthesizing_call_authors_the_concept_instead_of_leaving_it_to_a_build(
+    ingestable,
+):
+    """M6 item 5. What the operator gets for launching an instance with both
+    switches: the assertion is a concept with real provenance in one call."""
+    result = added(ingestable, synthesize=True)
+
+    assert result.synthesized and result.concepts and not result.errors
+    concept_id = result.concepts[0]
+    concept = okf.parse(
+        (ingestable / "bundle" / f"{concept_id}.md").read_text(encoding="utf-8-sig"),
+        concept_id,
+    )
+    assert result.uri in concept.sources[0].resource
+    assert concept.extra["x_okragged_source_hash"]
+
+
+def test_a_recording_call_says_it_authored_nothing_rather_than_leaving_it_implied(
+    ingestable, monkeypatch
+):
+    """The two modes return one shape, so the shape has to distinguish them: a
+    caller cannot tell a concept that is coming later from one that failed."""
+    seen = calls(monkeypatch)
+    result = added(ingestable)
+
+    assert seen == []
+    assert not result.synthesized and not result.concepts and not result.errors
+
+
+def test_a_lock_another_writer_holds_is_reported_with_the_prose_kept(ingestable):
+    """Synthesis goes through `ingest`, so it takes the project lock and a build in
+    flight refuses it — a failure mode recording does not have. It may not raise:
+    the source file is already written, and a traceback would tell the caller their
+    assertion was lost while it sat in `sources/` waiting for that build."""
+    from okragged import lock
+
+    config = config_module.load(ingestable)
+    with lock.hold(config.sidecar_root, "some other build"):
+        result = added(ingestable, synthesize=True)
+
+    assert not result.synthesized
+    assert (ingestable / result.uri).is_file()
+    assert "some other build" in result.errors[0]
+    assert "is recorded" in result.errors[0] and "okragged build" in result.errors[0]
+
+
+def test_a_missing_synthesis_credential_is_reported_and_named_as_the_synthesis_one(
+    ingestable, monkeypatch
+):
+    """One switch covers two credentials, and the gemini modules read a single
+    variable for both — so a search that works implies nothing about synthesis, and
+    a message that said only "no credential" would send the caller to the wrong
+    key. Reported, not raised, for the same reason the lock is."""
+    for var in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"):
+        monkeypatch.delenv(var, raising=False)
+    result = added(ingestable, synthesize=True)
+
+    assert not result.synthesized
+    assert (ingestable / result.uri).is_file()
+    assert "ANTHROPIC_API_KEY" in result.errors[0]
+    assert "GEMINI" not in result.errors[0]
+
+
 def test_add_source_takes_no_lock_and_is_not_refused_by_a_writer_holding_one(
     ingestable,
 ):
@@ -869,10 +937,10 @@ def test_add_source_takes_no_lock_and_is_not_refused_by_a_writer_holding_one(
 
 # --- the server ------------------------------------------------------------------
 
-def server_for(project: Path, *, write: bool = False):
+def server_for(project: Path, *, write: bool = False, spend: bool = False):
     from okragged.agent.server import build_server
 
-    return build_server(cfg(project), write=write)
+    return build_server(cfg(project), write=write, spend=spend)
 
 
 def test_an_instance_with_writes_on_exposes_exactly_the_four_tools_the_contract_names(
@@ -997,6 +1065,32 @@ def test_an_instance_started_with_writes_on_offers_the_tool_that_writes(project)
     assert "add_source" in anyio.run(go)
 
 
+def test_each_write_mode_describes_the_tool_its_own_instance_actually_offers(project):
+    """The description is the one channel every client shows a model, so it has to
+    be true of *this* instance. A recording tool that promised a concept, or a
+    synthesizing one that told the caller to go and run a build, would be worse
+    than silent — the client would wait for something that is not coming, or repeat
+    work that is already done."""
+    pytest.importorskip("mcp", reason='the MCP SDK is an optional extra: pip install -e ".[mcp]"')
+    import anyio
+    from mcp import Client
+
+    async def described(**modes):
+        async with Client(server_for(project, **modes)) as client:
+            return {t.name: t.description or "" for t in (await client.list_tools()).tools}
+
+    def flat(text: str) -> str:
+        return " ".join(text.split())
+
+    recording = flat(anyio.run(lambda: described(write=True))["add_source"])
+    synthesizing = flat(anyio.run(lambda: described(write=True, spend=True))["add_source"])
+
+    assert "No concept appears until someone runs `okragged build`" in recording
+    assert "okragged build" not in synthesizing
+    assert "spends the operator's credential" in synthesizing
+    assert "rate-limits it" in synthesizing
+
+
 class _NoRun:
     """`main` ends in a blocking `run()`; the decision under test happens before it."""
 
@@ -1019,7 +1113,7 @@ def test_the_server_does_not_read_the_projects_env_unless_spending_is_enabled(
 
     write_env(project, "GEMINI_API_KEY=the-producers-key")
     monkeypatch.setattr(
-        server_module, "build_server", lambda config, *, write=False: _NoRun()
+        server_module, "build_server", lambda config, *, write=False, spend=False: _NoRun()
     )
     try:
         server_module.main(project)
@@ -1046,7 +1140,7 @@ def test_with_spending_off_search_traverses_though_the_env_holds_a_credential(
     monkeypatch.delenv("GEMINI_API_KEY")
     write_env(project, "GEMINI_API_KEY=the-producers-key")
     monkeypatch.setattr(
-        server_module, "build_server", lambda config, *, write=False: _NoRun()
+        server_module, "build_server", lambda config, *, write=False, spend=False: _NoRun()
     )
 
     server_module.main(project)
