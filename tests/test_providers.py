@@ -5,8 +5,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from ragged import synth
-from ragged.synth import (
+from okragged import synth
+from okragged.synth import (
     CONCEPT_SCHEMA,
     MissingCredential,
     ProviderHTTPError,
@@ -14,7 +14,7 @@ from ragged.synth import (
     Refused,
     SynthError,
 )
-from ragged.synth.providers import claude, gemini, resolve
+from okragged.synth.providers import claude, gemini, resolve
 
 PAYLOAD = {
     "type": "Policy",
@@ -271,14 +271,14 @@ def test_a_non_200_is_a_syntherror_so_the_pipeline_records_it_per_file():
 
 
 def test_build_fails_fast_when_the_credential_is_absent(tmp_path, monkeypatch):
-    from ragged import config as config_module
-    from ragged import pipeline
+    from okragged import config as config_module
+    from okragged import pipeline
 
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
     (tmp_path / "sources").mkdir()
     (tmp_path / "sources" / "a.md").write_text("# A\n\nBody.\n", encoding="utf-8")
-    (tmp_path / "ragged.toml").write_text('[synth]\nprovider = "gemini"\n', encoding="utf-8")
+    (tmp_path / "okragged.toml").write_text('[synth]\nprovider = "gemini"\n', encoding="utf-8")
 
     def explode(**_):
         raise AssertionError("must not extract or synthesize without a credential")

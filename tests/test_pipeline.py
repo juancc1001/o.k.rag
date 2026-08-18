@@ -4,9 +4,9 @@ from pathlib import Path
 
 import pytest
 
-from ragged import config as config_module
-from ragged import okf, pipeline
-from ragged.synth import (
+from okragged import config as config_module
+from okragged import okf, pipeline
+from okragged.synth import (
     MAX_CONCEPT_WORDS,
     Outline,
     ProviderHTTPError,
@@ -40,8 +40,8 @@ def project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setattr(pipeline, "weave", fake_weave)
     (tmp_path / "sources").mkdir()
     (tmp_path / "sources" / "revenue-policy.md").write_text(SAMPLE, encoding="utf-8")
-    (tmp_path / "ragged.toml").write_text(
-        '[bundle]\nroot = "bundle"\nokf_version = "0.2"\nactor = "ragged/test"\n\n'
+    (tmp_path / "okragged.toml").write_text(
+        '[bundle]\nroot = "bundle"\nokf_version = "0.2"\nactor = "okragged/test"\n\n'
         '[sources.local]\npath = "sources"\ninclude = ["**/*.md"]\n\n'
         '[types]\nallowed = ["Document", "Policy"]\nallow_new = true\n',
         encoding="utf-8",
@@ -92,9 +92,9 @@ def test_one_file_in_one_conformant_concept_out(project, monkeypatch):
     concept = okf.parse(written, "revenue-policy")
     assert concept.type == "Policy"
     assert concept.status == "draft"
-    assert concept.generated == {"by": "ragged/test", "at": concept.generated["at"]}
+    assert concept.generated == {"by": "okragged/test", "at": concept.generated["at"]}
     assert concept.sources[0].id == "revenue-policy"
-    assert concept.extra["x_ragged_source_hash"]
+    assert concept.extra["x_okragged_source_hash"]
     # never fabricate a verification event
     assert concept.verified == []
 
@@ -151,21 +151,35 @@ def test_a_non_200_does_not_abort_the_run(project, monkeypatch):
     assert summary.report is not None and summary.report.ok
 
 
-def test_an_interrupted_run_still_leaves_a_readable_bundle(project, monkeypatch):
-    (project / "sources" / "zz-interrupted.md").write_text(SAMPLE, encoding="utf-8")
+def test_an_interrupted_run_leaves_a_bundle_of_the_sources_that_committed(project, monkeypatch):
+    """The commit boundary is the source, not the run (§6.6).
 
-    def interrupt_on_the_second(**kwargs):
-        if kwargs["source_uri"].endswith("zz-interrupted.md"):
+    The source this run finished is published; the one it was in the middle of is
+    not, and nothing half of a source's emit is on disk — that is the window the
+    pending record fences, because ids come from model-written titles and half an
+    emit is a mix of two namings rather than a subset. `tests/test_writers.py`
+    covers what the next run pays for.
+    """
+    monkeypatch.setattr(pipeline, "synthesize", fake_synthesize)
+    cfg = config_module.load(project)
+    pipeline.ingest(cfg, dry_run=False)
+
+    (project / "sources" / "zz-one.md").write_text(SAMPLE + "\nOne.\n", encoding="utf-8")
+    (project / "sources" / "zz-two.md").write_text(SAMPLE + "\nTwo.\n", encoding="utf-8")
+
+    def interrupt_the_second_new_source(**kwargs):
+        if kwargs["source_uri"].endswith("zz-two.md"):
             raise KeyboardInterrupt
         return fake_synthesize(**kwargs)
 
-    monkeypatch.setattr(pipeline, "synthesize", interrupt_on_the_second)
-    cfg = config_module.load(project)
+    monkeypatch.setattr(pipeline, "synthesize", interrupt_the_second_new_source)
     with pytest.raises(KeyboardInterrupt):
         pipeline.ingest(cfg, dry_run=False)
 
-    assert (cfg.bundle_root / "revenue-policy.md").exists()
-    assert "revenue-policy.md" in (cfg.bundle_root / "index.md").read_text(encoding="utf-8")
+    assert (cfg.bundle_root / "zz-one.md").exists()  # committed by its own emit
+    assert not (cfg.bundle_root / "zz-two.md").exists()  # was still in flight
+    index = (cfg.bundle_root / "index.md").read_text(encoding="utf-8-sig")
+    assert "zz-one.md" in index and "zz-two.md" not in index
     assert okf.validate(cfg.bundle_root).ok
 
 

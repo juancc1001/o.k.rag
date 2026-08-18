@@ -6,10 +6,24 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 
 
+def _default_actor() -> str:
+    """`generated.by` for every concept this build writes.
+
+    Derived from the installed version rather than written out, because this
+    string is stamped into the bundle: a hand-kept copy that missed a release
+    would not merely misreport the tool, it would misattribute provenance in
+    every concept produced after it. `okragged.__version__` is the same value
+    and `pyproject.toml` is the only place it is declared.
+    """
+    from . import _installed_version
+
+    return f"okragged/{_installed_version()}"
+
+
 class BundleConfig(BaseModel):
     root: str = "bundle"
     okf_version: str = "0.2"
-    actor: str = "ragged/0.1.0"
+    actor: str = Field(default_factory=_default_actor)
     title: str | None = None
     """Heading of the root index.md. None -> the project directory name, which
     names the tool rather than the knowledge unless the two happen to agree."""
@@ -65,6 +79,9 @@ class Config(BaseModel):
 
     @property
     def bundle_root(self) -> Path:
+        """The published bundle. One answer, always — a staged run reads from here
+        and writes into `.okragged/staging/` (§6.6), which is `staging.Area`'s job
+        rather than a second meaning for this path."""
         return self.project_root / self.bundle.root
 
     @property
@@ -73,7 +90,7 @@ class Config(BaseModel):
 
     @property
     def sidecar_root(self) -> Path:
-        return self.project_root / ".ragged"
+        return self.project_root / ".okragged"
 
     @property
     def bundle_title(self) -> str:
@@ -84,7 +101,7 @@ class Config(BaseModel):
 
 def load(project_root: Path | None = None) -> Config:
     root = (project_root or Path.cwd()).resolve()
-    path = root / "ragged.toml"
+    path = root / "okragged.toml"
     # utf-8-sig: hand-edited file, so tolerate a BOM (tomllib would reject it)
     raw = tomllib.loads(path.read_text(encoding="utf-8-sig")) if path.exists() else {}
     return Config(

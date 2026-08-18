@@ -1,7 +1,7 @@
 [bundle]
 root = "bundle"
 okf_version = "0.2"
-actor = "ragged/0.1.0"
+actor = "okragged/0.1.0"
 # title = "..."   # heading of the root index.md; omit and it is the project
                   # directory name, which names the tool, not the knowledge
 
@@ -13,7 +13,7 @@ exclude = ["**/~$*", "**/.DS_Store"]
 
 [synth]
 provider = "gemini"          # gemini | anthropic
-model = "gemini-3.1-flash-lite"   # omit for the provider default; `ragged doctor` lists what your key can reach
+model = "gemini-3.1-flash-lite"   # omit for the provider default; `okragged doctor` lists what your key can reach
 effort = "high"              # anthropic only; gemini has no equivalent
 max_tokens = 16000
 

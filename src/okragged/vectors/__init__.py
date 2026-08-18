@@ -1,10 +1,10 @@
 """embed -> project -> graph (DESIGN §6.8, §6.9, §8).
 
 Stages 8 and 9 of the pipeline, and separable from 1–7 by design: nothing in the
-build path uses embeddings, so `ragged build` never calls this and a bundle is
+build path uses embeddings, so `okragged build` never calls this and a bundle is
 produced, validated and consumed without it.
 
-Everything written here goes in `.ragged/`. The sidecar rule is the load-bearing
+Everything written here goes in `.okragged/`. The sidecar rule is the load-bearing
 constraint of the design — a bundle carrying an `embedding:` key or a vector file
 is no longer something you can `tar` up and read with `cat`.
 """
@@ -19,6 +19,7 @@ import numpy as np
 
 from .. import okf
 from ..config import Config
+from ..lock import hold
 from .base import EmbedError, MissingEmbedCredential
 from .embed import EmbedSummary, chunk, embed_bundle, embedding_text
 from .graph import GRAPH_NAME, LAYOUT_NAME, build_graph, is_stale, trust, write_graph, write_layout
@@ -68,6 +69,14 @@ class IndexSummary:
 
 
 def index(config: Config) -> IndexSummary:
+    """Embed, project, write the graph. Holds the project lock: this reads the
+    bundle a `build` may be swapping under it, and two of these interleaving
+    would write one matrix and another's meta beside it (§13 M5 item 6)."""
+    with hold(config.sidecar_root, "index"):
+        return _index(config)
+
+
+def _index(config: Config) -> IndexSummary:
     embedded = embed_bundle(config)
     store = load_store(config.sidecar_root, embedded.provider, embedded.model)
     matrix = store.matrix if store.matrix is not None else np.zeros((0, 0), np.float32)

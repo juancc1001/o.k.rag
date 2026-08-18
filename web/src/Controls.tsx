@@ -1,7 +1,7 @@
 // τ slider, ghost toggle, search, and the legend for §8's encoding.
 //
 // The slider's floor is the lowest similarity graph.json actually contains, not
-// 0: `ragged index` only emits pairs that already passed the configured τ and
+// 0: `okragged index` only emits pairs that already passed the configured τ and
 // the top-k gate, so sliding below that would claim to show ghosts the file
 // does not hold. Calibration happens upward from the configured value.
 
@@ -29,7 +29,7 @@ export function Controls(props: Props) {
 
   return (
     <aside className="controls">
-      <h1>ragged</h1>
+      <h1>okragged</h1>
 
       <section>
         <label className="field">

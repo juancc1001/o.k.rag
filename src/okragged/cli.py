@@ -8,9 +8,11 @@ import typer
 
 from . import config as config_module
 from . import okf, vectors
-from .agent import write_contract
-from .api.app import WEB_DIST, create_app
+from .agent import is_registered, write_contract
+from .agent import register as agent_register
+from .api.app import STATIC_DIR, create_app
 from .config import Config
+from .lock import LockHeld
 from .pipeline import IngestSummary, ingest, inspect_extraction
 from .synth import MissingCredential, resolve
 from .vectors import MissingEmbedCredential
@@ -63,10 +65,21 @@ def build(
         summary = ingest(cfg, dry_run=dry_run)
     except MissingCredential as exc:
         typer.secho(str(exc), fg="red")
-        typer.secho("  copy .env.example to .env and add your key, or run `ragged doctor`", fg="bright_black")
+        typer.secho("  copy .env.example to .env and add your key, or run `okragged doctor`", fg="bright_black")
+        raise typer.Exit(2) from None
+    except LockHeld as exc:
+        typer.secho(str(exc), fg="red")
         raise typer.Exit(2) from None
 
     _print_summary(summary, dry_run=dry_run)
+    if not dry_run and cfg.bundle_root.exists() and not is_registered(cfg):
+        # mentioned, not done: registering edits the machine's MCP config, which a
+        # build has no business writing (see agent/contract.py)
+        typer.secho(
+            "\nthe MCP server is not registered - `okragged agent --register` adds it "
+            "to .mcp.json",
+            fg="bright_black",
+        )
     raise typer.Exit(_exit_code(summary))
 
 
@@ -91,7 +104,7 @@ def index() -> None:
         raise typer.Exit(2)
     try:
         summary = vectors.index(cfg)
-    except MissingEmbedCredential as exc:
+    except (MissingEmbedCredential, LockHeld) as exc:
         typer.secho(str(exc), fg="red")
         raise typer.Exit(2) from None
     _print_index(summary)
@@ -99,14 +112,60 @@ def index() -> None:
 
 
 @app.command()
-def agent() -> None:
-    """Regenerate the agent contract: agent/AGENTS.md, agent/mcp_server.py, .mcp.json."""
+def agent(
+    register: bool = typer.Option(
+        False,
+        "--register",
+        help="Also register the MCP server in .mcp.json. Edits a file okragged does not own.",
+    ),
+) -> None:
+    """Regenerate the agent contract: agent/AGENTS.md. --register also writes .mcp.json."""
     cfg = config_module.load()
     if not cfg.bundle_root.exists():
         typer.secho(f"no bundle at {cfg.bundle_root}", fg="red")
         raise typer.Exit(2)
-    for path in write_contract(cfg):
+    written = write_contract(cfg)
+    # asked for, never assumed: .mcp.json is the machine's MCP config, shared with
+    # every other server registered there, and it is not derived from the bundle
+    if register:
+        written.append(agent_register(cfg))
+    for path in written:
         typer.secho(f"  wrote {path.relative_to(cfg.project_root)}", fg="green")
+    if not register and not is_registered(cfg):
+        typer.secho(
+            "  the MCP server is not registered - `okragged agent --register` adds it",
+            fg="bright_black",
+        )
+
+
+@app.command()
+def mcp(
+    project: Path | None = typer.Option(
+        None,
+        "--project",
+        envvar="OKRAGGED_PROJECT",
+        help="Project root holding the bundle. Defaults to the current directory.",
+    ),
+) -> None:
+    """Serve this bundle to an MCP client over stdio. What .mcp.json registers."""
+    # the target is explicit because it has to be: a server that inferred its
+    # bundle from __file__ could not survive being pip-installed, and the
+    # consumer this exists for is spawning it from a different tree entirely
+    root = (project or Path.cwd()).resolve()
+    cfg = config_module.load(root)
+    # stderr, not stdout: the protocol is newline-delimited JSON on stdout, and
+    # a diagnostic there corrupts the first frame of the session
+    if not cfg.bundle_root.exists():
+        typer.secho(f"no bundle at {cfg.bundle_root}", fg="red", err=True)
+        raise typer.Exit(2)
+
+    from .agent.server import main as serve_mcp
+
+    try:
+        serve_mcp(root)
+    except RuntimeError as exc:  # the MCP SDK is an optional extra
+        typer.secho(str(exc), fg="red", err=True)
+        raise typer.Exit(2) from None
 
 
 @app.command()
@@ -114,7 +173,7 @@ def serve(
     host: str = typer.Option("127.0.0.1", help="Interface to bind."),
     port: int = typer.Option(8000, help="Port to bind."),
 ) -> None:
-    """Serve the read-only API, and the graph view when web/dist is built."""
+    """Serve the read-only API, and the graph view when it has been built."""
     cfg = _load()
     if not cfg.bundle_root.exists():
         typer.secho(f"no bundle at {cfg.bundle_root}", fg="red")
@@ -128,12 +187,12 @@ def serve(
 
     if not (cfg.sidecar_root / vectors.GRAPH_NAME).exists():
         typer.secho(
-            f"  no {vectors.GRAPH_NAME} - /api/graph will 404 until `ragged index` runs",
+            f"  no {vectors.GRAPH_NAME} - /api/graph will 404 until `okragged index` runs",
             fg="yellow",
         )
-    if not (cfg.project_root / WEB_DIST).is_dir():
+    if not STATIC_DIR.is_dir():
         typer.secho(
-            f"  no {WEB_DIST} - API only; `npm run build` in web/ to serve the view",
+            "  no built view - API only; `npm run build` in web/ to serve it",
             fg="bright_black",
         )
 
@@ -168,8 +227,8 @@ def doctor() -> None:
     typer.secho("\npaths", bold=True)
     _report_path(".env", cfg.project_root / ".env", hint="copy .env.example")
     _report_path("sources/", cfg.sources_root, hint="create it and drop files in")
-    _report_path("bundle/", cfg.bundle_root, hint="produced by `ragged build`")
-    _report_path(okf.MANIFEST_NAME, cfg.project_root / okf.MANIFEST_NAME, hint="generated by `ragged build`")
+    _report_path("bundle/", cfg.bundle_root, hint="produced by `okragged build`")
+    _report_path(okf.MANIFEST_NAME, cfg.project_root / okf.MANIFEST_NAME, hint="generated by `okragged build`")
 
     typer.secho("\ntools", bold=True)
     if shutil.which("okflint"):
@@ -180,7 +239,7 @@ def doctor() -> None:
     # before the synth provider, which exits on failure: `index` has its own
     # provider and its own credential, and a missing key for one says nothing
     # about the other
-    typer.secho(f"\nembeddings: {cfg.vectors.provider}  (`ragged index`)", bold=True)
+    typer.secho(f"\nembeddings: {cfg.vectors.provider}  (`okragged index`)", bold=True)
     try:
         embed_impl = vectors.resolve(cfg.vectors.provider)
     except ValueError as exc:
@@ -198,10 +257,10 @@ def doctor() -> None:
         else:
             typer.secho(
                 f"  credential     missing ({' or '.join(embed_impl.ENV_VARS)})"
-                " - `ragged index` will not run",
+                " - `okragged index` will not run",
                 fg="yellow",
             )
-        _report_path(vectors.GRAPH_NAME, cfg.sidecar_root / vectors.GRAPH_NAME, hint="run `ragged index`")
+        _report_path(vectors.GRAPH_NAME, cfg.sidecar_root / vectors.GRAPH_NAME, hint="run `okragged index`")
 
     typer.secho(f"\nprovider: {provider}", bold=True)
     try:
@@ -244,6 +303,10 @@ def _report_path(label: str, path: Path, hint: str) -> None:
 
 
 def _print_summary(summary: IngestSummary, dry_run: bool) -> None:
+    # first: what an earlier run left behind explains anything else that looks odd
+    for note in summary.recovered:
+        typer.secho(f"\n{note}", fg="yellow")
+
     verb = "would write" if dry_run else "wrote"
     total = sum(o.concept_count for o in summary.synthesized)
     noun = f"{total} concept(s) from {len(summary.synthesized)} source(s)"
@@ -282,7 +345,7 @@ def _print_summary(summary: IngestSummary, dry_run: bool) -> None:
         typer.secho("\nnot overwritten - a human owns these:", fg="yellow")
         for concept_id, why in protected.items():
             typer.echo(f"  {concept_id}: {why}")
-        typer.secho("  the proposed replacements are in .ragged/proposed/", fg="bright_black")
+        typer.secho("  the proposed replacements are in .okragged/proposed/", fg="bright_black")
 
     if summary.deprecated:
         typer.secho(
@@ -300,7 +363,7 @@ def _print_summary(summary: IngestSummary, dry_run: bool) -> None:
     new_types = sorted({o.new_type for o in summary.outcomes if o.new_type})
     if new_types:
         typer.secho(
-            f"\nnew type(s) proposed, not in ragged.toml [types].allowed: {', '.join(new_types)}",
+            f"\nnew type(s) proposed, not in okragged.toml [types].allowed: {', '.join(new_types)}",
             fg="yellow",
         )
 

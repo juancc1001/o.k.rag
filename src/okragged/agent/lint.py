@@ -4,8 +4,8 @@ okflint answers conformance. Ghost edges, stale concepts and orphans are the
 bundle's own health: a pair the embeddings say is about one thing and nobody
 linked, a concept past its `stale_after`, and a concept nothing points at.
 
-Entirely offline, and read-only. Ghost edges come from `.ragged/graph.json` as
-`ragged index` left it, so no credential and no model call.
+Entirely offline, and read-only. Ghost edges come from `.okragged/graph.json` as
+`okragged index` left it, so no credential and no model call.
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ from ..vectors import GRAPH_NAME, is_stale
 
 GHOST_LIMIT = 20
 """Ghost edges grow with the square of the corpus, and this is a tool result an
-agent pays for by the token. The full set is in `.ragged/graph.json`, which is
+agent pays for by the token. The full set is in `.okragged/graph.json`, which is
 where the graph view reads it from; `ghosts_total` says what was left out."""
 
 
@@ -68,12 +68,12 @@ def lint(config: Config) -> LintReport:
 def _ghosts(config: Config, concept_ids: set[str]) -> tuple[list[dict], int, str]:
     path = config.sidecar_root / GRAPH_NAME
     if not path.exists():
-        return [], 0, f"no {GRAPH_NAME}; run `ragged index` to compute ghost edges"
+        return [], 0, f"no {GRAPH_NAME}; run `okragged index` to compute ghost edges"
     try:
         graph = json.loads(path.read_text(encoding="utf-8-sig"))
     except (OSError, ValueError):
         # sidecar state: a graph that does not read costs a re-index, not a lint
-        return [], 0, f"{GRAPH_NAME} could not be read; re-run `ragged index`"
+        return [], 0, f"{GRAPH_NAME} could not be read; re-run `okragged index`"
 
     ghosts = sorted(
         graph.get("ghosts") or [], key=lambda g: -float(g.get("similarity") or 0)
@@ -96,7 +96,7 @@ def _drift(graph: dict, concept_ids: set[str]) -> str:
     gone, missing = len(graphed - concept_ids), len(concept_ids - graphed)
     return (
         f"{GRAPH_NAME} is out of date: {gone} concept(s) it names are no longer in "
-        f"the bundle and {missing} are missing from it; re-run `ragged index`"
+        f"the bundle and {missing} are missing from it; re-run `okragged index`"
     )
 
 
@@ -105,7 +105,7 @@ def _truncation(total: int) -> str:
         return ""
     return (
         f"showing the {GHOST_LIMIT} strongest of {total} ghost edge(s); "
-        f"the rest are in .ragged/{GRAPH_NAME}"
+        f"the rest are in .okragged/{GRAPH_NAME}"
     )
 
 

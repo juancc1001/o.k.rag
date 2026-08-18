@@ -1,5 +1,5 @@
 # derived, rebuildable from sources/ + bundle/
-.ragged/
+.okragged/
 
 # your input corpus. Not committed: it is your own material, and a real corpus
 # tends to carry third-party names that do not belong in a permanent history.
@@ -12,17 +12,29 @@ bundle/
 okf-base.yaml
 
 # layer 3, generated from the bundle on every build: AGENTS.md carries the
-# corpus's own names for the same reason bundle/ is not committed, and the
-# .mcp.json entry names the interpreter that generated it. `ragged agent`
-# rewrites both. Anchored, or it would also swallow src/ragged/agent/.
+# corpus's own names for the same reason bundle/ is not committed. `okragged
+# agent` rewrites it. Anchored, or it would also swallow src/okragged/agent/.
+#
+# .mcp.json is deliberately NOT here. It is the machine's MCP config, shared with
+# every other server registered in it and written only when you ask
+# (`okragged agent --register`), so whether it belongs in a history is yours.
 /agent/
-/.mcp.json
 
 # secrets — .env.example is the committed template
 .env
 
 # per-user Claude Code config; skills under .claude/ are shared
 .claude/settings.local.json
+
+# agent worktrees: a nested checkout of this repo on another branch. Git reads a
+# directory holding a .git entry as a separate repository, so `git add -A` over
+# one records a gitlink to a commit this history does not contain.
+.claude/worktrees/
+
+# the built graph view. Vite writes it inside the package so one build serves a
+# checkout and a wheel alike; it is build output either way, and the wheel takes
+# it from `[tool.hatch.build.targets.wheel] artifacts` rather than from git.
+src/okragged/api/static/
 
 .venv/
 node_modules/

@@ -1,4 +1,4 @@
-"""`.ragged/embeddings.npy` + `.ragged/embeddings_meta.json` (DESIGN §5).
+"""`.okragged/embeddings.npy` + `.okragged/embeddings_meta.json` (DESIGN §5).
 
 Sidecar state, so every read path degrades to "nothing stored" rather than
 raising: losing it costs a re-embed, never correctness.
