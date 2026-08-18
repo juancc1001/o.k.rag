@@ -298,7 +298,7 @@ agent/AGENTS.md        how to read this bundle: structure, type vocabulary,
 
 `AGENTS.md` is written *beside* `bundle/`, never inside it, and it is **derived from the bundle** — concept counts, the structure tree, the type vocabulary — so it is regenerated after every commit. That is what keeps it from describing a bundle that no longer exists.
 
-`.mcp.json` is **derived from nothing**. The entry is the same bytes whether the bundle holds no concepts or a thousand, so there is nothing for a rebuild to refresh. More to the point, it is not okragged's file: it is the MCP config for whatever agent works in that directory, shared with every other server registered in it. So a build never writes it — it only mentions when the server is unregistered — and `okragged agent --register` is how you ask. For the same reason it is **not gitignored**: whether your MCP config belongs in your history is your call.
+`.mcp.json` is **not derived from the bundle**. The entry is the same bytes whether the bundle holds no concepts or a thousand, so there is nothing for a rebuild to refresh. More to the point, it is not okragged's file: it is the MCP config for whatever agent works in that directory, shared with every other server registered in it. So a build never writes it — it only mentions when the server is unregistered — and `okragged agent --register` is how you ask. For the same reason it is **not gitignored**: whether your MCP config belongs in your history is your call.
 
 The server is `okragged mcp`, a subcommand of the console script — there is no generated launcher to point at, so the entry is portable:
 
@@ -307,6 +307,8 @@ The server is `okragged mcp`, a subcommand of the console script — there is no
 ```
 
 No interpreter path and no script path, which is what makes any MCP-capable agent a consumer of the bundle with no okragged-specific code **from any tree at all**. The server takes its bundle from `--project` or `OKRAGGED_PROJECT`, defaulting to the cwd — a client spawns it with the config file's directory as its cwd, so the entry beside the bundle needs no target. To consume the bundle from *another* project, paste the entry `AGENTS.md` prints instead: the same two words plus `--project` and this root, absolutely.
+
+**The bare name is used only when `PATH` actually resolves it.** A client spawns the server from `.mcp.json`, never from an activated shell, so an `okragged` installed into a venv is not on the spawn's `PATH` — the process dies before it says anything and the client reports `CONNECTION_CLOSED` with nothing to read anywhere. `register` therefore falls back to the console script beside the running interpreter, which is where that install sits. Same exposure as okflint's resolution below, and worse in its symptom — okflint degraded to "not installed", this loses the whole server. `PATH` is tried first here rather than second because this file is not gitignored: a bare name travels to another checkout and an absolute one does not. If you would rather the entry stay portable, put okragged on your `PATH` and re-run `okragged agent --register`. From an index that is `pipx install okragged`, which needs the publish milestone first; from a checkout today it is `pipx install --editable <root>` — a tool install exposes the console script without putting okragged's dependencies into a shared site-packages.
 
 Four tools:
 
@@ -443,7 +445,7 @@ The wrappers return what the underlying functions return. There is no `Bundle` o
 **One thing differs from the CLI, and one thing nothing does:**
 
 - **No `.env` is read.** `okragged` the command loads it because a human typed the command; a function call does not go looking through your filesystem for credentials. Put the key in the environment first (`os.environ`, `python-dotenv`, your process manager — your choice).
-- **Nothing registers an MCP server for you.** `build()` regenerates `agent/AGENTS.md` exactly as `okragged build` does — one derived file beside the bundle you asked for, and `contract=False` skips it. Neither one writes `.mcp.json`: that is your machine's MCP config, not okragged output, so `register()` is the only call that touches it and you have to make it.
+- **Nothing registers an MCP server for you.** `build()` regenerates `agent/AGENTS.md` exactly as `okragged build` does — one derived file beside the bundle you asked for, and `contract=False` skips it. Neither one writes `.mcp.json` — `register()` is the only call that touches it, for the reason given above.
 
 `progress` is called as the run moves, with a frozen `Progress(stage, unit, index, total, detail)`: `stage` is one of `discover`, `extract`, `plan`, `synthesize`, `weave`, `source`, `finalize`, `validate`; `unit` is the source uri, or the concept id while weaving; `source` fires once per source however it finished. A reporter that raises is swallowed rather than allowed to abort a run that has already paid for model calls.
 
@@ -506,7 +508,7 @@ The wrappers return what the underlying functions return. There is no `Bundle` o
 | `bundle/` | **no** (gitignored) | Layer 2 — the OKF product. The deliverable, portable with no okragged dependency — but concept ids derive from model-written titles, so every rebuild renames the whole tree and the diff is unreadable. Commit an example bundle under `examples/` instead, refreshed on purpose. |
 | `okf-base.yaml` | **no** (gitignored) | Generated okflint manifest, rewritten with the bundle. |
 | `agent/` | **no** (gitignored) | Layer 3 — the generated contract. Not committed for the same reason as `bundle/`: `AGENTS.md` is written from the corpus and carries its names. `okragged agent` rewrites it. |
-| `.mcp.json` | **your call** (not gitignored) | The registration entry: `okragged mcp`, a console script on `PATH`. Other servers already in the file are preserved. Written only by `okragged agent --register` — it is your machine's MCP config rather than okragged output, so committing it is your decision. |
+| `.mcp.json` | **your call** (not gitignored) | The registration entry: `okragged mcp`, the bare console script when `PATH` resolves it and the one beside the running interpreter when it does not. Other servers already in the file are preserved. Written only by `okragged agent --register` — it is your machine's MCP config rather than okragged output, so committing it is your decision. |
 | `.okragged/` | **no** (gitignored) | Sidecar: the ledger (`manifest.json`), the extraction cache, replacements for concepts a human owns (`proposed/`), the write lock and the source in flight (`lock.json`, `staging/`, `pending-commit.json`), and the vectors — `embeddings.npy`, `embeddings_meta.json`, `layout.json`, `graph.json`. Entirely derived and rebuildable — deleting it costs a full re-ingest and a re-embed, nothing more. |
 | `web/` | yes, minus `node_modules/` | The graph view's source. Built deliberately with `npm run build`, which writes into `src/okragged/api/static/` (gitignored) so one build serves this checkout and an installed user alike. |
 | `DESIGN.md` | yes | Architecture, data model, risks, milestones. |
@@ -561,7 +563,7 @@ random_state = 42          # fixed, or the layout reshuffles every run
 .\.venv\Scripts\python.exe -m pytest tests -q
 ```
 
-334 tests. No credentials and no network needed — the end-to-end test stubs the model and asserts the emitted bundle is conformant, so "one file in, one conformant concept out" is covered offline. The embedding provider is stubbed the same way, in a three-dimensional toy space, so what two concepts are "similar" is something the test states rather than something a model decides.
+336 tests. No credentials and no network needed — the end-to-end test stubs the model and asserts the emitted bundle is conformant, so "one file in, one conformant concept out" is covered offline. The embedding provider is stubbed the same way, in a three-dimensional toy space, so what two concepts are "similar" is something the test states rather than something a model decides.
 
 | File | Covers |
 |---|---|

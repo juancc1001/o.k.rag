@@ -2,7 +2,7 @@
 
 **Status: none of this is scheduled.** `DESIGN.md` §13 is the authority on what is committed to; this file is the staging area in front of it. An item here is an idea with a stated reason, not a plan. **Promoting an item means moving it into `DESIGN.md` §13 as a milestone item and deleting it from here** — an idea that lives in two places drifts in one of them.
 
-Numbers are identifiers, not an ordering: **2 (concurrency) and 8 (serving the contract over the protocol) were promoted into §13 M5 and M6**, and their numbers are not reused, so a reference to "item 5" means the same item it always did.
+Numbers are identifiers, not an ordering: **2 (concurrency) and 8 (serving the contract over the protocol) were promoted into §13 M5**, and their numbers are not reused, so a reference to "item 5" means the same item it always did.
 
 Most of what follows came from reading [`@llm-wiki/sdk`](https://github.com/stellarlinkco/llm-wiki) (TypeScript, MIT, v0.1.0 unpublished, commit `7c85ee6` of 2026-07-20), the closest existing implementation of this pipeline. Where an item is already solved there, that is noted — a design validated by a second implementation is worth more than one reasoned about alone.
 
@@ -12,11 +12,11 @@ Most of what follows came from reading [`@llm-wiki/sdk`](https://github.com/stel
 
 Today `okf/writer.py` writes a directory and nothing else can be true. `@llm-wiki/sdk` puts a `BundleStore` interface in front of storage — `snapshot`, `read`, `commit`, `listMarkdownPaths`, `exportTo` — with filesystem, SQLite, and Postgres implementations behind it, plus a separate `SearchAdapter` so BigQuery can serve search over a bundle it does not own.
 
-**Why it's tempting.** It makes the bundle addressable from a service without a filesystem, and it separates "what a bundle is" from "where its bytes are" — which is the same separation `okf/` already wants for M9.
+**Why it's tempting.** It makes the bundle addressable from a service without a filesystem, and it separates "what a bundle is" from "where its bytes are" — which is the same separation `okf/` already wants for M10.
 
 **Why it is not obviously right here, and this is the part to resolve first.** The load-bearing property of an okragged bundle is that you can `tar` it and `cat` it with no knowledge of okragged. A Postgres-backed bundle does not have that property; it has an *export* that does. So an adapter layer either demotes the directory from "the product" to "one serialization", or it admits the directory is canonical and everything else is a projection. Those are different products. **Decide that before writing the interface, not after.**
 
-**Note on the axis.** This is not `DESIGN.md` §9 / M8. §9 is the `Source` protocol — where knowledge is read *from* (BigQuery, blob storage). This is where the bundle is written *to*. Two independent axes that both use the word "adapter"; keeping them separate in conversation avoids a real design confusion.
+**Note on the axis.** This is not `DESIGN.md` §9 / M9. §9 is the `Source` protocol — where knowledge is read *from* (BigQuery, blob storage). This is where the bundle is written *to*. Two independent axes that both use the word "adapter"; keeping them separate in conversation avoids a real design confusion.
 
 **Cost.** Touches `okf/writer.py`, `okf/validate.py`, `pipeline.py::_finalize`, and every test that asserts on paths. Not small.
 
@@ -53,7 +53,7 @@ okragged has `tests/test_encoding.py` walking the AST to enforce the I/O encodin
 
 ---
 
-## 5. Connector snapshot semantics (feeds M8 / §9)
+## 5. Connector snapshot semantics (feeds M9 / §9)
 
 `syncSources` in `@llm-wiki/sdk` reconciles a caller-owned namespace against a list of observed sources, and **absence can only delete when the caller explicitly asserts `completeSnapshot: true`.**
 
@@ -87,11 +87,11 @@ The failure was diagnosed by `gh auth status` showing two logged-in accounts wit
 
 ## 9. Per-concept read scoping
 
-Considered while planning the hosted server and **deliberately left here.** §13 M7 settles *whether* a consumer may connect, with the bundle reachable only through tools. It does not settle *what* a given consumer may see, and nothing needs that yet: a bundle a host is willing to serve is a bundle it is willing to serve.
+Considered while planning the hosted server and **deliberately left here.** §13 M8 settles *whether* a consumer may connect, with the bundle reachable only through tools. It does not settle *what* a given consumer may see, and nothing needs that yet.
 
 **If it ever lands it has to stay coarse**, because the format is self-describing on purpose. Per-directory `index.md` files carry every child's `title` and `description` verbatim, cross-links point anywhere in the tree, and `AGENTS.md` publishes the type vocabulary with counts. Serving the map while withholding the bodies still discloses the map — so the honest unit is a subtree, which M2 already made a valid entry point by giving every directory its own index. `--root finance/` is close to free; per-concept ACLs fight the grain and would half-work, which is worse than not offering them.
 
-**Not negotiable either way:** access control never enters the bundle (§13 M7). Whatever this becomes, it is a server concern.
+**Not negotiable either way:** access control never enters the bundle (§13 M8). Whatever this becomes, it is a server concern.
 
 ---
 
@@ -100,7 +100,7 @@ Considered while planning the hosted server and **deliberately left here.** §13
 **The observation.** MCP has no discovery: no registry, no broadcast, nothing a client can ask. A server exists to a client because a human wrote it into config, full stop. That is the protocol and not a defect. But it means every way of reaching a bundle is currently a *location*, and locations are not identities.
 
 - **M5** addresses a bundle by filesystem path (`--project /some/where`). Machine-specific; meaningless in a message to someone else.
-- **M7** would address it by URL. Host-specific; dead when the host moves or the tunnel restarts.
+- **M8** would address it by URL. Host-specific; dead when the host moves or the tunnel restarts.
 - Two copies of one bundle are indistinguishable from two unrelated bundles. `[bundle].title` is a display string, `okf-base.yaml` names the linter's manifest, and the root `index.md` declares `okf_version` — **none of them identifies the bundle.**
 
 **Why it matters, concretely.** The intended flow is "someone runs okragged over their corpus and exposes it when they want to". For a second person to reach it, they need something to put in `claude mcp add`. Today the only candidates are a path on a machine they do not have or a URL that is valid until it is not. There is no sentence of the form *point me at that corpus* that survives the corpus moving.
@@ -115,16 +115,28 @@ Considered while planning the hosted server and **deliberately left here.** §13
 
 **On the hosted answer, since it is the obvious one.** The natural fix is a URL per bundle — `https://…/<owner>/<bundle>` — with a reverse proxy routing each to whatever serves it. The routing is well-understood and is the easy half. Three things are worth writing down before anyone builds it:
 
-- **"A library or a web service" is a false choice, and this design already dissolved it.** Layer 2 is a directory and the sidecar rule keeps everything derived out of it, so one bundle can be a folder someone tars, a local stdio server, a Python import and a URL behind a proxy *at the same time*. Shipping a library forecloses nothing, which is why M5 precedes M7 rather than competing with it: you cannot host what is not installable and cannot be pointed at an explicit project.
+- **"A library or a web service" is a false choice, and this design already dissolved it.** Layer 2 is a directory and the sidecar rule keeps everything derived out of it, so one bundle can be a folder someone tars, a local stdio server, a Python import and a URL behind a proxy *at the same time*. Shipping a library forecloses nothing, which is why M5 precedes M8 rather than competing with it: you cannot host what is not installable and cannot be pointed at an explicit project.
 
 - **A URL is a better location, not an identity.** It survives the consumer's machine, which a filesystem path does not. It does not survive the service, and it makes whoever runs the service the source of the name — so the same bundle then has two locations, its owner's disk and that URL, with nothing in the bundle asserting they are the same thing. Question (1) does not go away here; it takes more load.
 
 - **The routing unit and question (2) are one decision seen from two sides.** `--project` is one root per process, so per-bundle routing implies one process per bundle: simple, blast-radius-isolated, and wasteful across many small bundles. One process serving several changes what `okragged mcp` is. Deciding it once, as *how a server addresses bundles*, is cheaper than deciding it twice — as routing and as CLI shape — and finding out later that the two disagree.
 
-**The cheap version, which is probably the right first one.** A per-bundle URL does not require multi-tenancy. One owner, one machine, one DNS name they control, a tunnel — that is "live on the web" without becoming a service provider, and it is what "expose it when I want" means in practice. Multi-tenant routing is for when other people's corpora live on your hardware, which is a company rather than a feature: the proxy is a weekend, and M7's five criteria plus uptime, backups and someone else's private legal corpus on your disk are permanent. §12 Risk 7 stops being a design note at that point and becomes a question someone's lawyer asks.
+**The cheap version, which is probably the right first one.** A per-bundle URL does not require multi-tenancy. One owner, one machine, one DNS name they control, a tunnel — that is "live on the web" without becoming a service provider, and it is what "expose it when I want" means in practice. Multi-tenant routing is for when other people's corpora live on your hardware, which is a company rather than a feature: the proxy is a weekend, and M8's five criteria plus uptime, backups and someone else's private legal corpus on your disk are permanent. §12 Risk 7 stops being a design note at that point and becomes a question someone's lawyer asks.
 
 **The trap to avoid.** Do not let (1) become an `access:`-style key or a registry the bundle depends on to be readable. The sidecar rule's logic applies: a bundle must stay something you can `tar` and `cat`. An id is a *fact about* the bundle written into it; a lookup a reader must perform to understand it is not.
 
-**Gate.** (1) before M7 ships anything anyone registers against. (2) with M7. (3) not scheduled, and possibly never here.
+**Gate.** (1) before M8 ships anything anyone registers against. (2) with M8. (3) not scheduled, and possibly never here.
 
 **Note on the intermittent case.** "Exposed when I feel like it" is usually a tunnel, and a tunnel URL is public the instant it exists — which means M6's authentication is not optional even for a bundle its owner thinks of as temporarily shared. That is worth stating because intermittent hosting *feels* lower-stakes than permanent hosting and is not.
+
+---
+
+## 11. `okragged` on `PATH` before publication
+
+**The problem.** The console script exists only inside `.venv/Scripts`. A client spawning `okragged mcp` from `.mcp.json` does not activate a venv, so the bare name does not resolve and the server dies at spawn. `agent/contract.py::_command` now falls back to the script beside `sys.executable`, which makes it work — the entry is then absolute, and `.mcp.json` is not gitignored. Every other command still has to be spelled `.\.venv\Scripts\okragged`.
+
+**Interim answer.** A tool install of the checkout: `pipx install --editable <root>`, or `uv tool install --editable .`. Both expose the console script without putting okragged's dependency tree into a shared site-packages. `pip install --user -e .` does **not** solve it on this machine: the script lands in `%APPDATA%\Python\Python312\Scripts`, which is not on `PATH` either — tried on 2026-08-17.
+
+**Why it is staged rather than scheduled.** §13 M7 makes `pip install okragged` real and supersedes this entirely. Until then the producer cannot run M5's own exit criterion, which opens with that command.
+
+**Gate.** Superseded by M7. Worth doing before then only if the absolute entry becomes a nuisance.

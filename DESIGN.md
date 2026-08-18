@@ -393,7 +393,7 @@ Either way the next run *says* what it found; a build that repaired this silentl
 
 **What this costs, stated rather than discovered.** A source interrupted mid-emit loses the model calls it paid for and is redone; every source before it is not. The extraction cache survives, so even that re-payment is synthesis and not extraction. The remaining sharp edge is that a run interrupted before link-weave publishes concepts that stay unwoven until their source changes — the price of publishing early, and the same outcome the pass already has when the provider refuses.
 
-**One writer at a time.** The CLI, the MCP server's `add_source` and the Python API are three writers to one directory, so a real run holds `.okragged/lock.json` (§5) for its duration. `okragged index` takes it too — it reads a bundle a build may be committing into. **Read paths never take it**: `search`, `read_concept`, `lint`, `check` and `serve` keep answering while a write is in flight, and so does `build --dry-run`, which writes no bundle and no ledger. The revision model that many *remote* writers need is M7's problem (§13).
+**One writer at a time.** The CLI, the MCP server's `add_source` and the Python API are three writers to one directory, so a real run holds `.okragged/lock.json` (§5) for its duration. `okragged index` takes it too — it reads a bundle a build may be committing into. **Read paths never take it**: `search`, `read_concept`, `lint`, `check` and `serve` keep answering while a write is in flight, and so does `build --dry-run`, which writes no bundle and no ledger. The revision model that many *remote* writers need is M8's problem (§13).
 
 ### 6.7 validate
 
@@ -558,7 +558,9 @@ BigQuery specifically: `INFORMATION_SCHEMA.COLUMNS` + `TABLES` + table descripti
 
 **`AGENTS.md` is a function of the bundle.** Concept count, structure tree, type vocabulary — change the bundle and the file must change with it. That is what the rule above is about: a contract written beside concepts that did not land describes concepts that do not exist, so it is rewritten after every commit and never before.
 
-**`.mcp.json` is a function of nothing.** Since M5 the entry is `{"command": "okragged", "args": ["mcp"]}` — identical bytes whether the bundle holds no concepts or a thousand. Under M4 it named the generating interpreter and the generated `agent/mcp_server.py`, so it genuinely was derived from the producer's tree and had to be rewritten when that tree moved. The console script deleted that dependency (M5 item 1); regenerating it on every build outlived the reason for it.
+**`.mcp.json` is not a function of the bundle.** The entry is identical bytes whether the bundle holds no concepts or a thousand. Under M4 it named the generating interpreter and the generated `agent/mcp_server.py`, so it genuinely was derived from the producer's tree and had to be rewritten when that tree moved. The console script deleted that dependency (M5 item 1); regenerating it on every build outlived the reason for it.
+
+**It is a function of the machine, and only where it has to be.** `{"command": "okragged", "args": ["mcp"]}` assumes a `PATH` that resolves `okragged`, and a client spawns the server from this file rather than from an activated shell — so an install that lives in a venv is invisible to the spawn, the server dies before it says anything, and the client reports a bare `CONNECTION_CLOSED` with no log anywhere to read. That is the same exposure `okf/validate.py::_okflint` documents, one layer up and with a worse failure: okflint degraded to "not installed", this loses the whole server. So the local entry names `okragged` when `shutil.which` resolves it and the console script beside `sys.executable` when it does not. `PATH` first rather than beside-first — the inverse of `_okflint` — because this file is not gitignored and may be shared: a bare name travels to another checkout and an absolute one does not, so portability is preferred wherever it actually works and dropped only where it would not. The entry the contract hands a *foreign* project stays bare unconditionally: this machine's resolution is not a fact about that one.
 
 **And it is the one file here okragged does not own.** `.mcp.json` is the MCP config for whatever agent works in that directory, shared with every other server registered in it. Merging into somebody else's config, unasked, on every build, for a value that never changes, is a write with nothing behind it. So registration is a deliberate act — `okragged agent --register`, or `okragged.register()` — and a build only *reports* that the server is unregistered. The write is temp-file-plus-rename for the same reason: it carries other people's data, and a truncated write there costs them every other server in the file.
 
@@ -776,7 +778,7 @@ Exit criterion: a session with no credential registers the server, answers a rea
 
 Everything built so far assumes the reader is standing inside the producer's working tree. `.mcp.json` names a venv-relative interpreter and a relative script path; the server tells its client that `agent/AGENTS.md` is the contract; the only way to drive the pipeline is a CLI rooted at a cwd. §10 claims that registering the server "makes any MCP-capable agent a consumer of the bundle with no okragged-specific code", and **for a consumer outside that tree, it does not.** M5 makes that claim true.
 
-**Why before connectors, which is a reordering.** M7 adds `Source` implementations, and a public API freezes the `Source` protocol (§9) — including the question of whether exhausting `discover()` constitutes a *complete* observation, which is what licenses the ledger to mark an unseen source `deprecated`. That semantics is cheap to settle now and expensive to retrofit, because retrofitting means auditing every `deprecated` mark ever written. Designing the contract once, with connectors in view but unwritten, is the whole reason for the swap.
+**Why before connectors, which is a reordering.** M9 adds `Source` implementations, and a public API freezes the `Source` protocol (§9) — including the question of whether exhausting `discover()` constitutes a *complete* observation, which is what licenses the ledger to mark an unseen source `deprecated`. That semantics is cheap to settle now and expensive to retrofit, because retrofitting means auditing every `deprecated` mark ever written. Designing the contract once, with connectors in view but unwritten, is the whole reason for the swap.
 
 **The name changes, and that is part of the milestone.** `ragged` on PyPI is an active Scikit-HEP library for jagged arrays, and it owns the top-level `ragged` module — so the collision is on import, not merely on the distribution name. This becomes:
 
@@ -840,9 +842,9 @@ The URI scheme is the one irreversible choice here: `okf://` would claim the for
 
    **The ledger lands with the source it describes or not at all.** That is the half that must not be relaxed: a ledger that outran the bundle would have the content-hash skip believe work was done that was not, and the corpus would lose sources silently. The other direction only costs a re-synthesis, which is why the boundary could move at all.
 
-   **Three things this deliberately does not do.** No revision model: `expectedRevision` and conflict resolution are for many remote writers, and that is M7 criterion 3. No lock on any read path — `search`, `read_concept`, `lint`, `check` and `serve` answer while a write is in flight, because a consumer holding a directory of markdown files needs permission from nobody, and a reader a build could refuse would undo the point of the format. And no attempt to make the indexes, the log or `okf-base.yaml` transactional: they are derived from the bundle on disk, so a later run regenerates them (§6.6).
+   **Three things this deliberately does not do.** No revision model: `expectedRevision` and conflict resolution are for many remote writers, and that is M8 criterion 3. No lock on any read path; §6.6 states the rule and the reason. And no attempt to make the indexes, the log or `okf-base.yaml` transactional: they are derived from the bundle on disk, so a later run regenerates them (§6.6).
 
-**What this must not become.** The API is an entry point to the pipeline, not an abstraction over it. `synth/` stays unpublished for the reason M8 gives below, and it applies with more force to a public API: a `provider=` argument in a documented signature is a promise to track every vendor's drift forever. Nor does the first version return a `Bundle` object — the load-bearing property of this design is that a bundle *is* a directory (§2), and an object hands back a different answer to a question nobody has asked yet. Summaries and paths.
+**What this must not become.** The API is an entry point to the pipeline, not an abstraction over it. `synth/` stays unpublished for the reason M10 gives below, and it applies with more force to a public API: a `provider=` argument in a documented signature is a promise to track every vendor's drift forever. Nor does the first version return a `Bundle` object: §2 makes the directory the product, and an object would stand as a second answer to what a bundle is. Summaries and paths.
 
 **Exit criterion**, in three parts, because the milestone has three claims:
 
@@ -860,7 +862,7 @@ M5 made the bundle reachable from another tree. It did not give the protocol an 
 
 1. **An identity to attribute a call to.** Not necessarily a person: a token bound to a project, or a client-supplied key the server refuses to fall back from, is enough to make "whose spend is this" answerable rather than accidental. What is not enough is inferring it from the environment.
 2. **`.env` stops being ambient to the server.** `okragged mcp` should not inherit the producer's secrets merely because it was pointed at their directory. `okragged build` keeps reading `.env` — a human typed it there — but a subprocess somebody else's client spawned is a different trust position, and today they are the same code path.
-3. **Spending is a scope, not a capability.** A tool that costs money needs an authorization scope the ordinary consumer's token does not carry, plus a rate limit: bounded per call is not bounded per hour. This is the item M8 lists as hosting's problem; it is not, it is this milestone's, and hosting inherits it.
+3. **Spending is a scope, not a capability.** A tool that costs money needs an authorization scope the ordinary consumer's token does not carry, plus a rate limit: bounded per call is not bounded per hour. M8 lists this as hosting's problem. It belongs here, and hosting inherits it.
 4. **Writes become opt-in per server instance.** `okragged mcp` should be able to serve a bundle read-only. M5 introduced a producer/consumer split and gave it no way to say "readable by others, writable by me".
 
 **Exit criterion.** A synthesizing `add_source` back on the tool surface, refused for a consumer with no scope, charged to a named identity for one with it, with a rate limit that survives a loop — and `okragged mcp` able to serve the same bundle with writes off entirely.
@@ -889,7 +891,7 @@ The first is preferred: its ugliness is one file, regenerated deliberately, vers
 
 **M8 — hosted server. Proposed, and a different product from M5.**
 
-M5 makes the bundle *portable*: you hand someone a directory, they install a package, they run their own server over their own copy. M7 makes it *shared*: one machine holds the bundle and many consumers connect to it. That inverts several properties, which is why it is a separate milestone rather than the end of M5.
+M5 makes the bundle *portable*: you hand someone a directory, they install a package, they run their own server over their own copy. M8 makes it *shared*: one machine holds the bundle and many consumers connect to it. That inverts several properties, which is why it is a separate milestone rather than the end of M5.
 
 **What it buys, and it is not only convenience.** A remote consumer needs nothing at all — no bundle, no sidecar, no credential — because `read_concept` already serves content over the protocol. And because the host holds the embedding key, remote clients get the **embedding** search path, which under M5 a credential-less consumer can never have. Hosting is the only arrangement in which semantic search reaches someone who has no key.
 
@@ -922,7 +924,7 @@ Transport is the least of it: the SDK speaks streamable HTTP, and M3 already bri
 
 **Explicitly excluded, and this is the important half:**
 
-- **`synth/` must not be published.** It is a thin protocol over two vendor SDKs that are already good. Shipping it means committing to chase every provider's API drift in exchange for indirection nobody asked for. This is the LangChain failure mode — a horizontal abstraction layer over plumbing — and the reason M9 is "a format library", not "a framework".
+- **`synth/` must not be published.** It is a thin protocol over two vendor SDKs that are already good. Shipping it means committing to chase every provider's API drift in exchange for indirection nobody asked for. This is the LangChain failure mode — a horizontal abstraction layer over plumbing — and the reason M10 is "a format library", not "a framework".
 - `pipeline.py`, `cli.py`, `sources/`, `extract/` are application code. They stay here.
 
 **Entry criteria — all of them, or this is premature abstraction:**
@@ -932,7 +934,7 @@ Transport is the least of it: the SDK speaks streamable HTTP, and M3 already bri
 3. A second consumer exists that is not this pipeline — the MCP server (M4) counts. One caller is not evidence of a reusable API.
 4. `parse`/`render` round-trip holds on a bundle authored by something other than okragged.
 
-**Note on reach.** For *consumption* the MCP server beats a library: it works from any language and any agent with no import, whereas a Python library only serves Python producers. M9 is about the production side and about not making the next OKF tool reimplement frontmatter parsing — it is not the distribution strategy for the format.
+**Note on reach.** For *consumption* the MCP server beats a library: it works from any language and any agent with no import, whereas a Python library only serves Python producers. M10 is about the production side and about not making the next OKF tool reimplement frontmatter parsing — it is not the distribution strategy for the format.
 
 ---
 

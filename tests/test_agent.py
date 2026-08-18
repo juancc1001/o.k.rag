@@ -12,12 +12,15 @@ and it has a meta-test pointing it at the text it replaced.
 from __future__ import annotations
 
 import json
+import os
 import re
+import sys
 from pathlib import Path
 
 import pytest
 
 from okragged import agent, config as config_module, okf, pipeline
+from okragged.agent import contract
 from okragged.synth import MissingCredential, SynthResult, WeaveResult
 from okragged.vectors import EmbedError
 from okragged.vectors.providers import gemini
@@ -484,14 +487,54 @@ def test_registering_the_server_leaves_the_other_mcp_servers_alone(project):
     assert registered["mcpServers"]["okragged"]["args"] == ["mcp"]
 
 
-def test_the_registration_entry_names_a_console_script_not_an_interpreter(project):
-    """A venv path and a script path are true from one cwd and nowhere else."""
+def registered_entry(project) -> dict:
     agent.register(cfg(project))
-    entry = json.loads((project / ".mcp.json").read_text(encoding="utf-8-sig"))
-    entry = entry["mcpServers"]["okragged"]
+    loaded = json.loads((project / ".mcp.json").read_text(encoding="utf-8-sig"))
+    return loaded["mcpServers"]["okragged"]
+
+
+def test_the_registration_entry_names_the_bare_console_script_when_path_resolves_it(
+    project, monkeypatch
+):
+    """A venv path and a script path are true from one cwd and nowhere else, and
+    `.mcp.json` is not gitignored — so a name that travels wins whenever it works."""
+    monkeypatch.setattr(contract.shutil, "which", lambda name: f"/usr/bin/{name}")
+
+    entry = registered_entry(project)
 
     assert entry == {"command": "okragged", "args": ["mcp"]}
     assert not producer_paths(json.dumps(entry))
+
+
+def test_an_unresolvable_command_falls_back_to_the_script_beside_this_interpreter(
+    project, monkeypatch
+):
+    """The failure this replaces was total and unreadable: a client spawns the
+    server from `.mcp.json`, never from an activated shell, so `okragged` installed
+    into a venv is not on the spawn's `PATH` and the whole server dies as
+    `CONNECTION_CLOSED`. Same exposure as `okf/validate.py::_okflint`."""
+    venv = project / "venv" / "Scripts"
+    venv.mkdir(parents=True)
+    beside = venv / ("okragged.exe" if os.name == "nt" else "okragged")
+    beside.write_bytes(b"")
+    monkeypatch.setattr(contract.shutil, "which", lambda name: None)
+    monkeypatch.setattr(contract.sys, "executable", str(venv / "python.exe"))
+
+    command = registered_entry(project)["command"]
+
+    assert command == str(beside)
+    assert Path(command).stem == "okragged", "the console script, not an interpreter"
+
+
+def test_the_fallback_gives_up_rather_than_naming_a_script_that_is_not_there(
+    project, monkeypatch
+):
+    """A guard that always fires guards nothing: an absolute path to a file that
+    does not exist fails the spawn exactly as the bare name did, and reads worse."""
+    monkeypatch.setattr(contract.shutil, "which", lambda name: None)
+    monkeypatch.setattr(contract.sys, "executable", str(project / "nowhere" / "python.exe"))
+
+    assert registered_entry(project)["command"] == "okragged"
 
 
 def test_writing_the_contract_does_not_register_the_server(project):
@@ -583,7 +626,11 @@ def test_the_agent_command_registers_only_when_asked(project, monkeypatch):
     run_cli(project, monkeypatch, ["agent", "--register"])
 
     entry = json.loads((project / ".mcp.json").read_text(encoding="utf-8-sig"))
-    assert entry["mcpServers"]["okragged"] == {"command": "okragged", "args": ["mcp"]}
+    entry = entry["mcpServers"]["okragged"]
+    assert entry["args"] == ["mcp"]
+    # bare on PATH or the console script beside this interpreter; never an
+    # interpreter and never a script path (see `contract._command`)
+    assert Path(entry["command"]).stem == "okragged"
 
 
 def test_the_agent_command_stops_offering_to_register_once_it_has(project, monkeypatch):

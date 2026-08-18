@@ -210,8 +210,11 @@ def test_register_is_the_only_call_that_writes_the_mcp_config(project):
     path = okragged.register(project)
 
     assert path == project / ".mcp.json"
-    entry = json.loads(path.read_text(encoding="utf-8-sig"))
-    assert entry["mcpServers"]["okragged"] == {"command": "okragged", "args": ["mcp"]}
+    entry = json.loads(path.read_text(encoding="utf-8-sig"))["mcpServers"]["okragged"]
+    assert entry["args"] == ["mcp"]
+    # bare on PATH, else the console script beside this interpreter, so a client
+    # that spawns it outside an activated venv can find it (`contract._command`)
+    assert Path(entry["command"]).stem == "okragged"
 
 
 def test_a_library_build_writes_no_contract_when_told_not_to(project):

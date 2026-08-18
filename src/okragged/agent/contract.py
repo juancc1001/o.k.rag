@@ -9,13 +9,22 @@ structure tree, the type vocabulary. It changes whenever the bundle changes, so
 never describe a bundle that no longer exists is a rule about this file. It
 carries no timestamp, so an unchanged bundle regenerates to the same bytes.
 
-`.mcp.json` is a *function of nothing*. Since M5 the entry is `{"command":
-"okragged", "args": ["mcp"]}` — the same bytes whether the bundle holds no
-concepts or a thousand. Under M4 it named the generating interpreter and the
-generated `agent/mcp_server.py`, so it really was derived from the producer's
-tree; the console script deleted that, and rewriting it on every build outlived
-its reason. So `register` is a **deliberate act** — `okragged agent --register`
-— and never a side effect of building.
+`.mcp.json` is not a function of the bundle at all. The entry is the same bytes
+whether the bundle holds no concepts or a thousand. Under M4 it named the
+generating interpreter and the generated `agent/mcp_server.py`, so it really was
+derived from the producer's tree; the console script deleted that, and rewriting
+it on every build outlived its reason. So `register` is a **deliberate act** —
+`okragged agent --register` — and never a side effect of building.
+
+What it *is* a function of is the machine, and only where it has to be. The
+entry names `okragged` whenever `PATH` can resolve it, and falls back to the
+console script beside this interpreter when it cannot — the same exposure
+`okf/validate.py::_okflint` documents, one layer up. A client spawns the server
+from its `.mcp.json` rather than from an activated shell, so a bare name that
+only an activated venv resolves gets the server killed at spawn and reported as
+a closed connection, with nothing to read anywhere. `PATH` first rather than
+beside-first, because this file is not gitignored and may be shared: portable
+when portability is available, correct when it is not.
 
 The distinction is not tidiness. `.mcp.json` is the one thing here okragged does
 not own: it is the MCP config for whatever agent works in that directory, shared
@@ -28,6 +37,8 @@ from __future__ import annotations
 import json
 import os
 import posixpath
+import shutil
+import sys
 import tempfile
 from collections import Counter
 from pathlib import Path
@@ -40,8 +51,9 @@ AGENTS_NAME = "AGENTS.md"
 MCP_CONFIG_NAME = ".mcp.json"
 SERVER_KEY = "okragged"
 COMMAND = "okragged"
-"""The console script, resolved on PATH. Not an interpreter and not a script
-path: the consumer this registration exists for is in another tree entirely."""
+"""The console script. Not an interpreter and not a script path: the consumer a
+documented entry exists for is in another tree entirely, and only `_command`
+may substitute an absolute one, only for the local file."""
 
 CONTRACT_URI = "okragged://contract"
 INDEX_URI = "okragged://index"
@@ -93,28 +105,46 @@ def render_mcp_json(config: Config) -> str:
         except (OSError, ValueError):
             existing = {}
     servers = dict(existing.get("mcpServers") or {})
-    servers[SERVER_KEY] = _entry(config.project_root, beside=True)
+    servers[SERVER_KEY] = _entry(config.project_root, local=True)
     return json.dumps({**existing, "mcpServers": servers}, indent=2) + "\n"
 
 
-def _entry(project_root: Path, *, beside: bool) -> dict[str, object]:
+def _entry(project_root: Path, *, local: bool) -> dict[str, object]:
     """The `mcpServers` value.
 
     A client spawns the server with the directory holding its config as the cwd,
     so an entry written into the project root needs no target — cwd already
     answers it. An entry copied anywhere else carries the root absolutely,
-    because nothing about a foreign checkout can be said relative to this one.
+    because nothing about a foreign checkout can be said relative to this one,
+    and it names the bare command for the same reason: this machine's resolution
+    is not a fact about that one.
     """
     args = ["mcp"]
-    if not beside:
+    if not local:
         args += ["--project", project_root.resolve().as_posix()]
-    return {"command": COMMAND, "args": args}
+    return {"command": _command() if local else COMMAND, "args": args}
+
+
+def _command() -> str:
+    """`PATH` first, then the console script beside this interpreter.
+
+    The registration is spawned by a client, not from an activated shell, so
+    `okragged` installed into a venv is invisible to the spawn and the whole
+    server is lost to a bare `CONNECTION_CLOSED`. Beside `sys.executable` is
+    where that install actually sits (`okf/validate.py::_okflint`, same reason).
+    Tried second rather than first because `.mcp.json` is not gitignored: a
+    resolvable name travels to another checkout and an absolute one does not.
+    """
+    if shutil.which(COMMAND):
+        return COMMAND
+    beside = Path(sys.executable).parent / (f"{COMMAND}.exe" if os.name == "nt" else COMMAND)
+    return str(beside) if beside.is_file() else COMMAND
 
 
 def render_agents_md(config: Config) -> str:
     concepts = okf.read_concepts(config.bundle_root)
     bundle = config.bundle.root
-    foreign = {"mcpServers": {SERVER_KEY: _entry(config.project_root, beside=False)}}
+    foreign = {"mcpServers": {SERVER_KEY: _entry(config.project_root, local=False)}}
     lines = [
         f"# {config.bundle_title} — agent contract",
         "",
