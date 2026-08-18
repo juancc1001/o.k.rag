@@ -146,6 +146,19 @@ def mcp(
         envvar="OKRAGGED_PROJECT",
         help="Project root holding the bundle. Defaults to the current directory.",
     ),
+    # no `envvar=` on either, deliberately, where --project has one: an ambient
+    # variable that switches on writing or spending is the thing being fixed. An
+    # instance may only be what the operator who wrote its .mcp.json asked for.
+    write: bool = typer.Option(
+        False,
+        "--write",
+        help="Offer the tool that records a source. Off by default: read-only.",
+    ),
+    spend: bool = typer.Option(
+        False,
+        "--spend",
+        help="Read this project's .env, so search may embed a query on your key.",
+    ),
 ) -> None:
     """Serve this bundle to an MCP client over stdio. What .mcp.json registers."""
     # the target is explicit because it has to be: a server that inferred its
@@ -162,7 +175,7 @@ def mcp(
     from .agent.server import main as serve_mcp
 
     try:
-        serve_mcp(root)
+        serve_mcp(root, write=write, spend=spend)
     except RuntimeError as exc:  # the MCP SDK is an optional extra
         typer.secho(str(exc), fg="red", err=True)
         raise typer.Exit(2) from None

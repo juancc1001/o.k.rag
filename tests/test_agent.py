@@ -869,19 +869,21 @@ def test_add_source_takes_no_lock_and_is_not_refused_by_a_writer_holding_one(
 
 # --- the server ------------------------------------------------------------------
 
-def server_for(project: Path):
+def server_for(project: Path, *, write: bool = False):
     from okragged.agent.server import build_server
 
-    return build_server(cfg(project))
+    return build_server(cfg(project), write=write)
 
 
-def test_the_server_exposes_exactly_the_four_tools_the_contract_names(project):
+def test_an_instance_with_writes_on_exposes_exactly_the_four_tools_the_contract_names(
+    project,
+):
     pytest.importorskip("mcp", reason='the MCP SDK is an optional extra: pip install -e ".[mcp]"')
     import anyio
     from mcp import Client
 
     async def go():
-        async with Client(server_for(project)) as client:
+        async with Client(server_for(project, write=True)) as client:
             return sorted(tool.name for tool in (await client.list_tools()).tools)
 
     assert anyio.run(go) == ["add_source", "lint", "read_concept", "search"]
@@ -911,7 +913,7 @@ def test_the_tool_descriptions_carry_the_rules_a_client_may_never_read_elsewhere
     from mcp import Client
 
     async def go():
-        async with Client(server_for(project)) as client:
+        async with Client(server_for(project, write=True)) as client:
             return {tool.name: tool.description or "" for tool in (await client.list_tools()).tools}
 
     described = anyio.run(go)
@@ -955,7 +957,7 @@ def test_a_whole_session_with_no_credential_can_also_write(project, monkeypatch)
     from mcp import Client
 
     async def go():
-        async with Client(server_for(project)) as client:
+        async with Client(server_for(project, write=True)) as client:
             wrote = await client.call_tool("add_source", {"text": "Two tables are related."})
             return wrote, await client.call_tool("lint", {})
 
@@ -964,6 +966,94 @@ def test_a_whole_session_with_no_credential_can_also_write(project, monkeypatch)
     assert wrote.structured_content["uri"].startswith("sources/conversations/")
     assert (project / wrote.structured_content["uri"]).is_file()
     assert report.structured_content["concepts"] == 4
+
+
+def test_a_read_only_instance_does_not_offer_the_tool_that_writes(project):
+    """Absent, not present-and-refusing. A client enumerates tools and plans from
+    what it sees, so a tool that is always going to fail makes it plan a dead end.
+    Read-only is the default because this is what an installed stranger gets."""
+    pytest.importorskip("mcp", reason='the MCP SDK is an optional extra: pip install -e ".[mcp]"')
+    import anyio
+    from mcp import Client
+
+    async def go():
+        async with Client(server_for(project)) as client:
+            return sorted(tool.name for tool in (await client.list_tools()).tools)
+
+    assert anyio.run(go) == ["lint", "read_concept", "search"]
+
+
+def test_an_instance_started_with_writes_on_offers_the_tool_that_writes(project):
+    """The switch is a property of the instance the operator launched, which is the
+    only thing stdio gives anybody to decide on: there is no per-call channel."""
+    pytest.importorskip("mcp", reason='the MCP SDK is an optional extra: pip install -e ".[mcp]"')
+    import anyio
+    from mcp import Client
+
+    async def go():
+        async with Client(server_for(project, write=True)) as client:
+            return sorted(tool.name for tool in (await client.list_tools()).tools)
+
+    assert "add_source" in anyio.run(go)
+
+
+class _NoRun:
+    """`main` ends in a blocking `run()`; the decision under test happens before it."""
+
+    def run(self) -> None:
+        pass
+
+
+def write_env(project: Path, line: str) -> None:
+    (project / ".env").write_text(line + "\n", encoding="utf-8", newline="\n")
+
+
+def test_the_server_does_not_read_the_projects_env_unless_spending_is_enabled(
+    project, monkeypatch
+):
+    """The producer's `.env` is theirs. A server somebody else's client spawned
+    inherited it merely for being pointed at their directory, and the one thing it
+    buys is the embedding key `search` spends — so it is now asked for or absent.
+    """
+    from okragged.agent import server as server_module
+
+    write_env(project, "GEMINI_API_KEY=the-producers-key")
+    monkeypatch.setattr(
+        server_module, "build_server", lambda config, *, write=False: _NoRun()
+    )
+    try:
+        server_module.main(project)
+        assert "GEMINI_API_KEY" not in os.environ
+
+        server_module.main(project, spend=True)
+        assert os.environ["GEMINI_API_KEY"] == "the-producers-key"
+    finally:
+        os.environ.pop("GEMINI_API_KEY", None)
+
+
+def test_with_spending_off_search_traverses_though_the_env_holds_a_credential(
+    project, monkeypatch
+):
+    """Non-vacuous because the vectors are on disk: traversal is chosen by the
+    absent credential, not by an absent index. The consumer keeps an answer and
+    the producer keeps their quota, and `search` says which path answered."""
+    from okragged import vectors
+    from okragged.agent import server as server_module
+
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key-not-used")
+    monkeypatch.setattr(gemini, "embed", fake_embed)
+    vectors.index(cfg(project))
+    monkeypatch.delenv("GEMINI_API_KEY")
+    write_env(project, "GEMINI_API_KEY=the-producers-key")
+    monkeypatch.setattr(
+        server_module, "build_server", lambda config, *, write=False: _NoRun()
+    )
+
+    server_module.main(project)
+
+    result = agent.search(cfg(project), "prepayments", k=2)
+    assert result.path == agent.TRAVERSAL
+    assert "credential" in result.note
 
 
 # --- the contract, over the protocol ---------------------------------------------
@@ -1014,7 +1104,7 @@ def test_nothing_the_server_says_at_the_handshake_names_a_path_in_the_producers_
     from mcp import Client
 
     async def go():
-        async with Client(server_for(project)) as client:
+        async with Client(server_for(project, write=True)) as client:
             return (
                 client.instructions or "",
                 (await client.list_tools()).tools,
@@ -1056,18 +1146,22 @@ def test_the_path_check_catches_the_instruction_and_the_entry_it_replaced():
 # --- okragged mcp ----------------------------------------------------------------
 
 
-def served_root(project: Path, monkeypatch, args: list[str]) -> Path:
-    """The root `okragged mcp` would have served, without serving it."""
+def served(project: Path, monkeypatch, args: list[str]) -> tuple[Path, dict]:
+    """What `okragged mcp` would have served, and how, without serving it."""
     from typer.testing import CliRunner
 
     from okragged import cli
     from okragged.agent import server
 
-    seen: list[Path] = []
-    monkeypatch.setattr(server, "main", seen.append)
+    seen: list[tuple[Path, dict]] = []
+    monkeypatch.setattr(server, "main", lambda root, **modes: seen.append((root, modes)))
     result = CliRunner().invoke(cli.app, args)
     assert result.exit_code == 0, result.output
     return seen[0]
+
+
+def served_root(project: Path, monkeypatch, args: list[str]) -> Path:
+    return served(project, monkeypatch, args)[0]
 
 
 def test_the_server_command_serves_the_project_it_is_pointed_at(project, monkeypatch, tmp_path):
@@ -1086,6 +1180,27 @@ def test_the_server_command_takes_its_project_from_the_environment_too(
     monkeypatch.chdir(elsewhere)
     monkeypatch.setenv("OKRAGGED_PROJECT", str(project))
     assert served_root(project, monkeypatch, ["mcp"]) == project
+
+
+def test_the_server_writes_and_spends_only_when_the_invocation_says_so(project, monkeypatch):
+    _, plain = served(project, monkeypatch, ["mcp", "--project", str(project)])
+    assert plain == {"write": False, "spend": False}
+
+    _, asked = served(
+        project, monkeypatch, ["mcp", "--project", str(project), "--write", "--spend"]
+    )
+    assert asked == {"write": True, "spend": True}
+
+
+def test_no_environment_variable_can_turn_writing_or_spending_on(project, monkeypatch):
+    """`--project` takes an `envvar` and these deliberately do not. An instance is
+    what the operator who wrote its `.mcp.json` entry asked for: a mode a stray
+    variable could switch on is the ambient authority this change removes."""
+    for var in ("OKRAGGED_WRITE", "OKRAGGED_SPEND"):
+        monkeypatch.setenv(var, "1")
+
+    _, modes = served(project, monkeypatch, ["mcp", "--project", str(project)])
+    assert modes == {"write": False, "spend": False}
 
 
 def test_the_server_command_says_so_on_stderr_when_there_is_no_bundle_to_serve(

@@ -117,8 +117,12 @@ Swapping between them is a config edit: `embeddings_meta.json` records which pro
 | `search` — traversal fallback | — | — |
 | `build --dry-run`, `extract`, `check`, `agent`, `serve` | — | — |
 | `read_concept`, `lint`, `add_source` | — | — |
+| `mcp` without `--spend` | — | — |
+| `mcp --spend` | — | the embedding path only |
 
 **Nothing on the MCP surface needs a credential, `add_source` included.** It records prose as a source file and stops there; the concept is authored by the next `okragged build`. That is a security boundary rather than a convenience: stdio MCP has no identity — the server is a subprocess of whatever client spawned it — so "whose key pays for this synthesis" would be settled by an accident of environment precedence, with the producer's `.env` funding a stranger's writes whenever the consumer happened to have no key. Removing the model call removes the question. Spending over the protocol belongs to the security layer in [§13 M6](DESIGN.md#13-milestones).
+
+**And `okragged mcp` no longer reads your `.env` unless you ask it to.** Not taking a credential is not the same as not having one: the server used to load the project's `.env` merely for being pointed at that directory, and the one thing it buys is the *embedding* key `search` uses to embed a query — so a consumer's search spent the producer's quota. Reads cost money even where writes do not. `--spend` turns that back on for an instance you launched deliberately; without it `search` answers by index traversal and says so. `--write` is the other half: it decides whether `add_source` is offered at all, and without it the tool is absent rather than present-and-refusing. Both default to off, and neither reads an environment variable — a mode a stray variable could turn on is the ambient authority this removes.
 
 `build` **fails its pre-flight before doing work** — it refuses before extracting your corpus rather than after, so a missing key never leaves debris.
 
@@ -141,7 +145,7 @@ The library deliberately reads no `.env`. `okragged` the command loads one becau
 }}}
 ```
 
-All four tools work that way. `search` answers by traversal instead of by embedding kNN and says which path answered; `add_source` records prose without synthesizing it. A key in `env` buys exactly one thing — the embedding search path — and it is yours to spend, since `X/.env` is the *producer's* file and may be neither present on your machine nor yours to use.
+Every tool that instance offers works that way. `search` answers by traversal instead of by embedding kNN and says which path answered. Add `--write` to the `args` if that instance should also offer `add_source`, which records prose without synthesizing it, and `--spend` if it should read the project's `.env` — a key there buys exactly one thing, the embedding search path. Otherwise put your own key in this entry's `env`: `X/.env` is the *producer's* file and may be neither present on your machine nor yours to use.
 
 `.env` is gitignored; `.env.example` is the committed template. `okragged doctor` reports both providers, whether each credential was found, and whether the configured model exists for your key.
 
@@ -310,20 +314,20 @@ No interpreter path and no script path, which is what makes any MCP-capable agen
 
 **The bare name is used only when `PATH` actually resolves it.** A client spawns the server from `.mcp.json`, never from an activated shell, so an `okragged` installed into a venv is not on the spawn's `PATH` — the process dies before it says anything and the client reports `CONNECTION_CLOSED` with nothing to read anywhere. `register` therefore falls back to the console script beside the running interpreter, which is where that install sits. Same exposure as okflint's resolution below, and worse in its symptom — okflint degraded to "not installed", this loses the whole server. `PATH` is tried first here rather than second because this file is not gitignored: a bare name travels to another checkout and an absolute one does not. If you would rather the entry stay portable, put okragged on your `PATH` and re-run `okragged agent --register`. From an index that is `pipx install okragged`, which needs the publish milestone first; from a checkout today it is `pipx install --editable <root>` — a tool install exposes the console script without putting okragged's dependencies into a shared site-packages.
 
-Four tools:
+Four tools, of which the one that writes is offered only to an instance started with `--write`:
 
 | Tool | Signature | Credential |
 |---|---|---|
 | `search` | `(query, k=8)` → `concept_id`, `title`, `description`, `score` | none |
 | `read_concept` | `(concept_id)` → the raw file, frontmatter included | none |
-| `add_source` | `(text, title=null)` → the source written and the concepts it produced | **required** |
+| `add_source` | `(text, title=null)` → the source written, and whether it was recorded | none |
 | `lint` | `()` → conformance, ghost edges, stale concepts, orphans | none |
 
 The ghost list is capped at the 20 strongest, with `ghosts_total` and a note saying what was left out — they grow with the square of the corpus and this is a tool result an agent pays for by the token. `lint` also says when `graph.json` no longer describes the bundle, which a rebuild makes routine: ids come from model-written titles, so a rename means the old graph is about *different* concepts, not merely stale ones.
 
 **`search` returns pointers and never bodies**, because the retrieval path here is progressive disclosure rather than chunk RAG: the agent reads `index.md`, then reads whole concept files, and `AGENTS.md` says so explicitly.
 
-**All four tools work with no credential at all**, and the one that writes only ever adds — `ingest` came off this surface in M5, so nothing reachable over the protocol can sweep the corpus. That is what M4 is for — the bundle has to be readable by a session that has no key. That constrains `search`, since concept vectors are computed at build time but embedding a *query* is a read-time model call:
+**Every tool works with no credential at all**, and the one that writes only ever adds — `ingest` came off this surface in M5, so nothing reachable over the protocol can sweep the corpus. That is what M4 is for — the bundle has to be readable by a session that has no key. That constrains `search`, since concept vectors are computed at build time but embedding a *query* is a read-time model call:
 
 - `embeddings.npy` present **and** an embedding credential present → kNN over the stored matrix.
 - otherwise → **index traversal**: a term ranking over concept titles and descriptions (which is what every index entry is made of, verbatim), the bodies at lower weight, and one hop along the authored links, so a concept the bundle links to a hit surfaces behind it. Accents are folded, so `informaticos` matches `Informáticos`.
@@ -332,7 +336,7 @@ The result shape is identical, and the response names which path answered — pl
 
 `add_source` **records and stops**: it writes the prose into `sources/` under a path it generates, and the concept is authored by the next `okragged build`. That split is what makes it safe to expose where `ingest` was not. Synthesis costs money, and stdio MCP has no identity to charge — the server is a subprocess of whatever client spawned it — so a tool that synthesized would spend *somebody's* key chosen by environment precedence, which in practice means the producer's `.env` whenever the consumer has none. It also cannot sweep: there is no run to suppress, so the vanished-source check (§6.1) never enters the picture.
 
-It checks the credential *before* writing anything, so a missing key leaves no source file behind. After that point a failure is **reported rather than raised**: the prose is already in the corpus, so a run blocked by another writer comes back with `ingested: false` and the file it wrote, and the next `okragged build` ingests it like any other source. Raising there would tell the caller their assertion was lost while it sat in `sources/` waiting.
+It takes no lock either: the path is generated per assertion and identical bytes reuse it, so there is nothing for a concurrent build to collide with, and taking the lock would make recording an assertion fail for the duration of somebody's rebuild. `recorded: false` means that prose was already on file.
 
 **The contract itself is served over the protocol**, because a consumer in another checkout cannot open `agent/AGENTS.md`:
 
@@ -384,7 +388,7 @@ Broken links are **warnings, not errors** — the spec explicitly permits them, 
 
 ### One writer, and a commit per source
 
-Three things can write this directory — the CLI, the MCP server's `add_source`, and the Python API — so a write takes `.okragged/lock.json` for its duration and a second one is refused with a message naming what holds it:
+Two things can write this directory — the CLI and the Python API — so a write takes `.okragged/lock.json` for its duration and a second one is refused with a message naming what holds it:
 
 ```
 another okragged run holds this project: ingest, pid 26104 on DESKTOP-A, since 2026-08-17T18:02:11Z.
@@ -436,7 +440,7 @@ print(okragged.check(cfg).ok, [h.concept_id for h in okragged.search(cfg, "reven
 | `search(project, query, k=8)` | pointers, never bodies — the same ranking as the MCP tool | only for the embedding path |
 | `read_concept(project, concept_id)` | the raw file, frontmatter included | no |
 | `lint(project)` | conformance, ghosts, stale, orphans → `LintReport` | no |
-| `add_source(project, text, title=None)` | record prose in `sources/` and ingest that path alone | `[synth]` |
+| `add_source(project, text, title=None)` | record prose in `sources/`; the concept waits for `build` | no |
 | `write_contract(project)` | regenerate `agent/AGENTS.md` | no |
 | `register(project)` | register `okragged mcp` in `.mcp.json`, keeping other servers | no |
 
@@ -563,7 +567,7 @@ random_state = 42          # fixed, or the layout reshuffles every run
 .\.venv\Scripts\python.exe -m pytest tests -q
 ```
 
-336 tests. No credentials and no network needed — the end-to-end test stubs the model and asserts the emitted bundle is conformant, so "one file in, one conformant concept out" is covered offline. The embedding provider is stubbed the same way, in a three-dimensional toy space, so what two concepts are "similar" is something the test states rather than something a model decides.
+342 tests. No credentials and no network needed — the end-to-end test stubs the model and asserts the emitted bundle is conformant, so "one file in, one conformant concept out" is covered offline. The embedding provider is stubbed the same way, in a three-dimensional toy space, so what two concepts are "similar" is something the test states rather than something a model decides.
 
 | File | Covers |
 |---|---|
