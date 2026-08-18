@@ -118,19 +118,51 @@ def agent(
         "--register",
         help="Also register the MCP server in .mcp.json. Edits a file okragged does not own.",
     ),
+    write: bool = typer.Option(
+        False,
+        "--write",
+        help="Register the entry with --write, so that server offers add_source.",
+    ),
+    spend: bool = typer.Option(
+        False,
+        "--spend",
+        help="Register the entry with --spend, so that server may use your credential.",
+    ),
 ) -> None:
     """Regenerate the agent contract: agent/AGENTS.md. --register also writes .mcp.json."""
     cfg = config_module.load()
     if not cfg.bundle_root.exists():
         typer.secho(f"no bundle at {cfg.bundle_root}", fg="red")
         raise typer.Exit(2)
+    # the two describe the entry `--register` writes, so on their own they describe
+    # nothing: silently ignoring a switch somebody typed is worse than refusing it
+    if (write or spend) and not register:
+        typer.secho(
+            "--write and --spend describe the entry --register writes; pass --register too",
+            fg="red",
+        )
+        raise typer.Exit(2)
     written = write_contract(cfg)
     # asked for, never assumed: .mcp.json is the machine's MCP config, shared with
-    # every other server registered there, and it is not derived from the bundle
+    # every other server registered there, and it is not derived from the bundle.
+    # The switches go in when they were asked for in the same breath -- nothing is
+    # inferred, and without them the entry stays bare and the server read-only
     if register:
-        written.append(agent_register(cfg))
+        written.append(agent_register(cfg, write=write, spend=spend))
     for path in written:
         typer.secho(f"  wrote {path.relative_to(cfg.project_root)}", fg="green")
+    if register:
+        # said either way: the bare entry's bytes did not change when the switches
+        # arrived, their meaning narrowed, so an operator registering for their own
+        # use would otherwise lose add_source and the embedding search path with
+        # nothing to tell them
+        typer.secho(f"  the entry grants: {_granted(write, spend)}", fg="bright_black")
+        if not (write and spend):
+            typer.secho(
+                "  add --write for add_source, and --spend to author concepts and "
+                "embed queries on your key",
+                fg="bright_black",
+            )
     if not register and not is_registered(cfg):
         typer.secho(
             "  the MCP server is not registered - `okragged agent --register` adds it",
@@ -314,6 +346,21 @@ def _report_path(label: str, path: Path, hint: str) -> None:
         typer.secho(f"  {label:<14} found", fg="green")
     else:
         typer.secho(f"  {label:<14} missing - {hint}", fg="yellow")
+
+
+def _granted(write: bool, spend: bool) -> str:
+    """What the entry just written permits, in the caller's own terms.
+
+    Spelled out rather than echoed back as flags: the operator knows which
+    switches they typed and not what each one turns on.
+    """
+    if write and spend:
+        return "add_source, which authors and embeds the concept on your credential"
+    if write:
+        return "add_source, which records prose for the next `okragged build` to author"
+    if spend:
+        return "reads only, with search embedding the query on your credential"
+    return "reads only - no add_source, and search ranks by index traversal"
 
 
 def _print_summary(summary: IngestSummary, dry_run: bool) -> None:

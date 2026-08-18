@@ -31,6 +31,21 @@ the far end, which is where an identity and a scope belong (§13 M8).
 The run is a partial one over the file just written, which suppresses the
 vanished-source sweep (§6.1): safe by construction rather than by a check.
 
+**A synthesizing call also refreshes the vectors, and that is the same decision
+rather than a second one.** `--spend` says the operator's credential may be used;
+a concept nobody can find is not worth what the synthesis cost. Concept vectors
+come from `okragged index`, a command nothing on this surface can trigger, so
+without this the call would author a concept that `search`'s embedding path
+cannot rank until a human runs that command — the write path and the read path on
+different clocks. `embed_bundle` reuses a vector whose body hash is unchanged, so
+the refresh costs one embedding call, and the projection and the graph are redone
+locally because `lint` reports a `graph.json` that no longer describes the bundle
+and the view reads its positions from there. The credential is `[vectors]`'s,
+configured apart from `[synth]`'s and needed even where one variable holds both,
+which is why its absence is reported separately and why `search` degrades rather
+than the call failing. `index` takes the project lock itself and `hold` is not
+reentrant, so this runs after `ingest` has released it, never inside.
+
 **Nothing after the file is written may raise.** The prose is in the corpus by
 then, and an exception crossing the wire would tell the caller their assertion was
 lost while it sat in `sources/` waiting for a build that will pick it up. A
@@ -55,12 +70,13 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .. import okf
+from .. import okf, vectors
 from ..config import Config
 from ..lock import LockHeld
 from ..pipeline import IngestSummary, ItemOutcome, ingest, require_credential
 from ..sources import LocalFileSource
 from ..synth import MissingCredential
+from ..vectors import MissingEmbedCredential
 
 DIRECTORY = "conversations"
 """Where an asserted source lands, under the configured sources root. Named for
@@ -85,9 +101,15 @@ class AddedSource:
     reported here rather than raised."""
     concepts: list[str] = field(default_factory=list)
     """The concept ids this call authored, parent and children, when it did."""
+    indexed: bool = False
+    """Whether `search`'s embedding path can now rank what this call authored.
+    False when nothing was authored, and false when the vectors could not be
+    refreshed — the concept is in the bundle and readable either way, but until
+    `okragged index` runs it is rankable only by traversal, which `search` says."""
     errors: list[str] = field(default_factory=list)
-    """Why no concept was authored, or what failed while one was. Never a reason
-    the recording did not happen: that raises, having left nothing behind."""
+    """Why no concept was authored, or what failed while one was — the vectors
+    included. Never a reason the recording did not happen: that raises, having
+    left nothing behind."""
 
 
 def add_source(
@@ -96,8 +118,9 @@ def add_source(
     """Record prose in the corpus as a source, and author its concept if asked.
 
     Recording is offline and needs no credential. `synthesize` ingests the path
-    just written, which costs a model call — the module docstring says what stands
-    behind that and, more to the point, what does not.
+    just written and refreshes the vectors over it, which costs a synthesis call
+    and one embedding — the module docstring says what stands behind that and,
+    more to the point, what does not.
     """
     body = _normalized(text)
     if not body.strip():
@@ -156,6 +179,42 @@ def _synthesize(config: Config, recorded: AddedSource) -> AddedSource:
     recorded.synthesized = True
     recorded.concepts = [cid for outcome in summary.outcomes for cid in _produced(outcome)]
     recorded.errors = _errors(summary)
+    return _reindex(config, recorded)
+
+
+def _reindex(config: Config, recorded: AddedSource) -> AddedSource:
+    """Refresh the vectors so `search` can rank the concept this call authored.
+
+    Outside `ingest`'s lock rather than inside it: `index` takes the project lock
+    itself and `hold` is not reentrant, so nesting them would self-refuse. That
+    leaves a window another writer can take the lock in, which is reported like
+    any other failure here — the concept is authored and readable regardless.
+    """
+    if not recorded.concepts:
+        return recorded
+    try:
+        summary = vectors.index(config)
+    except MissingEmbedCredential as exc:
+        return _unranked(recorded, str(exc))
+    except LockHeld as exc:
+        return _unranked(recorded, str(exc))
+    except Exception as exc:  # the concept is already published; report, never raise
+        return _unranked(recorded, f"{type(exc).__name__}: {exc}")
+
+    failed = [summary.embed.errors[cid] for cid in recorded.concepts if cid in summary.embed.errors]
+    if failed:
+        return _unranked(recorded, failed[0])
+    recorded.indexed = True
+    return recorded
+
+
+def _unranked(recorded: AddedSource, reason: str) -> AddedSource:
+    """The concept landed and its vector did not. Said in full, because a caller
+    told only the reason would read it as the concept having failed."""
+    recorded.errors.append(
+        f"the concept is in the bundle and readable, but has no vector, so "
+        f"`search` ranks it by index traversal until `okragged index` runs: {reason}"
+    )
     return recorded
 
 

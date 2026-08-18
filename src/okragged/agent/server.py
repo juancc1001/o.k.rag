@@ -100,6 +100,14 @@ def build_server(config: Config, *, write: bool = False, spend: bool = False):
 
         A way in, not a substitute for the indexes: read the `okragged://index`
         resource first, then read what either one points at.
+
+        `path` says which ranking answered: `embeddings`, `index-traversal`, or
+        `embeddings+index-traversal` when both did, where the two lists are
+        alternated by rank and their scores are **not comparable**. **Read `note`
+        whenever it is not empty** - it is what the ranking could not see. A
+        concept written since the last `okragged index` has no vector, so it is
+        ranked by traversal instead of being left out, and the note says how many
+        were.
         """
         result = run_search(config, query, k)
         return {
@@ -139,8 +147,12 @@ def build_server(config: Config, *, write: bool = False, spend: bool = False):
             was already on file. `synthesized: false` with an `errors` entry means
             the prose is recorded and the concept is not, because another writer
             holds the project or no `[synth]` credential resolved; say so rather
-            than calling again in a loop. **This call spends the operator's
-            credential and nothing here rate-limits it.**
+            than calling again in a loop. `indexed` says whether `search` can rank
+            the new concept by embedding yet: false with an `errors` entry means
+            the concept is in the bundle and readable and only its vector is
+            missing, so `search` finds it by traversal until `okragged index` runs.
+            **This call spends the operator's credential - a synthesis and an
+            embedding - and nothing here rate-limits it.**
             """
             return asdict(run_add_source(config, text, title, synthesize=True))
 

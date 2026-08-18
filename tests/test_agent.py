@@ -233,6 +233,88 @@ def test_a_query_that_cannot_be_embedded_falls_back_to_traversal(project, monkey
     assert result.hits[0].concept_id == "revenue-policy"
 
 
+def test_a_bundle_whose_vectors_cover_every_concept_answers_with_an_empty_note(
+    project, monkeypatch
+):
+    """`note` is what the ranking could not see, so a complete ranking says
+    nothing. A note on every search would be a note nobody reads."""
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key-not-used")
+    monkeypatch.setattr(gemini, "embed", fake_embed)
+    from okragged import vectors
+
+    vectors.index(cfg(project))
+
+    result = agent.search(cfg(project), "prepayments", k=2)
+    assert result.path == agent.EMBEDDING
+    assert result.note == ""
+
+
+def test_a_concept_written_since_the_last_index_is_ranked_rather_than_skipped(
+    project, monkeypatch
+):
+    """The defect this replaces: kNN cannot rank a concept with no row in the
+    matrix, and the two old fallbacks both described the path being *unavailable*,
+    so an incomplete matrix matched neither. The embedding path answered, ranked
+    what it could see, and returned an empty note — a search with the matching
+    concept in front of it, reporting the neighbours and saying nothing."""
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key-not-used")
+    monkeypatch.setattr(gemini, "embed", fake_embed)
+    from okragged import vectors
+
+    vectors.index(cfg(project))
+
+    okf.write_concept(
+        project / "bundle",
+        okf.Concept(
+            concept_id="grooming",
+            type="Reference",
+            title="Grooming Statute",
+            description="What the grooming article covers.",
+            body="The article reaches contact made through an electronic medium.",
+            status="draft",
+        ),
+    )
+    okf.write_indexes(project / "bundle", "0.2", "Test Bundle")
+
+    result = agent.search(cfg(project), "grooming statute", k=8)
+    assert result.path == agent.MERGED
+    assert "grooming" in [hit.concept_id for hit in result.hits]
+    assert "1 concept(s) have no stored vector" in result.note
+    assert "not comparable" in result.note and "okragged index" in result.note
+
+
+def test_a_query_matching_none_of_the_unvectored_concepts_still_says_they_exist(
+    project, monkeypatch
+):
+    """Ranked by traversal means ranked, not promoted: a concept the query does not
+    match contributes no hit, or every search would surface whatever was written
+    last. The count still has to be reported — the caller is the one who knows
+    whether it matters."""
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key-not-used")
+    monkeypatch.setattr(gemini, "embed", fake_embed)
+    from okragged import vectors
+
+    vectors.index(cfg(project))
+
+    okf.write_concept(
+        project / "bundle",
+        okf.Concept(
+            concept_id="grooming",
+            type="Reference",
+            title="Grooming Statute",
+            description="What the grooming article covers.",
+            body="The article reaches contact made through an electronic medium.",
+            status="draft",
+        ),
+    )
+    okf.write_indexes(project / "bundle", "0.2", "Test Bundle")
+
+    result = agent.search(cfg(project), "prepayments", k=8)
+    assert result.path == agent.EMBEDDING
+    assert "grooming" not in [hit.concept_id for hit in result.hits]
+    assert "1 concept(s) have no stored vector" in result.note
+
+
 # --- read_concept ----------------------------------------------------------------
 
 
@@ -401,12 +483,23 @@ def test_the_contract_describes_the_bundles_directory_structure(project):
     assert "pricing/  (1 concept(s))" in text
 
 
-def test_the_contract_says_no_tool_needs_a_credential(project):
+def test_the_contract_describes_the_instance_modes_instead_of_asserting_one(project):
+    """It is a function of the bundle, and how a server was started is not a fact
+    about the bundle — so it may not claim that nothing here spends a credential,
+    which `--write --spend` makes false, nor claim the opposite of a read-only one."""
     text = agent.render_agents_md(cfg(project))
-    assert "**None of them needs a credential.**" in text
-    assert "nothing here spends anybody's credential" in text
     for tool in ("search", "read_concept", "lint", "add_source"):
         assert f"`{tool}`" in text
+    for mode in ("`okragged mcp`", "`okragged mcp --write`", "`okragged mcp --write --spend`"):
+        assert f"| {mode} |" in text
+    assert "what its tool list shows" in text
+    assert "property of the instance" in text
+    for asserted in (
+        "**None of them needs a credential.**",
+        "nothing here spends anybody's credential",
+        "**Synthesis is not on this surface**",
+    ):
+        assert asserted not in text
 
 
 def test_the_contract_says_a_recorded_source_is_not_yet_a_concept(project):
@@ -633,6 +726,83 @@ def test_the_agent_command_registers_only_when_asked(project, monkeypatch):
     assert Path(entry["command"]).stem == "okragged"
 
 
+def test_registering_says_what_the_entry_it_wrote_grants(project, monkeypatch):
+    """The bare entry is the same bytes it always was and now means something
+    narrower. Left unsaid, an operator registering for their own use loses
+    `add_source` and the embedding search path with nothing to read about why."""
+    result = run_cli(project, monkeypatch, ["agent", "--register"])
+
+    assert "reads only" in result.output
+    assert "--write" in result.output and "--spend" in result.output
+
+
+def test_registering_with_the_switches_puts_them_in_the_entrys_arguments(project, monkeypatch):
+    """Typing `--register --write --spend` is asking for that entry specifically, so
+    nothing is inferred and nothing is decided for anybody — which is the whole
+    reason this file is written only when asked."""
+    run_cli(project, monkeypatch, ["agent", "--register", "--write", "--spend"])
+
+    entry = json.loads((project / ".mcp.json").read_text(encoding="utf-8-sig"))
+    assert entry["mcpServers"]["okragged"]["args"] == ["mcp", "--write", "--spend"]
+
+
+def test_registering_without_the_switches_writes_the_entry_it_always_wrote(project, monkeypatch):
+    """The default does not move: a shared config gaining an entry that could spend
+    by accident is what the switches exist to prevent."""
+    run_cli(project, monkeypatch, ["agent", "--register"])
+    bare = (project / ".mcp.json").read_bytes()
+
+    (project / ".mcp.json").unlink()
+    run_cli(project, monkeypatch, ["agent", "--register", "--write"])
+    assert (project / ".mcp.json").read_bytes() != bare
+
+    (project / ".mcp.json").unlink()
+    run_cli(project, monkeypatch, ["agent", "--register"])
+    assert (project / ".mcp.json").read_bytes() == bare
+
+
+def test_a_flagged_entry_still_reports_as_registered(project, monkeypatch):
+    """`is_registered` matches the key, not the argument vector. Comparing whole
+    entries would read a `--write --spend` registration as absent and have every
+    build tell the operator to register a server that is already there."""
+    run_cli(project, monkeypatch, ["agent", "--register", "--write", "--spend"])
+
+    assert agent.is_registered(cfg(project))
+    assert "--register" not in run_cli(project, monkeypatch, ["agent"]).output
+
+
+def test_the_switches_are_refused_rather_than_ignored_without_register(project, monkeypatch):
+    """They describe the entry `--register` writes, so alone they describe nothing.
+    Silently dropping a switch somebody typed is worse than refusing it."""
+    from typer.testing import CliRunner
+
+    from okragged import cli
+
+    monkeypatch.chdir(project)
+    result = CliRunner().invoke(cli.app, ["agent", "--write"])
+
+    assert result.exit_code == 2
+    assert "--register" in result.output
+    assert not (project / ".mcp.json").exists()
+
+
+def test_the_entry_the_contract_hands_a_foreign_project_carries_no_switches(
+    project, monkeypatch
+):
+    """This machine's authorization says nothing about another machine's, and a
+    snippet shipping `--spend` would be telling a stranger to spend a key."""
+    run_cli(project, monkeypatch, ["agent", "--register", "--write", "--spend"])
+    text = agent.render_agents_md(cfg(project))
+
+    foreign = json.loads(text.split("```json")[1].split("```")[0])
+    assert foreign["mcpServers"]["okragged"]["args"] == [
+        "mcp",
+        "--project",
+        project.resolve().as_posix(),
+    ]
+    assert "read-only" in text
+
+
 def test_the_agent_command_stops_offering_to_register_once_it_has(project, monkeypatch):
     run_cli(project, monkeypatch, ["agent", "--register"])
     result = run_cli(project, monkeypatch, ["agent"])
@@ -739,6 +909,13 @@ def added(
     from okragged.agent.write import add_source
 
     return add_source(config_module.load(project), text, title, synthesize=synthesize)
+
+
+def embeddable(monkeypatch) -> None:
+    """The other half of a spending instance: the embedding a synthesizing call
+    pays for so `search` can rank what it just authored. Toy space, no network."""
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key-not-used")
+    monkeypatch.setattr(gemini, "embed", fake_embed)
 
 
 def calls(monkeypatch) -> list[str]:
@@ -857,10 +1034,11 @@ def test_add_source_refuses_when_the_configured_globs_would_never_discover_it(in
 
 
 def test_a_synthesizing_call_authors_the_concept_instead_of_leaving_it_to_a_build(
-    ingestable,
+    ingestable, monkeypatch
 ):
     """M6 item 5. What the operator gets for launching an instance with both
     switches: the assertion is a concept with real provenance in one call."""
+    embeddable(monkeypatch)
     result = added(ingestable, synthesize=True)
 
     assert result.synthesized and result.concepts and not result.errors
@@ -871,6 +1049,36 @@ def test_a_synthesizing_call_authors_the_concept_instead_of_leaving_it_to_a_buil
     )
     assert result.uri in concept.sources[0].resource
     assert concept.extra["x_okragged_source_hash"]
+
+
+def test_a_spending_write_leaves_what_it_authored_findable_by_search(
+    ingestable, monkeypatch
+):
+    """The write path and the read path on one clock. Concept vectors come from
+    `okragged index`, which nothing on this surface can trigger, so without this
+    the call authors a concept `search` cannot rank until a human runs a command —
+    knowledge added over the protocol that the protocol cannot find."""
+    embeddable(monkeypatch)
+    result = added(ingestable, synthesize=True, text="Refunds reconcile by customer id.")
+
+    assert result.indexed
+    found = agent.search(config_module.load(ingestable), "refunds reconcile", k=8)
+    assert result.concepts[0] in [hit.concept_id for hit in found.hits]
+    assert found.note == ""
+
+
+def test_a_write_that_cannot_embed_still_authors_and_says_the_vectors_are_behind(
+    ingestable,
+):
+    """The embedding credential is `[vectors]`'s and the synthesis one is
+    `[synth]`'s, so one can resolve without the other. The concept is published
+    either way — a failure to *rank* it may not read as a failure to write it."""
+    result = added(ingestable, synthesize=True)
+
+    assert result.synthesized and result.concepts
+    assert not result.indexed
+    assert "readable" in result.errors[0] and "okragged index" in result.errors[0]
+    assert "GEMINI_API_KEY" in result.errors[0]
 
 
 def test_a_recording_call_says_it_authored_nothing_rather_than_leaving_it_implied(

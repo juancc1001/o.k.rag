@@ -17,7 +17,7 @@ from .contract import (
     write_contract,
 )
 from .lint import GHOST_LIMIT, LintReport, lint
-from .query import EMBEDDING, TRAVERSAL, Hit, SearchResult, read_concept, search
+from .query import EMBEDDING, MERGED, TRAVERSAL, Hit, SearchResult, read_concept, search
 
 __all__ = [
     "AGENTS_NAME",
@@ -28,6 +28,7 @@ __all__ = [
     "Hit",
     "LintReport",
     "MCP_CONFIG_NAME",
+    "MERGED",
     "SearchResult",
     "TRAVERSAL",
     "is_registered",

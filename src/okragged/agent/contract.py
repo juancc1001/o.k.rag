@@ -70,18 +70,33 @@ def write_contract(config: Config) -> list[Path]:
     return [_write(config.project_root / "agent" / AGENTS_NAME, render_agents_md(config))]
 
 
-def register(config: Config) -> Path:
+def register(config: Config, *, write: bool = False, spend: bool = False) -> Path:
     """Write the `.mcp.json` entry, merged into whatever else is registered.
 
     The one function here that writes a file okragged does not own, which is why
     nothing calls it on your behalf: `okragged agent --register` asks for it, and
     a build never does.
+
+    The switches go into the entry when they are asked for, and they are asked for
+    in the same breath as the registration itself — `--register --write --spend`
+    names precisely the instance it wants, so nothing is inferred and nothing is
+    decided for anybody. Omitted, the entry is bare and the server it spawns is
+    read-only, which is the default that matters: the file is shared, and an entry
+    that could spend by accident is what the switches exist to prevent.
     """
-    return _write(config.project_root / MCP_CONFIG_NAME, render_mcp_json(config))
+    return _write(
+        config.project_root / MCP_CONFIG_NAME,
+        render_mcp_json(config, write=write, spend=spend),
+    )
 
 
 def is_registered(config: Config) -> bool:
     """Whether `.mcp.json` already registers this project's server.
+
+    **The key, not the argument vector.** An operator may have registered the
+    server with `--write` or `--spend` in its `args`, or added them by hand
+    afterwards; comparing the whole entry would read that as unregistered and
+    have every build tell them to register a server that is already there.
 
     Only so a build can *mention* that it does not; a build that acted on this
     would be the side effect this module exists to remove.
@@ -94,7 +109,7 @@ def is_registered(config: Config) -> bool:
     return isinstance(loaded, dict) and SERVER_KEY in (loaded.get("mcpServers") or {})
 
 
-def render_mcp_json(config: Config) -> str:
+def render_mcp_json(config: Config, *, write: bool = False, spend: bool = False) -> str:
     """The registration entry, merged into whatever else is already registered."""
     path = config.project_root / MCP_CONFIG_NAME
     existing: dict = {}
@@ -105,11 +120,13 @@ def render_mcp_json(config: Config) -> str:
         except (OSError, ValueError):
             existing = {}
     servers = dict(existing.get("mcpServers") or {})
-    servers[SERVER_KEY] = _entry(config.project_root, local=True)
+    servers[SERVER_KEY] = _entry(config.project_root, local=True, write=write, spend=spend)
     return json.dumps({**existing, "mcpServers": servers}, indent=2) + "\n"
 
 
-def _entry(project_root: Path, *, local: bool) -> dict[str, object]:
+def _entry(
+    project_root: Path, *, local: bool, write: bool = False, spend: bool = False
+) -> dict[str, object]:
     """The `mcpServers` value.
 
     A client spawns the server with the directory holding its config as the cwd,
@@ -118,11 +135,21 @@ def _entry(project_root: Path, *, local: bool) -> dict[str, object]:
     because nothing about a foreign checkout can be said relative to this one,
     and it names the bare command for the same reason: this machine's resolution
     is not a fact about that one.
+
+    **The switches reach the local entry only.** The copy in `AGENTS.md` is for
+    somebody else's config, and what this operator authorized on this machine is
+    not a fact about that one — a snippet carrying `--spend` would be telling a
+    stranger to spend a key. A consumer who wants to write adds them knowingly,
+    which the contract says in prose beside the flagless JSON.
     """
     args = ["mcp"]
     if not local:
-        args += ["--project", project_root.resolve().as_posix()]
-    return {"command": _command() if local else COMMAND, "args": args}
+        return {"command": COMMAND, "args": args + ["--project", project_root.resolve().as_posix()]}
+    if write:
+        args.append("--write")
+    if spend:
+        args.append("--spend")
+    return {"command": _command(), "args": args}
 
 
 def _command() -> str:
@@ -207,37 +234,56 @@ def render_agents_md(config: Config) -> str:
         "",
         "## Operations",
         "",
-        "Four tools, over the MCP server. **None of them needs a credential.**",
+        "Three tools always, and a fourth — `add_source` — when the instance was started "
+        "to write. **What this instance offers is what its tool list shows**, and each "
+        "tool's own description says which of the modes below you are talking to. This "
+        "file cannot: how a server was started is not a fact about the knowledge it "
+        "serves, so what follows describes the modes rather than asserting one.",
         "",
         "| tool | signature |",
         "|---|---|",
-        "| `search` | `(query: str, k: int = 8)` → pointers: `concept_id`, `title`, "
-        "`description`, `score` |",
+        "| `search` | `(query: str, k: int = 8)` → `path`, `note`, and pointers: "
+        "`concept_id`, `title`, `description`, `score` |",
         "| `read_concept` | `(concept_id: str)` → the raw file, frontmatter included |",
         "| `lint` | `()` → conformance, ghost edges, stale concepts, orphans |",
-        "| `add_source` | `(text: str, title: str \\| None)` → the source file it wrote |",
+        "| `add_source` | `(text: str, title: str \\| None)` → the source it wrote, and "
+        "the concepts it authored where the instance authors them |",
         "",
-        "**Nothing here calls a model, so nothing here spends anybody's credential.** "
-        "Querying and linting read the bundle; `add_source` writes a file. The one step "
-        "that costs money — turning a source into a concept — is `okragged build`, run by "
-        "whoever owns the corpus and the key.",
+        "| how it was started | what that instance offers |",
+        "|---|---|",
+        f"| `{COMMAND} mcp` | Read-only, and no credential is read at all: `search` ranks "
+        "by traversing the indexes rather than by embedding your query. |",
+        f"| `{COMMAND} mcp --write` | Adds `add_source`. **It records only** — the concept "
+        "is authored by the next `okragged build`, so do not wait for one or report that "
+        "it appeared. |",
+        f"| `{COMMAND} mcp --write --spend` | `add_source` authors the concept in the same "
+        "call and embeds it, and `search` may embed your query. Both spend the operator's "
+        "credential, and nothing here limits the rate. |",
+        "",
+        "**So whether anything here spends money is a property of the instance rather than "
+        "of the protocol, and reading a concept never does.** Where an instance does not "
+        "spend, the step that costs money — turning a source into a concept — is "
+        "`okragged build`, run by whoever owns the corpus and the key.",
         "",
         "- **query** — `search`, then `read_concept` on what it points at. "
-        "`read_concept(\"index\")` returns the root index itself.",
+        "`read_concept(\"index\")` returns the root index itself. `path` says which ranking "
+        "answered — `embeddings`, `index-traversal`, or `embeddings+index-traversal`, where "
+        "the two are alternated by rank and their scores are not comparable — and `note` "
+        "says what the ranking could not see. **Read `note` when it is not empty**: a "
+        "concept written since the last `okragged index` has no vector, and it is ranked by "
+        "traversal instead rather than dropped.",
         "- **lint** — okflint conformance plus ghost edges (similar pairs nobody linked), "
         "stale concepts, and orphans (concepts nothing links to). Ghost edges are computed "
         "by `okragged index`, so run that if it reports having none to read.",
         "- **add_source** — for knowledge no document states: two things are related in a "
         "way no source says, and somebody knows it. Give it prose and it writes that prose "
-        "into the corpus as a new source, generating the path itself. **It records only** — "
-        "the concept is authored by the next `okragged build`, so do not wait for one or "
-        "report that it appeared. Every concept traces to a source, which is why nothing "
-        "here writes a concept — or a `verified` block — directly. Asserting that x relates "
-        "to y will mint a third concept linking to both; it does not rewrite x and y to "
-        "link back.",
-        "",
-        "**Synthesis is not on this surface**, deliberately: it is `okragged build`, where "
-        "the sources and the credential already are, run by whoever owns them.",
+        "into the corpus as a new source, generating the path itself. Every concept traces "
+        "to a source, which is why nothing here writes a concept — or a `verified` block — "
+        "directly. Asserting that x relates to y will mint a third concept linking to both; "
+        "it does not rewrite x and y to link back. Whether the concept arrives now or with "
+        "the next `okragged build` is the mode difference above, and the result says which: "
+        "`synthesized` whether a concept was authored, `concepts` what it was, and "
+        "`indexed` whether `search` can rank it by embedding yet.",
         "",
         "## Registering the server",
         "",
@@ -251,6 +297,13 @@ def render_agents_md(config: Config) -> str:
         "```json",
         json.dumps(foreign, indent=2),
         "```",
+        "",
+        "**That entry is deliberately flagless, so the server it spawns is read-only.** "
+        "Whoever produced this bundle may have registered a writing or a spending "
+        "instance on their own machine; that is a fact about their machine and their "
+        "key, not about yours. If you want the writing tool, add `--write` to the args "
+        "above — and `--spend` only with a credential of your own, in this entry's "
+        "`env`, because it is what lets the server author a concept and embed a query.",
         "",
         "Everything in this file is also served over the protocol, so a consumer that "
         f"never sees this directory still gets it: `{CONTRACT_URI}` is this contract and "
