@@ -3,7 +3,8 @@
 
 # your input corpus. Not committed: it is your own material, and a real corpus
 # tends to carry third-party names that do not belong in a permanent history.
-sources/
+# Anchored to the repo root, or it would also swallow src/okragged/sources/.
+/sources/
 
 # working output. Not committed because concept ids derive from model-written
 # titles, so every rebuild renames the whole tree and the diff is unreadable.

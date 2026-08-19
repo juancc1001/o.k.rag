@@ -57,3 +57,9 @@ packages = ["src/okragged"]
 # from a source tree where `npm run build` has never run, which is why `okragged
 # serve` reports it as missing instead of failing.
 artifacts = ["src/okragged/api/static/**"]
+
+# hatchling's sdist file list otherwise follows VCS-ignore, and this directory is
+# gitignored on purpose (see .gitignore) — force it in from disk so a
+# sdist-then-wheel build carries the view too, same as the wheel target above.
+[tool.hatch.build.targets.sdist]
+artifacts = ["src/okragged/api/static/**"]
