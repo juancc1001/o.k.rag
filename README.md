@@ -2,7 +2,7 @@
 
 Turns a folder of files into a conformant **Open Knowledge Format (OKF) v0.2** bundle — a directory of markdown concepts with YAML frontmatter that agents and humans can both read, with no SDK required.
 
-**Status: M2, M3 and M4 done.** A long source is planned into sections and each becomes its own concept under a parent, a second pass weaves cross-links into the prose, every directory gets an `index.md`, and a rebuild only touches the sources that changed. `okragged index` then embeds the bundle, projects it to 2D and writes a `graph.json` with both edge layers, and `okragged serve` renders it — a sigma.js map where proximity is semantic similarity and a **ghost edge** is a pair the embeddings say is about one thing that nobody linked. Every build also generates the **agent contract**: `agent/AGENTS.md` plus a stdio MCP server exposing `search` / `read_concept` / `add_source` / `lint`, none of which *requires* a credential. That server is read-only unless you launch it otherwise, and reads no `.env` unless you ask. See [Not implemented yet](#not-implemented-yet).
+**Status: M2, M3, and M4 done; M5 in progress.** A long source is planned into sections, and each becomes its own concept under a parent. A second pass weaves cross-links into the prose, every directory gets an `index.md`, and a rebuild only touches the sources that changed. `okragged index` then embeds the bundle, projects it to 2D, and writes a `graph.json` with both edge layers, while `okragged serve` renders it — a sigma.js map where proximity represents semantic similarity and a **ghost edge** connects a pair that embeddings indicate are related but nobody linked. Every build generates the **agent contract** in `agent/AGENTS.md`; the packaged stdio MCP server exposes `search`, `read_concept`, `add_source`, and `lint`, none of which *requires* a credential. The server is read-only unless launched otherwise, and reads no `.env` file unless requested. See [Roadmap and open work](#roadmap-and-open-work).
 
 - Architecture, data model and rationale: [`DESIGN.md`](DESIGN.md)
 - **Roadmap and milestones (M1–M11): [`DESIGN.md` §13](DESIGN.md#13-milestones)**
@@ -18,7 +18,7 @@ okragged is designed to have both, and what makes that possible is the **sidecar
 What the vectors add on top of the markdown:
 
 - **Node position** in the graph — proximity means semantic similarity rather than connectivity. **Computed** by `okragged index`.
-- **Ghost edges** — pairs of concepts that are highly similar with *no* markdown link between them. This is the part links cannot give you: a missing link is not computable from the links you have. It is the lint signal saying two concepts are about the same thing and nobody connected them. **Computed** by `okragged index`, explorable in the view `okragged serve` mounts, and reported by the `lint` tool.
+- **Ghost edges** — pairs of concepts that are highly similar but have *no* markdown link between them. Links alone cannot reveal a missing link. A ghost edge is the lint signal that two concepts may concern the same subject without being connected. Ghost edges are **computed** by `okragged index`, shown in the view mounted by `okragged serve`, and reported by the `lint` tool.
 - **Semantic search** over concepts. The MCP server's `search` works without them by traversing the indexes and the links; embeddings upgrade that path rather than enable it, and only when a credential is present to embed the query with.
 
 Embeddings sit deliberately outside the build path ([§6.8](DESIGN.md)). Concepts are produced, validated and consumed without them, which is why `build` never calls an embedding model and `index` is a separate command.
@@ -53,7 +53,7 @@ Four extras are deliberately *not* installed by default, because none is needed 
 
 Without `umap`, `okragged index` projects with PCA and says so. Without `fastembed`, the local embedding provider reports the extra rather than an import error. Without `mcp`, everything except starting the MCP server still works — `okragged agent` still generates the contract, and the server reports the extra when it is launched. Without `api`, `okragged serve` reports the extra instead of starting.
 
-The graph view is a separate build and needs Node 20+ — see [The graph view](#the-graph-view--okragged-serve) for the five commands that get it on screen.
+The graph view is built separately and needs Node 20+ — see [The graph view](#the-graph-view--okragged-serve) for the five commands that put it on screen.
 
 `markitdown[all]` prints a `Couldn't find ffmpeg` warning on import. It only affects audio extraction and is safe to ignore.
 
@@ -265,7 +265,7 @@ cd ..
 
 Then open **<http://127.0.0.1:8000>**. Ghost edges are off by default — tick **show ghost edges** in the left panel to see them, and drag **τ** to decide how similar a pair has to be before the graph claims they belong together.
 
-Three of those five steps are once-only. Day to day it is `okragged serve`, and `okragged index` again whenever the bundle changes — the view reads `graph.json` and nothing else, so it shows whatever the last `index` computed.
+Three of those five steps are one-time setup. After that, run `okragged serve` day to day and run `okragged index` whenever the bundle changes. The view reads `graph.json` and nothing else, so it shows whatever the last `index` computed.
 
 **While working on the view itself**, run Vite instead, so a save reloads the page:
 
@@ -337,7 +337,7 @@ The server is `okragged mcp`, a subcommand of the console script — there is no
 
 No interpreter path and no script path, which is what makes any MCP-capable agent a consumer of the bundle with no okragged-specific code **from any tree at all**. The server takes its bundle from `--project` or `OKRAGGED_PROJECT`, defaulting to the cwd — a client spawns it with the config file's directory as its cwd, so the entry beside the bundle needs no target. To consume the bundle from *another* project, paste the entry `AGENTS.md` prints instead: the same two words plus `--project` and this root, absolutely.
 
-**The bare name is used only when `PATH` actually resolves it.** A client spawns the server from `.mcp.json`, never from an activated shell, so an `okragged` installed into a venv is not on the spawn's `PATH` — the process dies before it says anything and the client reports `CONNECTION_CLOSED` with nothing to read anywhere. `register` therefore falls back to the console script beside the running interpreter, which is where that install sits. Same exposure as okflint's resolution below, and worse in its symptom — okflint degraded to "not installed", this loses the whole server. `PATH` is tried first here rather than second because this file is not gitignored: a bare name travels to another checkout and an absolute one does not. If you would rather the entry stay portable, put okragged on your `PATH` and re-run `okragged agent --register`. From an index that is `pipx install okragged`, which needs the publish milestone first; from a checkout today it is `pipx install --editable <root>` — a tool install exposes the console script without putting okragged's dependencies into a shared site-packages.
+**The bare name is used only when `PATH` actually resolves it.** A client spawns the server from `.mcp.json`, never from an activated shell, so an `okragged` installed into a venv is not on the spawn's `PATH` — the process dies before it says anything and the client reports `CONNECTION_CLOSED` with nothing to read anywhere. `register` therefore falls back to the console script beside the running interpreter, which is where that install sits. This has the same exposure as okflint's resolution below, but with a worse symptom: okflint degrades to "not installed", while this loses the whole server. `PATH` is tried first here rather than second because this file is not gitignored: a bare name travels to another checkout and an absolute one does not. If you would rather the entry stay portable, put okragged on your `PATH` and re-run `okragged agent --register`. For a published package, use `pipx install okragged`, which requires the distribution milestone first. From a checkout today, use `pipx install --editable <root>`; this exposes the console script without putting okragged's dependencies into shared site-packages.
 
 Four tools, of which the one that writes is offered only to an instance started with `--write`:
 
@@ -449,7 +449,7 @@ The revision model that *many remote* writers need — an expected revision on e
 
 ## Driving it from Python
 
-Everything the CLI does is a function call, and `okragged` exposes the same set under one import. Nine functions, each taking a project directory or a `Config`:
+Everything the CLI does is a function call, and `okragged` exposes the same set under one import. Ten functions, each taking a project directory or a `Config`:
 
 ```python
 import okragged
@@ -483,6 +483,22 @@ The wrappers return what the underlying functions return. There is no `Bundle` o
 
 `import okragged` costs nothing and prints nothing — every import inside it is deferred, because `markitdown` announces a missing ffmpeg on import and a library that writes to your stderr to be imported is broken.
 
+### Example: serving it from Python
+
+`create_app` isn't in the curated surface above — it needs the `api` extra, and it doesn't return a summary; it blocks for as long as the server runs, the same as `okragged serve` does. Import it from `okragged.api` and drive `uvicorn` yourself:
+
+```python
+import uvicorn
+from okragged import configure
+from okragged.api import create_app
+
+cfg = configure("~/corpus")
+app = create_app(cfg)  # raises RuntimeError without `pip install -e ".[api]"`
+uvicorn.run(app, host="127.0.0.1", port=8000)
+```
+
+There's no read/write switch here — the HTTP API is unconditionally read-only, the same four endpoints `okragged serve` exposes ([The graph view](#the-graph-view--okragged-serve)). The read/write/spend distinction belongs to `okragged mcp` (`--write`, `--spend`), not to `serve`.
+
 ---
 
 ## Important files
@@ -492,7 +508,7 @@ The wrappers return what the underlying functions return. There is no `Bundle` o
 | File | Purpose |
 |---|---|
 | `src/okragged/__init__.py` | The [public Python API](#driving-it-from-python) and nothing else: ten functions that resolve `str \| Path \| Config` and delegate to the function the CLI calls, plus `Config` and `Progress`. Every import in it is deferred, so importing the package is silent and cheap. |
-| `src/okragged/cli.py` | Typer CLI: `build`, `index`, `check`, `agent`, `extract`, `doctor`. Formatting and exit codes. |
+| `src/okragged/cli.py` | Typer CLI: `build`, `index`, `serve`, `check`, `agent`, `mcp`, `extract`, `doctor`. Formatting and exit codes. |
 | `src/okragged/pipeline.py` | Orchestrates the stages; assembles `Concept` objects from synthesis results. Owns `Progress`, the progress callback's event, the lock the run is wrapped in, where each source's commit falls, and the `contract` flag that decides whether layer 3 is regenerated after them. |
 | `src/okragged/ledger.py` | The idempotency ledger, `.okragged/manifest.json`: what each source hashed to, which concepts it produced, and what okragged last wrote into each. Sidecar state — losing it costs a re-ingest, never correctness, so every read path degrades to "no record" rather than raising. Not `okf/manifest.py`, which is the *okflint* manifest. |
 | `src/okragged/lock.py` | One writer per project, `.okragged/lock.json`: exclusive creation, a record naming its holder, and the liveness test that lets a dead holder's lock be reclaimed without a human. Never taken by a read path. |
@@ -536,7 +552,7 @@ The wrappers return what the underlying functions return. There is no `Bundle` o
 |---|---|---|
 | `okragged.toml` | yes | Configuration. See below. |
 | `.env.example` | yes | Template for the API key. Copy to `.env`. |
-| `.env` | **no** (gitignored) | Your API key. Read only by `build` and `doctor`. |
+| `.env` | **no** (gitignored) | Your API key. Read by CLI entry points that load credentials, including `build`, `doctor`, and `mcp --spend`. |
 | `sources/` | **no** (gitignored) | Layer 1 — raw input, yours to supply. **Immutable**; okragged reads, never writes. Not committed: a real corpus is your own material and tends to carry third-party names that do not belong in a permanent history. |
 | `bundle/` | **no** (gitignored) | Layer 2 — the OKF product. The deliverable, portable with no okragged dependency — but concept ids derive from model-written titles, so every rebuild renames the whole tree and the diff is unreadable. Commit an example bundle under `examples/` instead, refreshed on purpose. |
 | `okf-base.yaml` | **no** (gitignored) | Generated okflint manifest, rewritten with the bundle. |
@@ -619,8 +635,6 @@ Nothing skips on a normal install. okflint is resolved beside the running interp
 
 ---
 
-## Platform notes
-
 ## Encoding policy
 
 Five separate bugs shipped during M1, all the same defect: **trusting a platform default at an I/O boundary.** Windows defaults to cp1252, not UTF-8. So the rule is absolute, with no per-call-site judgement:
@@ -649,7 +663,7 @@ That fourth one was masked in development: Claude Code sets `PYTHONIOENCODING=ut
 
 ---
 
-## Not implemented yet
+## Roadmap and open work
 
 Full roadmap with exit criteria in [`DESIGN.md` §13](DESIGN.md#13-milestones).
 
@@ -670,14 +684,14 @@ Run against the 3-PDF Spanish corpus: 18 concepts embedded with `gemini-embeddin
 
 ### M4 — done
 
-`agent/AGENTS.md`, regenerated at the end of every build, plus the stdio MCP server and the `.mcp.json` entry that registers it on request. Verified against the same 3-PDF corpus by spawning the server over stdio exactly as `.mcp.json` does, with no embedding credential: `search` answered by traversal and named the right concept first, `read_concept` returned it whole, `lint` reported 18 concepts and okflint exit 0, and it said it had no ghost edges *because `okragged index` has not run* rather than because there are none.
+`agent/AGENTS.md`, regenerated at the end of every build, plus the stdio MCP server and on-request `.mcp.json` registration. Verified against the same 3-PDF corpus by spawning the server over stdio exactly as `.mcp.json` does, with no embedding credential: `search` answered by traversal and named the right concept first, `read_concept` returned it whole, `lint` reported 18 concepts and okflint exit 0, and it said it had no ghost edges *because `okragged index` had not run* rather than because there were none.
 
 ### Next
 
 - **Calibrate τ on a second corpus.** The first one saturated the similarity space, which rules the default out without ruling anything in. A corpus spanning more than one topic is what distinguishes "raise τ" from "lower k" from "make the threshold relative".
 - **`POST /api/ingest` + SSE progress.** Deferred with M3, not cancelled. It needed a job registry and progress events `pipeline.ingest` did not emit; [the events landed with the Python API](#driving-it-from-python), the job registry did not.
 - **Grounded answers** (M11, proposed). `search` normalizes by the best hit, so its top result always scores `1.000` — including for a question the bundle cannot answer. Absolute confidence with an abstention floor, offline citation checking, and trust tiers carried into results.
-- **Distribution** (M5, all six pieces built). The rename and the console script have landed, and so has the half that makes a foreign checkout a consumer: `okragged mcp --project <dir>`, a `.mcp.json` entry naming nothing but a command on `PATH`, and the contract served as `okragged://contract` / `okragged://index` rather than as a file only the producer can open. So have `add_source` replacing `ingest` on the MCP surface, [the Python API](#driving-it-from-python), and [the lock and per-source commit](#one-writer-and-a-commit-per-source) that three writers to one bundle require. What is left is the exit criterion itself — a session driven from a checkout that is not the producer's, which nobody has had yet.
+- **Distribution** (M5, implementation in place; exit criterion open). The rename and the console script have landed, and so has the half that makes a foreign checkout a consumer: `okragged mcp --project <dir>`, a `.mcp.json` entry naming nothing but a command on `PATH`, and the contract served as `okragged://contract` / `okragged://index` rather than as a file only the producer can open. So have `add_source` replacing `ingest` on the MCP surface, [the Python API](#driving-it-from-python), and [the lock and per-source commit](#one-writer-and-a-commit-per-source) that three writers to one bundle require. What is left is the exit criterion itself — a session driven from a checkout that is not the producer's, which nobody has had yet.
 - **An identity, and a spend scope** (M6, the security layer — 3 of 5 items built). What exists: `okragged mcp` serves read-only and reads no `.env` unless asked, and `--write --spend` gives you back an `add_source` that authors the concept in the same call. What that mode rests on is only that *you* launched it, so caller and payer are the same person. What is missing is the half that makes the question answerable rather than moot — an identity to attribute a call to, and a spend scope with a rate limit — because a token a caller presents is not an identity when the caller owns the process, and a counter beside the bundle is one he can delete. Those bind where there is a channel and a host holding the only key.
 - **BigQuery/blob sources.** M9.
 
