@@ -1,19 +1,19 @@
-"""The read side of DESIGN §11, over HTTP.
+"""The read side of the HTTP API (DESIGN.md §11).
 
-Four endpoints, every one of them offline and read-only. Each wraps capability
-that already exists — `agent/query.py`, `agent/lint.py`, and the `graph.json`
-`okragged index` wrote — so `search` and `lint` cannot drift from the MCP tools
-that answer the same questions (§10). Nothing here writes anywhere.
+Four endpoints, every one offline and read-only. Each wraps capability that
+already exists — `agent/query.py`, `agent/lint.py`, and the `graph.json`
+`okragged index` wrote — so `search` and `lint` can't drift from the MCP
+tools answering the same questions (DESIGN.md §10). Nothing here writes
+anywhere.
 
-`POST /api/ingest` and its SSE progress stream are the two endpoints §11 lists
-that are not here. They needed two things the pipeline did not have: progress
-events, which now exist — `ingest` takes a `progress` callable and reports each
-stage as it reaches it — and a job model, which does not. The graph view needs
-neither, so `ingest` stays on the CLI and the MCP server until something asks
-for it over HTTP.
+`POST /api/ingest` and its SSE progress stream are the two endpoints §11
+describes that aren't built here yet: they'd need a job model to track a run
+in progress, which doesn't exist (the progress *events* do — `ingest` already
+takes a `progress` callable). The graph view needs neither, so `ingest` stays
+on the CLI and the MCP server for now.
 
-FastAPI is an optional extra for the same reason the MCP SDK is — producing and
-validating a bundle needs neither.
+FastAPI is an optional extra for the same reason the MCP SDK is: producing
+and validating a bundle needs neither.
 """
 
 from __future__ import annotations
@@ -32,15 +32,12 @@ from ..vectors import GRAPH_NAME
 STATIC_DIR = Path(__file__).parent / "static"
 """The built frontend, mounted at `/` when it exists.
 
-**Resolved from the package, never from the project root.** It used to be
-`config.project_root / "web/dist"` — inside the *user's corpus directory*, beside
-their `sources/`, which is only correct when the project root happens to be this
-checkout. An installed user who built the frontend would have had to copy it next
-to their own corpus to be served it. That is the defect class §10 and M5 exist to
-remove: a path that means something only inside the producer's tree. Vite's
-`outDir` points here, so one build serves the checkout and the wheel alike.
+Resolved from the package, never from the project root — a path relative to
+the project root would only be correct for this checkout; an installed
+user's corpus has no `web/dist` next to it. Vite's `outDir` points here
+instead, so one build serves both the checkout and the installed wheel.
 
-In dev it is Vite that serves the app and proxies `/api` here, so this staying
+In dev, Vite serves the app itself and proxies `/api` here, so this staying
 absent is normal.
 """
 
@@ -92,7 +89,7 @@ def create_app(config: Config):
 
     @app.get("/api/search")
     def search(q: str, k: int = 8) -> dict[str, Any]:
-        """Pointers, never bodies — the same two paths as the MCP tool (§10)."""
+        """Pointers, never bodies — the same two paths as the MCP tool (DESIGN.md §10)."""
         result = run_search(config, q, k)
         return {
             "path": result.path,

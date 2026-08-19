@@ -143,19 +143,17 @@ def agent(
         )
         raise typer.Exit(2)
     written = write_contract(cfg)
-    # asked for, never assumed: .mcp.json is the machine's MCP config, shared with
-    # every other server registered there, and it is not derived from the bundle.
-    # The switches go in when they were asked for in the same breath -- nothing is
-    # inferred, and without them the entry stays bare and the server read-only
+    # asked for, never assumed: .mcp.json is the machine's MCP config, shared
+    # with every other server registered there. The switches land only when
+    # asked for in the same breath -- without them the entry stays bare and read-only
     if register:
         written.append(agent_register(cfg, write=write, spend=spend))
     for path in written:
         typer.secho(f"  wrote {path.relative_to(cfg.project_root)}", fg="green")
     if register:
-        # said either way: the bare entry's bytes did not change when the switches
-        # arrived, their meaning narrowed, so an operator registering for their own
-        # use would otherwise lose add_source and the embedding search path with
-        # nothing to tell them
+        # said either way: the switches narrow what the same bare entry means,
+        # so an operator registering for their own use needs to see what they
+        # got, not just what they typed
         typer.secho(f"  the entry grants: {_granted(write, spend)}", fg="bright_black")
         if not (write and spend):
             typer.secho(

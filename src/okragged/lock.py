@@ -1,24 +1,23 @@
-"""One writer per project — `.okragged/lock.json` (DESIGN §5, §13 M5 item 6).
+"""One writer per project — `.okragged/lock.json` (DESIGN.md §5).
 
-After M5 there are three writers to one directory: `okragged build`, the MCP
-server's `add_source`, and the Python API. Interleaving them is worse here than
-it sounds, because concept ids derive from model-written titles: two runs do not
-overwrite each other's names, they write two different trees into one directory.
+Three things can write to a project directory: `okragged build`, the MCP
+server's `add_source`, and the Python API. Letting two of them interleave is
+worse than an ordinary race here, because concept ids are derived from
+model-written titles — two runs don't overwrite each other's names, they each
+write a different tree into the same directory.
 
-The mechanism is exclusive creation. `open(path, "x")` fails when the file
-already exists, it fails atomically, and it does so on both platforms — `fcntl`
-does not, and Windows is the primary one.
+The locking mechanism is exclusive file creation (`open(path, "x")`): it fails
+atomically when the file already exists, the same way on Windows and POSIX —
+`fcntl` doesn't, and Windows is the primary platform here.
 
-What the file *holds* is the half that makes it usable. A lock nobody can clear
-is a worse failure than the one it prevents, so the record names its holder and a
-run that finds a dead one reclaims it rather than asking a human to delete a
-file. Sidecar state, so an unreadable record means "no holder" rather than an
-exception.
+The lock file records who holds it, so a run that finds a dead holder's lock
+can reclaim it automatically instead of asking a human to delete a file by
+hand. It's sidecar state, so an unreadable record just means "no holder", never
+a crash.
 
-**Read paths never take it.** `search`, `read_concept`, `lint`, `check` and
-`serve` keep answering while a write is in flight: reading a directory of
-markdown files needs no permission from anyone, and a reader that could be
-refused by a build would undo the point of the format.
+**Read paths never take this lock** — `search`, `read_concept`, `lint`, `check`
+and `serve` keep answering while a write is in flight, since reading markdown
+files needs nobody's permission.
 """
 
 from __future__ import annotations
@@ -36,13 +35,12 @@ LOCK_NAME = "lock.json"
 VERSION = 1
 
 FOREIGN_STALE_SECONDS = 6 * 60 * 60
-"""How old a lock held by *another machine* may get before it is reclaimed.
+"""How old a lock held by *another machine* may get before it's reclaimed.
 
-Only ever used for a project on a network share, where the pid in the record
-names a process on a host this one cannot ask about. Age is a poor test — it is
-the reason a long build could be reclaimed under itself — so it is the fallback
-and never the rule, and it is generous enough that the run it would misjudge is
-one that has already been running for a working day.
+Only applies on a network share, where the pid names a process on a host this
+one can't query directly. Age is a poor liveness test — a long build could get
+reclaimed out from under itself — so it's the fallback, not the rule, and
+generous enough that a wrongly-reclaimed run has already run a full workday.
 """
 
 
@@ -67,20 +65,18 @@ class Held:
 
     holder: Holder
     note: str = ""
-    """Empty unless a dead holder's lock was reclaimed. Worth reporting: it says
-    a previous run died, which is the fact behind whatever else looks wrong."""
+    """Empty unless a dead holder's lock was reclaimed — worth surfacing, since
+    it explains why anything else looks stale."""
 
 
 @contextmanager
 def hold(sidecar_root: Path, operation: str) -> Iterator[Held]:
-    """Hold the project for one writer, or raise `LockHeld` naming the other one.
+    """Holds the project for one writer, or raises `LockHeld` naming the other one.
 
-    **Not reentrant, deliberately.** `_alive` reads our own pid as live, because
-    two `add_source` calls in one MCP server process are exactly what this exists
-    to serialize. So nesting two `hold`s in one process self-refuses with a
-    message naming its own pid — never wrap a caller of `pipeline.ingest` or
-    `vectors.index` in another one. The deferred `POST /api/ingest` job model
-    (§11) is the obvious future caller that would be tempted.
+    Not reentrant: nesting two `hold()` calls in the same process self-refuses,
+    since `_alive` treats our own pid as live on purpose — that's what serializes
+    two `add_source` calls inside one MCP server process. Never wrap a call to
+    `pipeline.ingest` or `vectors.index` in another `hold()`.
     """
     path = sidecar_root / LOCK_NAME
     holder = Holder(
@@ -115,8 +111,8 @@ def _claim(path: Path, holder: Holder) -> str:
                     "`check` do not take the lock."
                 ) from None
             if attempt == 2:
-                # somebody else reclaimed it in the gap; refusing is right, and
-                # a loop here would be a race with no upper bound
+                # somebody else reclaimed it in the gap; retrying would race with
+                # no upper bound
                 raise LockHeld(
                     "another okragged run claimed this project while a dead "
                     f"holder's lock was being cleared: {path}"
@@ -131,11 +127,9 @@ def _claim(path: Path, holder: Holder) -> str:
 
 
 def _release(path: Path, holder: Holder) -> None:
-    """Drop the lock, unless it is no longer ours.
-
-    A run whose lock was reclaimed while it was still going must not delete the
-    lock of whoever reclaimed it — that would leave two writers with no lock at
-    all, which is worse than the state this whole file exists to prevent.
+    """Drops the lock, unless it's no longer ours — a run whose lock got
+    reclaimed while it was still going must not delete the reclaimer's lock,
+    or two writers end up with none at all.
     """
     current = _read(path)
     if current is None or current == holder:
@@ -165,10 +159,9 @@ def _alive(holder: Holder) -> bool:
     if holder.host != socket.gethostname():
         return not _older_than(holder.started, FOREIGN_STALE_SECONDS)
     if holder.pid == os.getpid():
-        # us. Refusing is right: two `add_source` calls in one MCP server process
-        # are the case this exists for, and treating our own pid as dead would let
-        # both through. It also reads a recycled pid as live, which costs one
-        # refused run with the pid in the message and fixes itself on the next.
+        # us — refusing is the point (see hold()'s docstring). This also reads a
+        # recycled pid as live, which costs one refused run and self-corrects
+        # next time.
         return True
     return _process_alive(holder.pid)
 
@@ -186,9 +179,8 @@ def _older_than(started: str, seconds: float) -> bool:
 def _process_alive(pid: int) -> bool:
     """Whether `pid` is still running on this host.
 
-    Deliberately not `os.kill(pid, 0)`: on Windows that is not a no-op signal
-    probe, it calls `TerminateProcess` with the signal as the exit code, so the
-    liveness test would kill the process it asked about.
+    Not `os.kill(pid, 0)`: on Windows that calls `TerminateProcess` rather than
+    probing, so the liveness check would kill the process it's asking about.
     """
     if pid <= 0:
         return False
@@ -221,9 +213,8 @@ def _windows_process_alive(pid: int) -> bool:
         code = wintypes.DWORD()
         if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
             return True  # cannot tell: refusing a build beats corrupting one
-        # a process that exited with 259 reads as alive. The cost is one refused
-        # run with a message naming the pid; the cost of the other error is two
-        # writers in one bundle
+        # a process that happened to exit with code 259 reads as alive — cheaper
+        # than misjudging a live one as dead
         return code.value == STILL_ACTIVE
     finally:
         kernel32.CloseHandle(handle)

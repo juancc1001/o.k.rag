@@ -1,4 +1,4 @@
-"""The stdio MCP server (DESIGN §10).
+"""The stdio MCP server (DESIGN.md §10).
 
 Tools over capability that already exists: `search` and `read_concept` from
 `agent/query.py`, `lint` from `agent/lint.py`, and `add_source` from
@@ -18,10 +18,11 @@ difference reaches the client as a different description rather than as a
 different result: with `write` alone the tool records prose and the concept waits
 for an `okragged build`, and with both it authors the concept as well. What
 stands behind the spending mode is only that the operator launched the instance
-that way, which is a claim about who is paying and not an authorization — see
-`agent/write.py`, and §13 M8 for where an identity starts to mean something.
+that way — a claim about who is paying, not an authorization; a real identity
+and spend scope are future work, for once there's a channel with somebody else
+on the far end (see `agent/write.py`).
 
-**There is no `ingest` tool, and its absence is the point** (§13 M5). A full
+**There is no `ingest` tool, and its absence is the point.** A full
 sweep runs `_deprecate_vanished`, so a recipient holding the bundle and the
 sidecar but no corpus would have every concept marked `deprecated` — which is
 exactly what you would ship to make search work. Removing the tool closes that
@@ -66,8 +67,8 @@ INSTRUCTIONS = (
     f"`{INDEX_URI}`. `search` returns pointers, never bodies; `read_concept` returns a "
     "whole file, which is the unit of knowledge here."
 )
-"""Asserted across a process boundary, so it names no path: the consumer reading
-it works in its own tree and has none of this one's (DESIGN §13 M5)."""
+"""Asserted across a process boundary, so it names no path — the consumer
+reading it works in its own tree and has none of this one's."""
 
 
 def build_server(config: Config, *, write: bool = False, spend: bool = False):

@@ -59,7 +59,7 @@ OUTLINE_SCHEMA = {
     "additionalProperties": False,
 }
 
-# §4.3 granularity bounds, in words of source text.
+# Section-granularity bounds from DESIGN.md §4.3, in words of source text.
 MIN_SECTION_WORDS = 150
 MAX_CONCEPT_WORDS = 1200
 
@@ -140,7 +140,7 @@ class SynthResult:
     output_tokens: int
     cache_read_tokens: int
     candidate_links: list[str] = field(default_factory=list)
-    """Ids synthesis thought this relates to. A hint for link-weave (§6.5)."""
+    """Ids synthesis thought this relates to — a hint for link-weave (DESIGN.md §6.5)."""
 
 
 @dataclass

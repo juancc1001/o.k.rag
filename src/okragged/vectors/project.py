@@ -1,14 +1,14 @@
-"""Embeddings -> 2D (DESIGN §6.9).
+"""Embeddings -> 2D (DESIGN.md §6.9).
 
 UMAP with a fixed `random_state`, falling back to PCA below 15 concepts (UMAP is
 unstable at that size) or when `umap-learn` is not installed — it pulls numba, so
 it is an optional extra rather than a dependency.
 
-Risk 5 (layout instability) is only half-mitigated by the seed: a refit with new
-points can still move the whole layout. `umap.transform()` on a persisted fitted
-model would place new points into the existing one instead, which is the fix —
-but it requires pickling the fitted model into the sidecar and a `reindex --full`
-to refit deliberately, and neither is built here.
+Layout instability (DESIGN.md §12 Risk 5) is only half-mitigated by the seed: a
+refit with new points can still move the whole layout. The fix would be
+`umap.transform()` on a persisted fitted model, placing new points into the
+existing one instead — but that needs pickling the fitted model into the
+sidecar plus a deliberate refit command, and neither is built here.
 """
 
 from __future__ import annotations

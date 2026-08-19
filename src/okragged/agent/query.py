@@ -1,35 +1,31 @@
-"""The query half of the agent contract: `search` and `read_concept` (DESIGN §10).
+"""The query half of the agent contract: `search` and `read_concept` (DESIGN.md §10).
 
-`search` returns pointers — id, title, description, score — and never a body. The
-agent decides what to read, which is the progressive-disclosure path of §7 rather
-than chunk retrieval.
+`search` returns pointers — id, title, description, score — never a body. The
+agent decides what to read (progressive disclosure, DESIGN.md §7), not chunk
+retrieval.
 
-Two ranking paths, one result shape. Concept vectors are computed at build time,
-but embedding a *query* is a read-time model call and needs a credential, and the
-M4 exit criterion is a session that has none (§13). So the embedding path is an
-upgrade: without stored vectors or without a credential, `search` falls back to
-traversing what the bundle already says about itself (§6.8).
+Two ranking paths, one result shape. Concept vectors are computed at build
+time, but embedding a *query* is a read-time model call needing a credential
+— so the embedding path is an upgrade: without stored vectors or without a
+credential, `search` falls back to traversing what the bundle already says
+about itself (DESIGN.md §6.8).
 
-**A concept the stored vectors do not cover is ranked anyway, and this is not a
-nicety.** The vectors come from `okragged index`, a separate command, so any
-concept written since the last one has no row in the matrix — and kNN over that
-matrix cannot rank a candidate that is not in it. Before, the two fallbacks were
-"no vectors at all" and "no credential", both of which describe the *path* being
-unavailable; a matrix that exists and is merely incomplete matched neither, so
-the embedding path answered, ranked the concepts it could see, and returned an
-empty `note`. The result was a search that had a matching concept in front of it
-and reported eight others with no signal that anything had been skipped, which is
-worse than an error: a caller concludes the bundle does not answer, or answers
-from the neighbours. So the concepts without a vector are ranked by traversal and
-merged in, and the note says how many and what fixes it.
+**A concept the stored vectors don't cover is ranked anyway — this isn't a
+nicety.** Vectors come from `okragged index`, a separate command, so any
+concept written since the last run has no row in the matrix, and kNN can't
+rank a candidate that isn't in it. Silently answering from only the covered
+concepts and returning an empty `note` would be worse than an error: the
+caller would conclude the bundle has no answer, or answer from the wrong
+neighbours. So uncovered concepts are ranked by traversal instead and merged
+in, and `note` says how many and what fixes it.
 
-**The two rankings are merged without being compared.** A cosine similarity and a
-normalized term-overlap score are different quantities, and the honest merge
-alternates the two lists by rank rather than sorting them together as though one
-number meant the same thing on both sides. The note says the scores are not
-comparable, and the traversal side contributes only concepts the query actually
-matched — `_by_traversal` drops a zero score, so an unrelated new concept is not
-promoted into every result for having been written recently.
+**The two rankings are merged without being compared.** A cosine similarity
+and a normalized term-overlap score are different quantities, so the merge
+alternates the two lists by rank rather than sorting them together as if one
+number meant the same thing on both sides. `note` says the scores aren't
+comparable, and the traversal side only contributes concepts the query
+actually matched — an unrelated new concept isn't promoted into every result
+just for having been written recently.
 """
 
 from __future__ import annotations
@@ -200,8 +196,9 @@ def _by_traversal(query: str, k: int, concepts: list[Concept]) -> list[Hit]:
     """Rank over what the bundle says about itself.
 
     Every index entry is its target's own `title` and `description` verbatim
-    (§6.6), so ranking those is ranking the indexes; the body is the same match
-    at lower weight, and the authored links carry a hit to its neighbours.
+    (DESIGN.md §6.6), so ranking those is ranking the indexes; the body is the
+    same match at lower weight, and the authored links carry a hit to its
+    neighbours.
     """
     terms = list(dict.fromkeys(_terms(query)))
     if not terms:

@@ -140,3 +140,13 @@ Considered while planning the hosted server and **deliberately left here.** §13
 **Why it is staged rather than scheduled.** §13 M7 makes `pip install okragged` real and supersedes this entirely. Until then the producer cannot run M5's own exit criterion, which opens with that command.
 
 **Gate.** Superseded by M7. Worth doing before then only if the absolute entry becomes a nuisance.
+
+---
+
+## 12. One command to build and serve the graph view
+
+Today the graph view is a three-step manual dance (README, "The graph view — `okragged serve`"): `npm install`, `npm run build` in `web/`, then `okragged serve`. The request was `serve --all` — build the view first if `api/static/` is missing or stale, then serve — plus a standalone subcommand that does just the build, so the two share one helper.
+
+**Why it is not built now.** Both actions shell out to `npm`, which exists only as source in `web/`, inside a checkout — an installed wheel ships `api/static/` prebuilt (§13 M7) and has no `web/` to build at all. So this is a checkout-only developer convenience, not something an installed user benefits from, and any subprocess call it adds has to follow the encoding policy `tests/test_encoding.py` enforces by AST — the same shape `okf/validate.py::_okflint` already uses for invoking okflint.
+
+**Gate.** Flagged by the user (2026-08-18) for `DESIGN.md` §13 M6, though the feature itself has nothing to do with M6's subject — identity and who may spend. Recorded here rather than forced into that milestone's numbered list; promote into whichever milestone is open when it's picked up.

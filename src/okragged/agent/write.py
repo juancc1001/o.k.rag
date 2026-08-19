@@ -1,63 +1,58 @@
-"""The write half of the agent contract: `add_source` (DESIGN §10, §13 M5, M6).
+"""The write half of the agent contract: `add_source` (DESIGN.md §10).
 
-Knowledge worth recording is not always in a document — two tables are related in
-a way no paper states, and someone knows it. This is how that enters the bundle,
-and it enters as a *source*: the assertion is written into the corpus, and the
-concept is authored from it.
+Knowledge worth recording isn't always in a document — two tables are
+related in a way no paper states, and someone knows it. This is how that
+enters the bundle, as a *source*: the assertion is written into the corpus,
+and the concept is authored from it.
 
-A tool that wrote a concept directly would be shorter and would break the
-invariant everything else rests on — **every concept traces to a source** (§4.2).
-It would either fabricate provenance or omit it, and it would appear in the
-bundle while being absent from the ledger, so what the ledger describes and what
-the bundle contains would stop agreeing — which is the assumption stale-output
-cleanup, deprecation and human-edit detection are all built on.
+A tool that wrote a concept directly would be shorter, but it would break the
+invariant everything else rests on: **every concept traces to a source**
+(DESIGN.md §4.2). It would either fabricate provenance or omit it, appearing
+in the bundle while absent from the ledger — breaking the assumption that
+stale-output cleanup, deprecation, and human-edit detection are all built on.
 
-**Recording and synthesizing are separate, and which of them happens is a
-property of the instance rather than of the call.** Without `synthesize` — what an
-`okragged mcp --write` server offers — this writes the file and stops, and the
-concept is authored by the next `okragged build` on the operator's machine with
-the operator's key. With it, which only `--write --spend` reaches, the same call
-ingests that one path and returns the concepts it authored.
+**Recording and synthesizing are separate, and which one happens is a
+property of the instance, not of the call.** Without `synthesize` — what an
+`okragged mcp --write` server offers — this writes the file and stops; the
+concept is authored later by `okragged build`, on the operator's machine
+with the operator's key. With it, reachable only via `--write --spend`, the
+same call ingests that one path and returns the concepts it authored.
 
-**The guard on the synthesizing mode is that the operator launched the instance
-with both switches, and it is nothing more than that.** There is no identity here
-and no rate limit. A caller who owns the process could present any token he was
-asked for and delete any counter kept beside the bundle, so the only thing the
-switches establish is that whoever configured this server is the one paying. That
-holds while the caller and the payer are the same person — a producer driving his
-own agent — and stops holding the moment there is a channel with somebody else on
-the far end, which is where an identity and a scope belong (§13 M8).
+**The guard on the synthesizing mode is only that the operator launched the
+instance with both switches — nothing more.** There's no identity here and
+no rate limit: a caller who owns the process could present any token it's
+asked for and delete any counter kept beside the bundle. So the switches only
+establish that whoever configured this server is the one paying. That holds
+while the caller and the payer are the same person — a producer driving
+their own agent — and stops holding the moment somebody else is on the far
+end of a channel, which is where an identity and a spend scope belong instead.
 
-The run is a partial one over the file just written, which suppresses the
-vanished-source sweep (§6.1): safe by construction rather than by a check.
+The run is a partial one over the file just written, which safely skips the
+vanished-source sweep by construction rather than by a check (that sweep
+only runs over a full scan, DESIGN.md §6.1).
 
-**A synthesizing call also refreshes the vectors, and that is the same decision
-rather than a second one.** `--spend` says the operator's credential may be used;
-a concept nobody can find is not worth what the synthesis cost. Concept vectors
-come from `okragged index`, a command nothing on this surface can trigger, so
-without this the call would author a concept that `search`'s embedding path
-cannot rank until a human runs that command — the write path and the read path on
-different clocks. `embed_bundle` reuses a vector whose body hash is unchanged, so
-the refresh costs one embedding call, and the projection and the graph are redone
-locally because `lint` reports a `graph.json` that no longer describes the bundle
-and the view reads its positions from there. The credential is `[vectors]`'s,
-configured apart from `[synth]`'s and needed even where one variable holds both,
-which is why its absence is reported separately and why `search` degrades rather
-than the call failing. `index` takes the project lock itself and `hold` is not
-reentrant, so this runs after `ingest` has released it, never inside.
+**A synthesizing call also refreshes the vectors, as the same decision rather
+than a second one.** `--spend` says the operator's credential may be used,
+and a concept nobody can find isn't worth what the synthesis cost. Without
+this refresh, the call would author a concept that `search`'s embedding path
+can't rank until a human separately runs `okragged index` — the write path
+and the read path on different clocks. The refresh reuses any vector whose
+body hash is unchanged, so it costs one embedding call, and the graph is
+regenerated locally since `lint` and the view both read it. `index` takes the
+project lock itself, and locks aren't reentrant, so this runs after `ingest`
+has released it, never inside.
 
-**Nothing after the file is written may raise.** The prose is in the corpus by
-then, and an exception crossing the wire would tell the caller their assertion was
-lost while it sat in `sources/` waiting for a build that will pick it up. A
-missing credential and a lock another writer holds are therefore reported in the
-result. And the credential a *synthesis* needs is `[synth]`'s, which is not the
-one `search` spends even where a single variable happens to hold both — so the
-message names which is missing rather than saying a key is.
+**Nothing after the file is written may raise.** The prose is already in the
+corpus by then, so an exception crossing the wire would wrongly tell the
+caller their assertion was lost. A missing credential or another writer's
+lock are reported in the result instead — and since synthesis needs the
+`[synth]` credential while `search` spends `[vectors]`'s, the message names
+which one is missing rather than just saying "no credential".
 
-Writing the file needs no lock: the path is generated per assertion, and
-identical bytes reuse the path they are already at rather than racing for it. The
-lock and the staged emit arrive with `ingest` (§6.6), so two synthesizing calls
-serialize on the bundle rather than on the source file.
+Writing the file itself needs no lock: the path is generated per assertion,
+and identical bytes reuse the path they're already at rather than racing for
+it. The lock and the staged emit arrive with `ingest` (DESIGN.md §6.6), so
+two synthesizing calls serialize on the bundle, not on the source file.
 
 Not imported by `agent/__init__.py`, for the same reason `server` is not: it
 imports `pipeline`, which imports that package to regenerate the contract.

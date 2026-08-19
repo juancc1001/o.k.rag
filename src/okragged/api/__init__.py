@@ -1,4 +1,4 @@
-"""The HTTP API (DESIGN §11).
+"""The HTTP API (DESIGN.md §11).
 
 `server` is not imported here and neither is FastAPI: the app is built by
 `create_app`, which imports the optional extra itself, so importing this package

@@ -67,18 +67,20 @@ class _Node:
 
 
 def write_indexes(bundle_root: Path, okf_version: str, title: str) -> list[Path]:
-    """Generate `index.md` for every directory in the bundle.
+    """Generates `index.md` for every directory in the bundle.
 
-    Read off disk rather than accumulated during the run, so a directory whose
-    concepts were skipped this time is indexed exactly like one that was just
-    written, and an entry can never disagree with the concept it points at:
-    every label and description is the target's own frontmatter.
+    Reads the bundle off disk rather than accumulating entries during the run,
+    so a directory whose concepts were skipped this time is indexed exactly
+    like one just written — every label and description comes straight from
+    the target concept's own frontmatter, so an entry can never disagree with it.
 
-    Only the bundle root carries frontmatter (E3).
+    Only the bundle root's `index.md` carries frontmatter; any other one that
+    does is nonconformant (error E3).
     """
     nodes = _tree(inventory(bundle_root))
     written: list[Path] = []
-    # deepest first (§6.6 bottom-up): a parent entry states what is below it
+    # deepest directories first: a parent's index states how many concepts live
+    # below it, so children have to be counted before it renders
     for key in sorted(nodes, key=lambda k: (-k.count("/"), k)):
         if key and not nodes[key].concepts and not nodes[key].subdirs:
             continue
@@ -189,13 +191,12 @@ def _label(concept_id: str) -> str:
 
 
 def _atomic_write(path: Path, text: str) -> None:
-    """Temp file, flush to disk, rename.
+    """Writes via temp file, fsync, then rename.
 
-    The fsync is what makes this usable as a commit *payload*. A staged concept is
-    published by `staging._apply` on the strength of a pending record that is
-    itself fsynced, so without this the record could outlive the content it names
-    and the replay would place a truncated concept. Model calls dominate a run by
-    orders of magnitude, so the cost does not show.
+    The fsync matters because a staged concept gets published later by
+    `staging._apply`, on the strength of a pending record that's also fsynced —
+    without this, the record could outlive the content it names and replay a
+    truncated concept. The extra cost is invisible next to a model call.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
