@@ -1,9 +1,25 @@
 """The stdio MCP server (DESIGN §10).
 
-Four tools over capability that already exists: `search` and `read_concept` from
-`agent/query.py`, `lint` from `agent/lint.py`, `add_source` from `agent/write.py`
-— which goes through `pipeline.ingest`, whose `_finalize` runs in a `finally`, so
-a client that disconnects mid-run cannot strand model calls already paid for.
+Tools over capability that already exists: `search` and `read_concept` from
+`agent/query.py`, `lint` from `agent/lint.py`, and `add_source` from
+`agent/write.py`, which writes one prose file into `sources/`.
+
+**Two switches, both off by default, and each is a property of the instance
+rather than of a call.** `write` decides whether `add_source` is registered at
+all, and `spend` decides whether the producer's `.env` is read. Neither can be
+turned on by an ambient environment variable: an instance is what the operator
+who wrote its `.mcp.json` entry asked for, and nothing else. A read-only
+instance omits the writing tool rather than offering one that refuses — clients
+enumerate tools and plan from what they see, so a tool that is always going to
+fail makes a client plan a dead end.
+
+**Together the two switches decide which `add_source` this is**, and the
+difference reaches the client as a different description rather than as a
+different result: with `write` alone the tool records prose and the concept waits
+for an `okragged build`, and with both it authors the concept as well. What
+stands behind the spending mode is only that the operator launched the instance
+that way, which is a claim about who is paying and not an authorization — see
+`agent/write.py`, and §13 M8 for where an identity starts to mean something.
 
 **There is no `ingest` tool, and its absence is the point** (§13 M5). A full
 sweep runs `_deprecate_vanished`, so a recipient holding the bundle and the
@@ -54,7 +70,7 @@ INSTRUCTIONS = (
 it works in its own tree and has none of this one's (DESIGN §13 M5)."""
 
 
-def build_server(config: Config):
+def build_server(config: Config, *, write: bool = False, spend: bool = False):
     server = _mcp_server()(name="okragged", instructions=INSTRUCTIONS)
 
     @server.resource(
@@ -84,6 +100,14 @@ def build_server(config: Config):
 
         A way in, not a substitute for the indexes: read the `okragged://index`
         resource first, then read what either one points at.
+
+        `path` says which ranking answered: `embeddings`, `index-traversal`, or
+        `embeddings+index-traversal` when both did, where the two lists are
+        alternated by rank and their scores are **not comparable**. **Read `note`
+        whenever it is not empty** - it is what the ranking could not see. A
+        concept written since the last `okragged index` has no vector, so it is
+        ranked by traversal instead of being left out, and the note says how many
+        were.
         """
         result = run_search(config, query, k)
         return {
@@ -101,24 +125,58 @@ def build_server(config: Config):
         """
         return read_one(config, concept_id)
 
-    @server.tool()
-    def add_source(text: str, title: str | None = None) -> dict[str, Any]:
-        """Record knowledge no source document states, as a new source.
+    # Two tools rather than one that branches, because the description is the
+    # only channel every client shows a model and it has to be true of *this*
+    # instance: one that promised a concept where none is coming, or told the
+    # caller to run a build that already ran, would be worse than silent.
+    if write and spend:
 
-        Takes prose, not a concept: it is written into the corpus as a source
-        file - the path is generated here and never accepted - and `okragged
-        build` authors the concept from it later, so the concept has real
-        provenance. Submit no frontmatter. Nothing on this surface writes a
-        `verified` block: that records a confirmation event that actually
-        happened, and a human promotes a concept by editing the file.
+        @server.tool()
+        def add_source(text: str, title: str | None = None) -> dict[str, Any]:
+            """Record knowledge no source document states, and author its concept.
 
-        This records only. **No concept appears until someone runs `okragged
-        build`**, which is deliberate: synthesis costs money, and nothing
-        reachable over this protocol may spend somebody's credential. Say so
-        rather than waiting for a concept that is not coming. `recorded: false`
-        means identical prose was already on file, so nothing was written.
-        """
-        return asdict(run_add_source(config, text, title))
+            Takes prose, not a concept: it is written into the corpus as a source
+            file - the path is generated here and never accepted - and the concept
+            is authored from that file, so it carries real provenance. Submit no
+            frontmatter. Nothing on this surface writes a `verified` block: that
+            records a confirmation event that actually happened, and a human
+            promotes a concept by editing the file.
+
+            `concepts` names what was authored - a parent, plus one child per
+            section of a long assertion. `recorded: false` means identical prose
+            was already on file. `synthesized: false` with an `errors` entry means
+            the prose is recorded and the concept is not, because another writer
+            holds the project or no `[synth]` credential resolved; say so rather
+            than calling again in a loop. `indexed` says whether `search` can rank
+            the new concept by embedding yet: false with an `errors` entry means
+            the concept is in the bundle and readable and only its vector is
+            missing, so `search` finds it by traversal until `okragged index` runs.
+            **This call spends the operator's credential - a synthesis and an
+            embedding - and nothing here rate-limits it.**
+            """
+            return asdict(run_add_source(config, text, title, synthesize=True))
+
+    elif write:
+
+        @server.tool()
+        def add_source(text: str, title: str | None = None) -> dict[str, Any]:
+            """Record knowledge no source document states, as a new source.
+
+            Takes prose, not a concept: it is written into the corpus as a source
+            file - the path is generated here and never accepted - and `okragged
+            build` authors the concept from it later, so the concept has real
+            provenance. Submit no frontmatter. Nothing on this surface writes a
+            `verified` block: that records a confirmation event that actually
+            happened, and a human promotes a concept by editing the file.
+
+            This records only. **No concept appears until someone runs `okragged
+            build`**, which is deliberate: synthesis costs money, and nothing
+            reachable over this protocol may spend somebody's credential. Say so
+            rather than waiting for a concept that is not coming. `recorded:
+            false` means identical prose was already on file, so nothing was
+            written.
+            """
+            return asdict(run_add_source(config, text, title))
 
     @server.tool()
     def lint() -> dict[str, Any]:
@@ -128,14 +186,21 @@ def build_server(config: Config):
     return server
 
 
-def main(project_root: Path) -> None:
-    from dotenv import load_dotenv
-
+def main(project_root: Path, *, write: bool = False, spend: bool = False) -> None:
     config = load_config(project_root)
-    # utf-8-sig: a BOM otherwise renames the first key and the credential reads
-    # as missing, which `add_source` would report as a configuration problem
-    load_dotenv(project_root / ".env", encoding="utf-8-sig")
-    build_server(config).run()
+    # Two credentials sit behind this one switch: the embedding key `search` needs
+    # to embed a query — `[vectors].provider` defaults to Gemini, so reading the
+    # file unasked spent the producer's quota on a consumer's search — and the
+    # `[synth]` key a synthesizing `add_source` spends. Off, `search` answers by
+    # index traversal and says which path answered, and `add_source` records prose
+    # for the next `okragged build` to author from.
+    if spend:
+        from dotenv import load_dotenv
+
+        # utf-8-sig: a BOM otherwise renames the first key and the credential
+        # reads as missing, which surfaces as a search that cannot embed
+        load_dotenv(project_root / ".env", encoding="utf-8-sig")
+    build_server(config, write=write, spend=spend).run()
 
 
 def _mcp_server():

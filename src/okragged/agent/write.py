@@ -1,9 +1,9 @@
-"""The write half of the agent contract: `add_source` (DESIGN §10, §13 M5).
+"""The write half of the agent contract: `add_source` (DESIGN §10, §13 M5, M6).
 
 Knowledge worth recording is not always in a document — two tables are related in
 a way no paper states, and someone knows it. This is how that enters the bundle,
-and it enters as a *source*: the assertion is written into the corpus, and
-`okragged build` authors the concept from it later.
+and it enters as a *source*: the assertion is written into the corpus, and the
+concept is authored from it.
 
 A tool that wrote a concept directly would be shorter and would break the
 invariant everything else rests on — **every concept traces to a source** (§4.2).
@@ -12,34 +12,71 @@ bundle while being absent from the ledger, so what the ledger describes and what
 the bundle contains would stop agreeing — which is the assumption stale-output
 cleanup, deprecation and human-edit detection are all built on.
 
-**It records; it does not synthesize, and so it needs no credential.** That is
-the whole of why this is safe to expose. Synthesis costs money, and over stdio
-there is nobody to charge: MCP has no identity — the server is a subprocess of
-whatever client spawned it — so "whose key pays" would be answered by an accident
-of environment precedence, with the producer's `.env` paying for a stranger's
-writes whenever the consumer happened to have no key of their own. Removing the
-model call removes the question rather than guarding it. Spending over the
-protocol is M6's, where a security layer can decide who may.
+**Recording and synthesizing are separate, and which of them happens is a
+property of the instance rather than of the call.** Without `synthesize` — what an
+`okragged mcp --write` server offers — this writes the file and stops, and the
+concept is authored by the next `okragged build` on the operator's machine with
+the operator's key. With it, which only `--write --spend` reaches, the same call
+ingests that one path and returns the concepts it authored.
 
-So the corpus gains a file and nothing else happens until an operator runs
-`okragged build` on their own machine with their own key — which is also where
-the project lock, the staged emit and the vanished-source rules already live.
-This module therefore touches neither `pipeline` nor a provider.
+**The guard on the synthesizing mode is that the operator launched the instance
+with both switches, and it is nothing more than that.** There is no identity here
+and no rate limit. A caller who owns the process could present any token he was
+asked for and delete any counter kept beside the bundle, so the only thing the
+switches establish is that whoever configured this server is the one paying. That
+holds while the caller and the payer are the same person — a producer driving his
+own agent — and stops holding the moment there is a channel with somebody else on
+the far end, which is where an identity and a scope belong (§13 M8).
+
+The run is a partial one over the file just written, which suppresses the
+vanished-source sweep (§6.1): safe by construction rather than by a check.
+
+**A synthesizing call also refreshes the vectors, and that is the same decision
+rather than a second one.** `--spend` says the operator's credential may be used;
+a concept nobody can find is not worth what the synthesis cost. Concept vectors
+come from `okragged index`, a command nothing on this surface can trigger, so
+without this the call would author a concept that `search`'s embedding path
+cannot rank until a human runs that command — the write path and the read path on
+different clocks. `embed_bundle` reuses a vector whose body hash is unchanged, so
+the refresh costs one embedding call, and the projection and the graph are redone
+locally because `lint` reports a `graph.json` that no longer describes the bundle
+and the view reads its positions from there. The credential is `[vectors]`'s,
+configured apart from `[synth]`'s and needed even where one variable holds both,
+which is why its absence is reported separately and why `search` degrades rather
+than the call failing. `index` takes the project lock itself and `hold` is not
+reentrant, so this runs after `ingest` has released it, never inside.
+
+**Nothing after the file is written may raise.** The prose is in the corpus by
+then, and an exception crossing the wire would tell the caller their assertion was
+lost while it sat in `sources/` waiting for a build that will pick it up. A
+missing credential and a lock another writer holds are therefore reported in the
+result. And the credential a *synthesis* needs is `[synth]`'s, which is not the
+one `search` spends even where a single variable happens to hold both — so the
+message names which is missing rather than saying a key is.
 
 Writing the file needs no lock: the path is generated per assertion, and
-identical bytes reuse the path they are already at rather than racing for it.
+identical bytes reuse the path they are already at rather than racing for it. The
+lock and the staged emit arrive with `ingest` (§6.6), so two synthesizing calls
+serialize on the bundle rather than on the source file.
+
+Not imported by `agent/__init__.py`, for the same reason `server` is not: it
+imports `pipeline`, which imports that package to regenerate the contract.
 """
 
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .. import okf
+from .. import okf, vectors
 from ..config import Config
+from ..lock import LockHeld
+from ..pipeline import IngestSummary, ItemOutcome, ingest, require_credential
 from ..sources import LocalFileSource
+from ..synth import MissingCredential
+from ..vectors import MissingEmbedCredential
 
 DIRECTORY = "conversations"
 """Where an asserted source lands, under the configured sources root. Named for
@@ -57,13 +94,33 @@ class AddedSource:
     """False when identical bytes were already at this path, so nothing was
     written. The assertion is in the corpus either way — re-asserting the same
     thing is a no-op rather than a second source saying it twice."""
+    synthesized: bool = False
+    """Whether this call authored a concept. False when the instance only records,
+    and false when it was asked to and could not — the prose is recorded either
+    way and the next `okragged build` authors from it, which is why the failure is
+    reported here rather than raised."""
+    concepts: list[str] = field(default_factory=list)
+    """The concept ids this call authored, parent and children, when it did."""
+    indexed: bool = False
+    """Whether `search`'s embedding path can now rank what this call authored.
+    False when nothing was authored, and false when the vectors could not be
+    refreshed — the concept is in the bundle and readable either way, but until
+    `okragged index` runs it is rankable only by traversal, which `search` says."""
+    errors: list[str] = field(default_factory=list)
+    """Why no concept was authored, or what failed while one was — the vectors
+    included. Never a reason the recording did not happen: that raises, having
+    left nothing behind."""
 
 
-def add_source(config: Config, text: str, title: str | None = None) -> AddedSource:
-    """Record prose in the corpus as a source. Offline — no model, no credential.
+def add_source(
+    config: Config, text: str, title: str | None = None, synthesize: bool = False
+) -> AddedSource:
+    """Record prose in the corpus as a source, and author its concept if asked.
 
-    The concept is authored by the next `okragged build`, not here. See the module
-    docstring for why that separation is the point rather than a limitation.
+    Recording is offline and needs no credential. `synthesize` ingests the path
+    just written and refreshes the vectors over it, which costs a synthesis call
+    and one embedding — the module docstring says what stands behind that and,
+    more to the point, what does not.
     """
     body = _normalized(text)
     if not body.strip():
@@ -92,7 +149,83 @@ def add_source(config: Config, text: str, title: str | None = None) -> AddedSour
             "the pipeline would never discover it"
         )
 
-    return AddedSource(uri=path.relative_to(config.project_root).as_posix(), recorded=wrote)
+    recorded = AddedSource(
+        uri=path.relative_to(config.project_root).as_posix(), recorded=wrote
+    )
+    return _synthesize(config, recorded) if synthesize else recorded
+
+
+def _synthesize(config: Config, recorded: AddedSource) -> AddedSource:
+    """Ingest the one path just written, reporting each failure as a result.
+
+    The source file exists by the time this runs, so nothing here raises: the
+    assertion is in the corpus and a later `okragged build` authors from it, which
+    is the outcome to describe rather than to hide behind a traceback.
+    """
+    try:
+        # asked apart from the call so the answer can name *which* credential:
+        # `[synth]` pays for this and `[vectors]` pays for search, and the gemini
+        # modules read one variable for both, so a working search implies nothing
+        require_credential(config)
+    except MissingCredential as exc:
+        return _unauthored(recorded, str(exc))
+    try:
+        summary = ingest(config, only=[recorded.uri])
+    except LockHeld as exc:
+        return _unauthored(recorded, str(exc))
+    except Exception as exc:  # the source is already written; report, never raise
+        return _unauthored(recorded, f"{type(exc).__name__}: {exc}")
+
+    recorded.synthesized = True
+    recorded.concepts = [cid for outcome in summary.outcomes for cid in _produced(outcome)]
+    recorded.errors = _errors(summary)
+    return _reindex(config, recorded)
+
+
+def _reindex(config: Config, recorded: AddedSource) -> AddedSource:
+    """Refresh the vectors so `search` can rank the concept this call authored.
+
+    Outside `ingest`'s lock rather than inside it: `index` takes the project lock
+    itself and `hold` is not reentrant, so nesting them would self-refuse. That
+    leaves a window another writer can take the lock in, which is reported like
+    any other failure here — the concept is authored and readable regardless.
+    """
+    if not recorded.concepts:
+        return recorded
+    try:
+        summary = vectors.index(config)
+    except MissingEmbedCredential as exc:
+        return _unranked(recorded, str(exc))
+    except LockHeld as exc:
+        return _unranked(recorded, str(exc))
+    except Exception as exc:  # the concept is already published; report, never raise
+        return _unranked(recorded, f"{type(exc).__name__}: {exc}")
+
+    failed = [summary.embed.errors[cid] for cid in recorded.concepts if cid in summary.embed.errors]
+    if failed:
+        return _unranked(recorded, failed[0])
+    recorded.indexed = True
+    return recorded
+
+
+def _unranked(recorded: AddedSource, reason: str) -> AddedSource:
+    """The concept landed and its vector did not. Said in full, because a caller
+    told only the reason would read it as the concept having failed."""
+    recorded.errors.append(
+        f"the concept is in the bundle and readable, but has no vector, so "
+        f"`search` ranks it by index traversal until `okragged index` runs: {reason}"
+    )
+    return recorded
+
+
+def _unauthored(recorded: AddedSource, reason: str) -> AddedSource:
+    """The prose landed and the concept did not, said in one sentence — a caller
+    told only the reason would not know their assertion is safe."""
+    recorded.errors.append(
+        f"the prose is recorded at {recorded.uri} and the next `okragged build` "
+        f"will author its concept, but this call did not: {reason}"
+    )
+    return recorded
 
 
 def _write(config: Config, slug: str, content: str) -> tuple[Path, bool]:
@@ -135,3 +268,14 @@ def _slug(seed: str) -> str:
 
 def _normalized(text: str) -> str:
     return text.replace("\r\n", "\n").replace("\r", "\n")
+
+
+def _produced(outcome: ItemOutcome) -> list[str]:
+    return [outcome.concept_id, *outcome.child_ids] if outcome.concept_id else []
+
+
+def _errors(summary: IngestSummary) -> list[str]:
+    errors = [f"{o.uri}: {o.error}" for o in summary.failed]
+    for outcome in summary.outcomes:
+        errors += outcome.section_errors + outcome.weave_errors
+    return errors

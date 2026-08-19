@@ -168,17 +168,20 @@ def lint(project: str | Path | Config) -> LintReport:
 
 
 def add_source(
-    project: str | Path | Config, text: str, title: str | None = None
+    project: str | Path | Config,
+    text: str,
+    title: str | None = None,
+    synthesize: bool = False,
 ) -> AddedSource:
-    """Record prose in `sources/` as a new source (§13 M5). Offline.
+    """Record prose in `sources/` as a new source (§13 M5). Offline by default.
 
-    The path is generated from the text, never supplied. It records only — the
-    concept is authored by the next `build()`, because nothing reachable over the
-    MCP surface this shares may spend a credential.
+    The path is generated from the text, never supplied. Recording alone leaves the
+    concept to the next `build()`; `synthesize` authors it here instead, which costs
+    a model call and reads no `.env` — see the note above about credentials.
     """
     from .agent.write import add_source as add
 
-    return add(_config(project), text, title=title)
+    return add(_config(project), text, title=title, synthesize=synthesize)
 
 
 def write_contract(project: str | Path | Config) -> list[Path]:
@@ -192,17 +195,23 @@ def write_contract(project: str | Path | Config) -> list[Path]:
     return write(_config(project))
 
 
-def register(project: str | Path | Config) -> Path:
+def register(
+    project: str | Path | Config, *, write: bool = False, spend: bool = False
+) -> Path:
     """Register `okragged mcp` for this project in `.mcp.json`, preserving any
     other servers already there. Offline.
 
     The only function here that writes a file okragged does not own — `.mcp.json`
     is the MCP config for whatever agent works in that directory. Nothing calls
     it for you, which is why it is a function rather than a flag on `build()`.
+
+    `write` and `spend` go into the entry's arguments, so the server it spawns
+    offers `add_source` and may use your credential. Omitted, the entry is bare
+    and that server is read-only.
     """
     from .agent import register as do_register
 
-    return do_register(_config(project))
+    return do_register(_config(project), write=write, spend=spend)
 
 
 def _config(project: str | Path | Config) -> Config:

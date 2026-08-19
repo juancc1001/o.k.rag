@@ -23,6 +23,7 @@ from .base import (
     SynthError,
     SynthResult,
     WeaveResult,
+    anchor_footnote_defs,
     body_defines,
     ensure_footnote_defs,
 )
@@ -49,6 +50,7 @@ __all__ = [
     "WeaveResult",
     "PROVIDERS",
     "resolve",
+    "anchor_footnote_defs",
     "body_defines",
     "cut",
     "ensure_footnote_defs",
@@ -113,7 +115,9 @@ def synthesize(
         title=str(data["title"]).strip(),
         description=str(data["description"]).strip(),
         body_markdown=ensure_footnote_defs(
-            str(data["body_markdown"]).strip(), source_id, source_title
+            anchor_footnote_defs(str(data["body_markdown"]).strip()),
+            source_id,
+            source_title,
         ),
         tags=[str(t).strip() for t in data.get("tags") or [] if str(t).strip()],
         input_tokens=response.input_tokens,
