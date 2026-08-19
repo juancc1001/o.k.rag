@@ -2,7 +2,16 @@
 name = "okragged"
 version = "0.1.0"
 description = "Turn a folder of files into a conformant OKF v0.2 knowledge bundle"
+readme = "README.md"
+license = "Apache-2.0"
+authors = [{name = "juancc1001", email = "carvallojuanc@gmail.com"}]
 requires-python = ">=3.12"
+classifiers = [
+    "Programming Language :: Python :: 3.12",
+    "License :: OSI Approved :: Apache Software License",
+    "Development Status :: 3 - Alpha",
+    "Operating System :: OS Independent",
+]
 dependencies = [
     "anthropic>=0.69",
     "google-genai>=1.0",
@@ -30,6 +39,11 @@ api = ["fastapi>=0.115", "uvicorn>=0.30", "markdown-it-py>=3.0"]
 
 [project.scripts]
 okragged = "okragged.cli:app"
+
+[project.urls]
+Homepage = "https://github.com/juancc1001/ragged"
+Repository = "https://github.com/juancc1001/ragged"
+Issues = "https://github.com/juancc1001/ragged/issues"
 
 [build-system]
 requires = ["hatchling"]
