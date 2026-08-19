@@ -1,13 +1,4 @@
-"""okragged as a library — the operations `okragged` the command runs, callable.
-
-Thin, and deliberately so. Every module here has always been importable, and these
-functions are the ones the CLI itself calls; what this module adds is a **curated
-surface** — one place to import from, a first argument that may be a project
-directory instead of a `Config`, and a contract that does not move when the
-internal layout does. Each function resolves that argument and delegates. Nothing
-here reimplements a stage, and nothing wraps a return value: what comes back is
-what the underlying function returns, and a bundle is a directory on disk (§2),
-which is why no object stands in for one.
+"""okragged as a library: the operations `okragged` the command runs, callable directly.
 
     import okragged
 
@@ -15,23 +6,22 @@ which is why no object stands in for one.
     okragged.build(cfg, progress=print)
     okragged.check(cfg)
 
-**No `.env` is read from this path.** `cli.py` and `agent/server.py` call
-`load_dotenv` because they are entry points for humans; credential discovery is
-the caller's business, so put the provider key in the environment (or pass a
-`Config` for a project whose keys you loaded yourself) before calling `build`,
-`index` or `add_source`.
+Each function takes a project path or a `Config` and delegates to the module that
+does the real work. A bundle is just a directory on disk (DESIGN.md §2), so no
+object stands in for one here.
 
-**`build()` behaves as `okragged build` does**, contract included: it regenerates
-`agent/AGENTS.md`, one derived file beside the bundle it just built. There is no
-library-versus-CLI asymmetry here any more, because the thing that justified one
-was `.mcp.json`, and a build no longer writes it. Registering the MCP server is
-`register()` — the only call here that touches a file okragged does not own, and
-never made on a caller's behalf.
+No `.env` is read from this module — pass a `Config` you built with your own
+credentials, or set the provider key in the environment yourself. (`cli.py` and
+`agent/server.py` load `.env` themselves, since they're the human-facing entry
+points.)
 
-Imports are deferred — function-local, plus a module `__getattr__` (PEP 562) for
-the two names — so `import okragged` stays silent and cheap. The extraction path
-pulls in markitdown, which prints an ffmpeg warning on import, and a library that
-writes to somebody else's stderr in order to be imported is broken.
+`build()` regenerates `agent/AGENTS.md` (docs describing the bundle, for an AI
+agent to read) but never touches `.mcp.json` (the machine's MCP client config) —
+only `register()` does that, and nothing here calls it automatically.
+
+Every import below is deferred (function-local, plus `__getattr__` for `Config`
+and `Progress`), so `import okragged` stays cheap: the extraction path pulls in
+`markitdown`, which prints a warning on import.
 """
 
 from __future__ import annotations
@@ -51,17 +41,9 @@ if TYPE_CHECKING:  # annotations only; importing these eagerly is the thing to a
     from .vectors import IndexSummary
 
 def _installed_version() -> str:
-    """The version from package metadata, so `pyproject.toml` is the only place
-    it is written down.
-
-    A hand-kept copy here would be one of three, and the third — `[bundle].actor`
-    — is stamped into every concept's `generated.by`, so a forgotten bump does not
-    just misreport the tool, it mislabels provenance inside the bundle. Falls back
-    for a source tree that was never installed.
-
-    Resolved on attribute access rather than at import, like `Config` and
-    `Progress`: reading package metadata off disk is work an `import okragged`
-    that only wanted a function should not pay for.
+    """Reads the version from package metadata, so `pyproject.toml` stays the
+    only place it's written — a hand-kept copy could drift from `[bundle].actor`,
+    which stamps this into every concept's `generated.by`.
     """
     from importlib.metadata import PackageNotFoundError, version
 
@@ -109,18 +91,16 @@ def build(
     contract: bool = True,
     progress: Callable[[Progress], None] | None = None,
 ) -> IngestSummary:
-    """Run the ingest pipeline: discover → extract → plan → synthesize → link-weave
-    → emit → validate. Needs a credential for the configured `[synth]` provider,
-    unless `dry_run`.
+    """Runs the ingest pipeline: discover -> extract -> plan -> synthesize ->
+    link-weave -> emit -> validate. Needs a credential for the configured
+    `[synth]` provider, unless `dry_run`.
 
-    Behaves as `okragged build` does, `contract` included: it regenerates
-    `agent/AGENTS.md` beside the bundle, which is one derived file describing the
-    bundle you just asked for. It does **not** register an MCP server — that is
-    `register()`, and nothing calls it for you. `contract=False` skips AGENTS.md
-    for a caller who wants the bundle and nothing else.
+    Regenerates `agent/AGENTS.md` (docs describing the bundle) by default, same
+    as `okragged build` — pass `contract=False` to skip it. Never registers the
+    MCP server; that's `register()`.
 
-    `only` limits the run to the given source paths, which also suppresses the
-    vanished-source sweep (§6.1).
+    `only` limits the run to the given source paths, and also skips the sweep
+    that marks vanished sources deprecated (DESIGN.md §6.1).
     """
     from .pipeline import ingest
 
@@ -145,8 +125,9 @@ def check(project: str | Path | Config) -> Report:
 
 
 def search(project: str | Path | Config, query: str, k: int = 8) -> SearchResult:
-    """Rank concepts against `query` and return pointers, never bodies (§10).
-    Falls back to index traversal without stored vectors or a credential."""
+    """Ranks concepts against `query` and returns pointers, never bodies — the
+    caller fetches only what it needs (DESIGN.md §10). Falls back to graph
+    traversal when there's no stored embedding or credential."""
     from .agent import search as search_bundle
 
     return search_bundle(_config(project), query, k)
@@ -173,11 +154,11 @@ def add_source(
     title: str | None = None,
     synthesize: bool = False,
 ) -> AddedSource:
-    """Record prose in `sources/` as a new source (§13 M5). Offline by default.
+    """Records prose in `sources/` as a new source. Offline by default.
 
-    The path is generated from the text, never supplied. Recording alone leaves the
-    concept to the next `build()`; `synthesize` authors it here instead, which costs
-    a model call and reads no `.env` — see the note above about credentials.
+    The path is generated from the text, never supplied. Recording alone leaves
+    the concept for the next `build()` to author; `synthesize` authors it here
+    instead — one model call, and it reads no `.env` (see the module docstring).
     """
     from .agent.write import add_source as add
 
@@ -198,16 +179,16 @@ def write_contract(project: str | Path | Config) -> list[Path]:
 def register(
     project: str | Path | Config, *, write: bool = False, spend: bool = False
 ) -> Path:
-    """Register `okragged mcp` for this project in `.mcp.json`, preserving any
-    other servers already there. Offline.
+    """Registers `okragged mcp` for this project in `.mcp.json`, preserving any
+    other servers already registered there. Offline.
 
-    The only function here that writes a file okragged does not own — `.mcp.json`
-    is the MCP config for whatever agent works in that directory. Nothing calls
-    it for you, which is why it is a function rather than a flag on `build()`.
+    The only function here that writes a file okragged doesn't own — nothing
+    calls it automatically, which is why it's a separate function rather than
+    a flag on `build()`.
 
-    `write` and `spend` go into the entry's arguments, so the server it spawns
-    offers `add_source` and may use your credential. Omitted, the entry is bare
-    and that server is read-only.
+    `write` and `spend` become arguments in the registered command, so the
+    server it spawns offers `add_source` and may use your credential. Leave
+    both off and the entry stays bare — that server is read-only.
     """
     from .agent import register as do_register
 
@@ -240,12 +221,9 @@ def __getattr__(name: str) -> Any:
 
 
 def __dir__() -> list[str]:
-    """The curated surface, and only it (PEP 562).
-
-    `__getattr__` alone leaves `Config` and `Progress` out of `dir()` and out of
-    every completion that reads it, so two of the thirteen public names would be
-    undiscoverable — while `Path`, `Any`, `TYPE_CHECKING` and `annotations` leak
-    in from this module's own imports. Answering from `__all__` fixes both, and
-    keeps the one list that has to be right.
+    """Returns exactly `__all__` (PEP 562) — without this, `Config` and
+    `Progress` are invisible to `dir()`/autocomplete since `__getattr__` alone
+    doesn't register them, while this module's own imports (`Path`, `Any`, ...)
+    would otherwise leak in instead.
     """
     return sorted(__all__)

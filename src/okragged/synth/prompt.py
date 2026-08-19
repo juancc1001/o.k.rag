@@ -205,7 +205,8 @@ def _vocabulary(allowed_types: list[str]) -> str:
 
 
 def _index(index: list[tuple[str, str]] | None) -> str:
-    """The bundle's existing concepts, one line each (§6.4).
+    """The bundle's existing concepts, one line each — so synthesis knows what's
+    already covered and can propose `candidate_links` (DESIGN.md §6.4).
 
     Snapshotted once per run by the caller — anything that moves during a run
     would break the cached prefix.

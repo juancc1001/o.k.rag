@@ -49,13 +49,12 @@ removing or renaming one is not, because a caller renders these."""
 
 @dataclass(frozen=True)
 class Progress:
-    """One event from a run in flight, for a caller that cannot wait for the summary.
+    """One event from a run in flight, for a caller that can't wait for the summary.
 
-    Frozen and flat on purpose. `ingest` reported only on completion, which is what
-    deferred `POST /api/ingest` and its SSE stream (§11), and an event that has to
-    survive being serialized to a browser is the wrong place for a live object
-    graph. `unit` plus `index`/`total` identify what is happening; `detail` is a
-    short note for a human to read and not for a caller to parse.
+    Frozen and flat on purpose: an event that might get serialized to a browser
+    (e.g. an HTTP progress endpoint) is the wrong place for a live object graph.
+    `unit` plus `index`/`total` identify what's happening; `detail` is a short
+    note for a human, not something a caller parses.
     """
 
     stage: str
@@ -107,12 +106,13 @@ class IngestSummary:
     output_tokens: int = 0
     cache_read_tokens: int = 0
     deprecated: list[str] = field(default_factory=list)
-    """Concepts whose source is gone. Marked, not deleted (§6.1)."""
+    """Concepts whose source is gone. Marked, not deleted (DESIGN.md §6.1)."""
     invented_links: list[str] = field(default_factory=list)
     """Weave targets outside the bundle. Unwrapped to plain text, never silent."""
     recovered: list[str] = field(default_factory=list)
-    """What this run found a previous one had left behind, and what it did about
-    it (§6.6). Reported rather than repaired quietly: it says a build died."""
+    """What this run found left behind by a previous one, and what it did about
+    it (DESIGN.md §6.6: the staged commit). Reported rather than fixed silently,
+    since it means an earlier build died."""
 
     @property
     def written(self) -> list[ItemOutcome]:
@@ -149,62 +149,54 @@ def ingest(
     contract: bool = True,
     progress: Callable[[Progress], None] | None = None,
 ) -> IngestSummary:
-    """Run the pipeline over `config`'s sources.
+    """Runs the pipeline over `config`'s sources.
 
-    `contract` regenerates `agent/AGENTS.md` after the emit, and defaults to on
-    because §10 relies on the contract never describing a bundle that no longer
-    exists — and a run that committed is the moment the bundle changed. It is the
-    same default for every caller: this writes one file, derived from the bundle
-    the caller just asked for, beside that bundle.
+    `contract` regenerates `agent/AGENTS.md` (the docs an AI agent reads to use
+    this bundle, DESIGN.md §10) after the emit, and defaults to on — a run that
+    commits is exactly the moment the bundle changed, and the contract must
+    never describe one that no longer exists. `contract=False` skips it for a
+    caller who wants only the bundle.
 
-    **It does not register the MCP server.** `.mcp.json` is not derived from the
-    bundle — the entry is the same bytes at nought concepts and at a thousand —
-    and it belongs to whatever agent works in that directory rather than to
-    okragged. Registering is `okragged agent --register`, or `agent.register()`;
-    see `agent/contract.py`, which is where the two artifacts part company. This
-    parameter is also why `contract=False` still exists: a caller who wants the
-    bundle and nothing beside it can still say so.
+    **Never registers the MCP server.** `.mcp.json` is the machine's own MCP
+    client config, not derived from the bundle, so nothing here touches it —
+    that's `okragged agent --register` or `agent.register()` (see
+    `agent/contract.py`).
 
     `progress` is called as the run moves through its stages; see `Progress`.
 
-    A real run **holds the project lock and stages each source's emit**, and
-    **the commit boundary is the source, not the run** (§6.6, `staging.py`).
-    Three things follow. A second writer is refused rather than interleaved. An
-    interrupted run leaves every source it finished published *and* recorded, so
-    the next one pays only for the remainder — the two-namings hazard lives inside
-    one source's emit, and across sources a partial run is a valid bundle. And the
-    one source that was in flight stays in the sidecar, unpublished, until the next
-    run reports and clears it.
+    A real run holds the project lock and stages each source's emit, committing
+    per source rather than per run (`staging.py`, DESIGN.md §6.6). So: a second
+    writer is refused rather than interleaved; an interrupted run leaves every
+    finished source published *and* recorded, so the next run only pays for the
+    remainder; and the one source that was in flight stays unpublished in the
+    sidecar until the next run reports and clears it.
     """
     if dry_run:
-        # no lock and no staging: a dry run writes no bundle and no ledger, so
-        # there is nothing to serialize, and refusing one because a build is in
-        # flight would put a new failure mode in the command whose whole point is
-        # that it is safe to run at any time
+        # no lock, no staging: a dry run writes no bundle and no ledger, so
+        # there's nothing to serialize against another writer
         swept = _run(config, dry_run=True, only=only, progress=progress)
         return _validated(config, swept, progress)
 
     with lock.hold(config.sidecar_root, "ingest") as held:
-        # before the credential check: a commit some earlier run left half applied
-        # is finished even by a run that then cannot proceed for its own reasons
+        # finish a half-applied commit from an earlier run before anything else,
+        # even if this run then can't proceed for its own reasons
         notes = [note for note in (held.note, staging.reconcile(config)) if note]
         require_credential(config)  # before extracting a whole corpus, not after
         area = staging.prepare(config)
         summary = _run(config, dry_run=False, only=only, area=area, progress=progress)
         summary.recovered = notes
-        staging.discard(area)  # a run that reached here staged nothing it did not commit
+        staging.discard(area)  # nothing staged here was left uncommitted
         if contract and config.bundle_root.exists():
-            # after the commits and never before: layer 3 describes layer 2, and a
-            # contract written beside concepts that did not land would describe
-            # ones that do not exist (§10). A run that dies leaves the previous
-            # contract, which under-describes the bundle until the next run — the
-            # same self-healing direction as the indexes. AGENTS.md only: nothing
-            # here touches the machine's MCP config
+            # after the commits, never before: the contract describes the bundle,
+            # so writing it beside concepts that didn't land would describe ones
+            # that don't exist. A run that dies leaves the previous contract in
+            # place, under-describing the bundle until the next run fixes it —
+            # same self-healing direction as the indexes. AGENTS.md only: this
+            # never touches the machine's MCP config
             write_contract(config)
-    # outside the lock: validation reads the published bundle and spawns okflint,
-    # and holding one writer off a project while a subprocess runs buys nothing.
-    # A build that lands concurrently only means the report describes a newer tree
-    # than this run produced, which is the tree a reader will actually find
+    # outside the lock: validation just reads the published bundle and spawns
+    # okflint, so holding the lock here buys nothing — a concurrent build only
+    # means the report describes a newer tree, which is the one a reader will find
     return _validated(config, summary, progress)
 
 
@@ -229,13 +221,12 @@ def _run(
     progress: Callable[[Progress], None] | None,
     area: staging.Area | None = None,
 ) -> IngestSummary:
-    """The stages themselves.
+    """Runs the pipeline stages themselves.
 
-    Every *read* is of the published bundle, `config.bundle_root`: what is on disk
-    is what previous sources and previous runs left there. Every *write* goes into
-    `area`, and one commit per source publishes it (§6.6). The two roots are the
-    whole of what "staged" means here — there is no copy of the bundle to keep in
-    step with the real one.
+    Every *read* is of the published bundle (`config.bundle_root`); every
+    *write* goes into `area`, published one commit per source (DESIGN.md §6.6).
+    Those two roots are all that "staged" means here — there's no separate copy
+    of the bundle to keep in sync.
     """
     selected = _selected(config, only)
     source = LocalFileSource(
@@ -245,14 +236,13 @@ def _run(
         project_root=config.project_root,
     )
     summary = IngestSummary()
-    # loaded from the published ledger and saved only by a commit: a record of
-    # this run is only true once the files it describes have landed
+    # saved only by a commit: a ledger record is true only once its files have landed
     ledger = Ledger() if dry_run else Ledger.load(config.sidecar_root / LEDGER_NAME)
     ledger.bundle_root = config.bundle.root
     # snapshotted once: the synthesis prefix has to stay byte-identical all run
     existing = [] if dry_run else _index(config.bundle_root)
-    # every id the last run wrote stays spoken for until its own source releases
-    # it, so a source that is skipped this run cannot have its ids stolen
+    # every id from the last run stays reserved until its own source releases it,
+    # so a skipped source can't have its id stolen
     taken: set[str] = set(ledger.concepts)
     log_entries: list[str] = []
     discovered: set[str] = set()
@@ -329,16 +319,15 @@ def _run(
                 mtime=item.mtime.isoformat(timespec="seconds").replace("+00:00", "Z"),
                 concepts=produced,
                 at=_now(),
-                # a section lost to a 429 is source content missing from the
-                # bundle, so the next run redoes this file rather than skipping
-                # it and losing that section until the bytes happen to change
+                # a failed section is missing bundle content, so the next run
+                # redoes this file rather than skipping it until the bytes change
                 complete=not outcome.section_errors,
             )
             outcome.removed = _stale(config, ledger, previous - set(produced))
-            # the source is the commit boundary (§6.6): the concepts it wrote under
-            # their new ids, the removal of what its rename left behind, and its own
-            # ledger entry land together or not at all. A concept a human owns was
-            # never staged, so it is not placed and not removed
+            # the source is the commit boundary (DESIGN.md §6.6): its new
+            # concepts, the stale output its rename left behind, and its ledger
+            # entry land together or not at all. A human-owned concept was never
+            # staged, so it's neither placed nor removed
             staging.commit(
                 area,
                 ledger,
@@ -366,10 +355,10 @@ def _run(
                 # absence from `discovered` is not evidence that they are gone
                 _deprecate_vanished(config, area, ledger, discovered, summary, log_entries)
     finally:
-        # Concepts are published per source, but only the indexes, the log and the
-        # okflint manifest make them a bundle. Run on the way out however we leave,
-        # so an interrupted run's committed sources are indexed and logged rather
-        # than sitting there unlisted.
+        # concepts publish per source, but only the indexes, the log, and the
+        # okflint manifest make them a bundle — always regenerated on the way
+        # out, so an interrupted run's committed sources are still indexed and
+        # logged rather than sitting there unlisted
         if not dry_run and config.bundle_root.exists():
             _report(progress, Progress(FINALIZE))
             _finalize(config, log_entries)
@@ -400,7 +389,8 @@ def _ingest_single(
     existing: list[tuple[str, str]],
     progress: Callable[[Progress], None] | None = None,
 ) -> list[str]:
-    """Short enough to be one concept (§4.3). Returns its log lines."""
+    """Short enough to become one concept, not several (DESIGN.md §4.3). Returns
+    its log lines."""
     _report(progress, Progress(SYNTHESIZE, item.uri, index=1, total=1))
     result = synthesize(
         text=text,
@@ -533,14 +523,15 @@ def _write(
     concept: Concept,
     outcome: ItemOutcome,
 ) -> str:
-    """Stage a concept unless a human owns it (§6.4). Returns the log verb.
+    """Stages a concept unless a human owns it already (DESIGN.md §6.4). Returns
+    the log verb.
 
-    Read from the published bundle, written into the staging area: what protects a
-    concept and whether one existed are facts about the tree a reader can see, and
-    the source's commit is what makes this write one of them.
+    Reads from the published bundle, writes into the staging area — whether a
+    concept is protected, and whether one already existed, are both facts about
+    the tree a reader can currently see.
 
-    A protected concept's replacement goes to `.okragged/proposed/` for the human
-    to resolve. This is the one place where "the LLM owns layer 2" yields.
+    A protected concept's replacement goes to `.okragged/proposed/` for the
+    human to resolve instead — the one place a human's edit overrides the model's.
     """
     concept_id = concept.concept_id
     why = ledger.protection(config.bundle_root, concept_id)
@@ -591,19 +582,20 @@ def _weave_run(
     summary: IngestSummary,
     progress: Callable[[Progress], None] | None = None,
 ) -> None:
-    """Rewrite this run's concepts with cross-links woven into their prose (§6.5).
+    """Rewrites this run's concepts with cross-links woven into their prose
+    (DESIGN.md §6.5: link-weave).
 
-    Only what this run wrote: a concept that was skipped is unchanged output and
-    rewriting it would cost a model call to produce a file nobody asked for. The
-    consequence is that links point forward from new concepts to old ones and not
-    the other way round until the old one is itself re-ingested.
+    Only concepts this run actually wrote — a skipped concept is unchanged
+    output, and rewriting it would spend a model call on a file nobody asked
+    for. So links point forward, from new concepts to old ones, until an old
+    one is itself re-ingested.
 
-    This runs after every source has committed, so it rewrites concepts that are
-    already published — and each rewrite is a commit of its own, because the body
-    and the hash the ledger notes for it have to agree. An interrupt here leaves
-    every concept either woven and re-recorded or unwoven and recorded; a concept
-    left unwoven is the state a *failed* weave already produces (§6.5), so its
-    source stays `complete` and is not retried for it.
+    Runs after every source has committed, rewriting already-published
+    concepts — each rewrite is its own commit, since the ledger's hash for a
+    concept has to match its body. An interrupt here leaves every concept
+    either woven-and-recorded or unwoven-and-recorded (the same state a
+    *failed* weave already produces), so its source stays `complete` and
+    isn't retried just for that.
     """
     # titles as well as descriptions: the pass has to choose link labels, and
     # prune_links needs a title when the model puts a raw path in the label
@@ -651,21 +643,21 @@ def _weave_run(
         concept.body = result.body_markdown
         staging.discard(area)
         okf.write_concept(area.bundle, concept)
-        # the post-weave hash, or the next run reads every concept as edited — and
-        # committed with the body it describes, or an interrupt would leave exactly
-        # that mismatch on disk for the next run to believe
+        # records the post-weave hash — otherwise the next run reads every
+        # woven concept as human-edited
         ledger.note_concept(concept_id, outcome.uri, concept.body)
         staging.commit(area, ledger, unit=f"the weave of `{concept_id}`", place=[concept_id])
         outcome.linked.append(concept_id)
 
 
 def _stale(config: Config, ledger: Ledger, stale: set[str]) -> list[str]:
-    """Concepts the previous run produced for this source and this one did not.
+    """Concepts the previous run produced for this source, that this run didn't.
 
-    Ids come from model-written titles, so a rebuild renames the tree as a matter
-    of course; without this nothing ever removes what the rename left behind. The
-    files go in the source's commit rather than here, so the moment when both
-    namings are on disk is inside the window the pending record fences.
+    Concept ids come from model-written titles, so a rebuild renames the tree
+    as a matter of course — without this, nothing would ever remove what the
+    rename left behind. Actually deleting the files happens in the source's
+    commit, not here, so the window where both namings exist on disk stays
+    inside what the pending-commit record fences.
     """
     removed: list[str] = []
     for concept_id in sorted(stale):
@@ -686,13 +678,14 @@ def _deprecate_vanished(
     summary: IngestSummary,
     log_entries: list[str],
 ) -> None:
-    """A source that is gone deprecates its concepts; it does not delete them.
+    """A vanished source deprecates its concepts; it never deletes them.
 
-    The spec keeps deprecated concepts for links and history (§6.1) — deletion
-    is an explicit `okragged prune`, never a side effect of removing an input file.
+    Deprecated concepts stay for links and history (DESIGN.md §6.1) — deletion
+    is an explicit `okragged prune`, never a side effect of an input file
+    disappearing.
 
-    One commit per vanished source, for the same reason the boundary is the source
-    everywhere else: the status change and the ledger forgetting it are one fact.
+    One commit per vanished source, same as everywhere else: the status change
+    and the ledger forgetting it are one fact, landing together or not at all.
     """
     for uri in sorted(set(ledger.sources) - discovered):
         staging.discard(area)
@@ -734,21 +727,20 @@ def _now() -> str:
 
 
 def _finalize(config: Config, log_entries: list[str]) -> None:
-    """The three artifacts that make published concepts a bundle rather than files.
+    """Writes the three artifacts that make published concepts a bundle, not
+    just files on disk: the indexes, the okflint manifest, and `log.md`.
 
-    None of them is fenced by a commit, and none needs to be, because each is
-    derivable from the bundle on disk: `write_indexes` reads the whole tree rather
-    than accumulating during the run (§6.6), and `okf-base.yaml` is generated from
-    the config. A run that dies before this point leaves indexes that do not
-    mention its newest concepts, and *any* later run regenerates them — including
-    one that changes nothing. `log.md` is the exception in kind but not in
-    consequence: it is a narration nothing reads back, and it is appended here in
-    a `finally`, so an interrupt still records the sources that did commit.
+    None of these needs a commit fence, because each is derived fresh from the
+    bundle on disk rather than accumulated during the run — a run that dies
+    early just leaves indexes that don't mention its newest concepts, and any
+    later run regenerates them. `log.md` is the odd one out (it's appended to,
+    not regenerated), but the reasoning still holds: it's a narration nothing
+    reads back, so recording only what actually committed is enough.
 
-    **The ledger is deliberately not here.** It lands with the source it describes
-    (§6.6) and is the one thing that must never be written outside a commit: a
-    ledger saved on the way out could describe a concept whose file never landed,
-    and the next run's content-hash skip would believe work was done that was not.
+    **The ledger is deliberately not written here.** It lands with the source
+    it describes (DESIGN.md §6.6) and must never be written outside a commit —
+    saving it on the way out could describe a concept whose file never landed,
+    fooling the next run's content-hash skip into thinking the work was done.
     """
     title = config.bundle_title
     okf.write_indexes(config.bundle_root, config.bundle.okf_version, title)
@@ -800,18 +792,21 @@ def _build_parent(
     source_id: str,
     children: list[tuple[str, str, str]],
 ) -> Concept:
-    """The parent's body is the outline's overview plus the way down to the children.
+    """The parent's body is the outline's overview, plus a list linking down to
+    each child.
 
-    §4.3's "each child links back to its parent in prose" is the other direction
-    and belongs to link-weave (§6.5), which is told the parent — fabricating the
-    sentence here would be inventing content.
+    The reverse direction — each child linking back to its parent in prose
+    (DESIGN.md §4.3) — belongs to link-weave instead (`_weave_run` above,
+    which is told the parent). Writing that sentence here would be inventing
+    content the model never wrote.
     """
     lines = [outline.overview.strip(), "", "# Sections", ""]
     for slug, title, description in children:
         suffix = f" - {description}" if description else ""
         lines.append(f"- [{title}](/{parent_id}/{slug}.md){suffix}")
-    # no footnote: `sources` carries provenance, and footnotes are for per-claim
-    # attribution (§5.1) — the overview plus a link list makes no specific claim
+    # no footnote: `sources` already carries provenance, and footnotes are for
+    # per-claim attribution (DESIGN.md §5.1) — this overview-plus-links makes no
+    # specific claim needing one
     body = "\n".join(lines).rstrip() + "\n"
 
     result = SynthResult(

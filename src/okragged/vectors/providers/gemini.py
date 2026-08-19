@@ -1,7 +1,7 @@
 """Gemini embeddings (google-genai SDK).
 
 Implemented first because the build already requires this credential, so it adds
-no dependency and no second key. It is not the answer to DESIGN §12 Risk 4 —
+no dependency and no second key. It is not the answer to DESIGN.md §12 Risk 4 —
 that is decided by measuring ghost-edge quality on a real corpus, and swapping is
 deleting `embeddings.npy` and re-embedding.
 """

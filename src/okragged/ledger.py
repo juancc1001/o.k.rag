@@ -1,4 +1,4 @@
-"""The idempotency ledger — `.okragged/manifest.json` (DESIGN §5).
+"""The idempotency ledger — `.okragged/manifest.json` (DESIGN.md §5).
 
 Not `okf/manifest.py`, which generates `okf-base.yaml` for okflint. This one is
 sidecar state, and it answers the three questions a rebuild has to ask:
@@ -79,14 +79,11 @@ class Ledger:
             return cls()
 
     def save(self, path: Path) -> Path:
-        """Write the ledger atomically and durably.
+        """Writes the ledger via temp-file-plus-rename, fsynced before the rename.
 
-        Temp file plus rename rather than a plain write, because this is the one
-        file whose half-written state is worse than its absence: a truncated
-        ledger loads as an empty one (`load` degrades on `ValueError`), and an
-        empty ledger re-ingests the whole corpus. The fsync is for the same reason
-        `staging` fsyncs its record — a commit publishes this file by renaming it,
-        so its content has to have reached the disk before the rename does.
+        A half-written ledger is worse than a missing one: it loads as empty
+        (`load` degrades on any parse error), and an empty ledger re-ingests the
+        whole corpus — so a partial write must never be what reaches disk.
         """
         # sorted, so a run that changed nothing rewrites a byte-identical file
         payload = {
@@ -124,10 +121,11 @@ class Ledger:
         return record
 
     def protection(self, bundle_root: Path, concept_id: str) -> str | None:
-        """Why this concept must not be overwritten (§6.4), or None.
+        """Why this concept must not be overwritten by a rebuild, or None if
+        it's safe to (DESIGN.md §6.4: concepts a human has claimed).
 
-        With no record — a wiped sidecar — only `verified` protects, because
-        "we cannot tell" must not mean "never rebuild anything again".
+        With no ledger record — e.g. a wiped sidecar — only a `verified` block
+        protects; "we can't tell" must not mean "never rebuild anything again".
         """
         path = bundle_root / f"{concept_id}.md"
         if not path.exists():

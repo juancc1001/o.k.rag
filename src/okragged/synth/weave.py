@@ -1,4 +1,4 @@
-"""Link-weave: a second pass that turns a set of concepts into a graph (§6.5).
+"""Link-weave: a second pass that turns a set of concepts into a graph (DESIGN.md §6.5).
 
 Runs after every concept for the run exists, because a link can only point at a
 concept that has been written. Rewrites bodies and nothing else — the schema

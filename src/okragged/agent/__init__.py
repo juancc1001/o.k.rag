@@ -1,8 +1,10 @@
-"""Layer 3 — the agent contract (DESIGN §10).
+"""The agent contract: how an AI agent discovers and reads this bundle
+(`AGENTS.md`, the MCP server, the HTTP API) — DESIGN.md §10 calls this "layer
+3", one level up from the bundle itself ("layer 2").
 
-Reads the bundle and generates the contract for consuming it. `server` is
-deliberately not imported here: it needs the optional MCP SDK, and `pipeline`
-imports this package to regenerate the contract on every ingest.
+This module reads the bundle and generates the contract describing it.
+`server` is deliberately not imported here: it needs the optional MCP SDK, and
+`pipeline` imports this package on every ingest just to regenerate the contract.
 """
 
 from .contract import (

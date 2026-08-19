@@ -1,4 +1,4 @@
-"""Brute-force cosine kNN over the L2-normalized matrix (DESIGN §6.9).
+"""Brute-force cosine kNN over the L2-normalized matrix (DESIGN.md §6.9).
 
 `n x dim` float32 is 1.5 MB at 1000 concepts; NumPy does this in milliseconds and
 the code is twenty lines. hnswlib is worth it only past ~100k concepts.
@@ -23,7 +23,7 @@ def nearest(matrix: np.ndarray, query: np.ndarray, k: int) -> list[tuple[int, fl
 
     Both sides are L2-normalized, so this is the same dot product as `similarities`
     with one side held fixed — which is what `search` asks when it has a credential
-    to embed the query with (DESIGN §10).
+    to embed the query with (DESIGN.md §10, the agent contract).
     """
     if matrix.shape[0] == 0:
         return []

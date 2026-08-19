@@ -1,4 +1,4 @@
-"""`lint` — okflint results plus the three things it cannot see (DESIGN §10).
+"""`lint` — okflint results plus the three things it cannot see (DESIGN.md §10).
 
 okflint answers conformance. Ghost edges, stale concepts and orphans are the
 bundle's own health: a pair the embeddings say is about one thing and nobody
@@ -86,9 +86,10 @@ def _drift(graph: dict, concept_ids: set[str]) -> str:
     """Whether the graph still describes this bundle.
 
     Concept ids derive from model-written titles, so a rebuild renames the tree
-    as a matter of course (§5) — which makes a `graph.json` from before it not
-    merely incomplete but *about different concepts*. Reporting the ghosts
-    anyway would attribute missing links to ids the bundle no longer has.
+    as a matter of course (DESIGN.md §5) — which makes a `graph.json` from
+    before it not merely incomplete but *about different concepts*. Reporting
+    the ghosts anyway would attribute missing links to ids the bundle no
+    longer has.
     """
     graphed = {str(node.get("id") or "") for node in (graph.get("nodes") or [])}
     if not graphed or graphed == concept_ids:

@@ -1,13 +1,13 @@
 """Planning pass: one source document -> a parent plus N section slices.
 
-Two passes, because a single call that returns an array of concepts makes every
-concept share one `max_tokens` budget — which is how M1 produced a flat ~2.5k
-ceiling per concept regardless of whether the source was 15k or 39k characters.
-Here each section gets its own call and its own budget.
+Two passes, because a single call returning an array of concepts makes every
+concept share one `max_tokens` budget — that flattens every concept to the
+same token ceiling regardless of source length. Here each section gets its
+own call and its own budget.
 
 The plan carries a verbatim `start_marker` per section rather than character
-offsets: models do not count reliably, but they do quote reliably. Cutting is
-done here, in code, against the real text.
+offsets: models don't count reliably, but they do quote reliably. Cutting
+happens here, in code, against the real text.
 """
 
 from __future__ import annotations
@@ -162,7 +162,7 @@ def _dedupe(hits: list[tuple[int, str]]) -> list[tuple[int, str]]:
 
 
 def _fold_short(sections: list[Section]) -> list[Section]:
-    """Below ~150 words of substance a section is not a concept (§4.3)."""
+    """Below ~150 words of substance, a section isn't a concept (DESIGN.md §4.3)."""
     folded: list[Section] = []
     for section in sections:
         if not section.text:

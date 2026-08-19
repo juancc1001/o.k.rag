@@ -1,35 +1,35 @@
-"""Layer 3: the generated agent contract (DESIGN §2, §10).
+"""Generates the agent contract: `AGENTS.md` and the `.mcp.json` registration
+entry (DESIGN.md §2, §10 — "the agent contract" is how an AI agent discovers
+and reads a bundle without knowing okragged exists).
 
-Two artifacts with **different natures**, which is why they are written by two
-functions and not one:
+Two artifacts, written by two separate functions because they have different
+natures:
 
-`agent/AGENTS.md` is a *function of the bundle* — the concept count, the
-structure tree, the type vocabulary. It changes whenever the bundle changes, so
-`write_contract` runs after every commit, and §10's rule that the contract must
-never describe a bundle that no longer exists is a rule about this file. It
-carries no timestamp, so an unchanged bundle regenerates to the same bytes.
+`agent/AGENTS.md` is a *function of the bundle* — concept count, structure
+tree, type vocabulary. It changes whenever the bundle changes, so
+`write_contract` runs after every commit: it must never describe a bundle
+that no longer exists. It carries no timestamp, so an unchanged bundle
+regenerates to the same bytes.
 
-`.mcp.json` is not a function of the bundle at all. The entry is the same bytes
-whether the bundle holds no concepts or a thousand. Under M4 it named the
-generating interpreter and the generated `agent/mcp_server.py`, so it really was
-derived from the producer's tree; the console script deleted that, and rewriting
-it on every build outlived its reason. So `register` is a **deliberate act** —
-`okragged agent --register` — and never a side effect of building.
+`.mcp.json` is not a function of the bundle at all — the entry is the same
+bytes whether the bundle holds zero concepts or a thousand. So `register` is
+a **deliberate act** (`okragged agent --register`), never a side effect of
+building.
 
-What it *is* a function of is the machine, and only where it has to be. The
-entry names `okragged` whenever `PATH` can resolve it, and falls back to the
-console script beside this interpreter when it cannot — the same exposure
-`okf/validate.py::_okflint` documents, one layer up. A client spawns the server
-from its `.mcp.json` rather than from an activated shell, so a bare name that
-only an activated venv resolves gets the server killed at spawn and reported as
-a closed connection, with nothing to read anywhere. `PATH` first rather than
-beside-first, because this file is not gitignored and may be shared: portable
-when portability is available, correct when it is not.
+What the `.mcp.json` entry *is* a function of is the machine, and only where
+it has to be: it names the bare `okragged` command when `PATH` can resolve
+it, and falls back to the console script beside this interpreter when it
+can't — the same reasoning as `okf/validate.py::_okflint`. A client spawns
+the server from `.mcp.json` rather than from an activated shell, so a bare
+name that only an activated venv can resolve gets the server killed at spawn
+with nothing to read anywhere. `PATH` first, not beside-first, because this
+file isn't gitignored and may get shared: portable when portability is
+available, correct when it isn't.
 
-The distinction is not tidiness. `.mcp.json` is the one thing here okragged does
-not own: it is the MCP config for whatever agent works in that directory, shared
-with every other server registered there. Merging into somebody else's config
-unasked, on every build, is a write okragged has no reason to make.
+The distinction matters because `.mcp.json` is the one file here okragged
+doesn't own: it's the MCP config for whatever agent works in that directory,
+shared with every other server registered there. Merging into somebody
+else's config unasked, on every build, would be a write with no justification.
 """
 
 from __future__ import annotations
@@ -51,14 +51,15 @@ AGENTS_NAME = "AGENTS.md"
 MCP_CONFIG_NAME = ".mcp.json"
 SERVER_KEY = "okragged"
 COMMAND = "okragged"
-"""The console script. Not an interpreter and not a script path: the consumer a
-documented entry exists for is in another tree entirely, and only `_command`
-may substitute an absolute one, only for the local file."""
+"""The console script — not an interpreter path and not a script path, since
+the consumer of a foreign entry is in a different tree entirely. Only
+`_command` may substitute an absolute path, and only for the local entry."""
 
 CONTRACT_URI = "okragged://contract"
 INDEX_URI = "okragged://index"
-"""The two resources the server exports (§10). Named here rather than in
-`server.py` so the contract can quote them without the MCP SDK installed."""
+"""The two resources the server exports (DESIGN.md §10). Named here, not in
+`server.py`, so the contract can quote them without needing the MCP SDK
+installed."""
 
 
 def write_contract(config: Config) -> list[Path]:
@@ -71,18 +72,16 @@ def write_contract(config: Config) -> list[Path]:
 
 
 def register(config: Config, *, write: bool = False, spend: bool = False) -> Path:
-    """Write the `.mcp.json` entry, merged into whatever else is registered.
+    """Writes the `.mcp.json` entry, merged into whatever else is registered.
 
-    The one function here that writes a file okragged does not own, which is why
-    nothing calls it on your behalf: `okragged agent --register` asks for it, and
-    a build never does.
+    The one function here that writes a file okragged doesn't own — nothing
+    calls it automatically, only `okragged agent --register`.
 
-    The switches go into the entry when they are asked for, and they are asked for
-    in the same breath as the registration itself — `--register --write --spend`
-    names precisely the instance it wants, so nothing is inferred and nothing is
-    decided for anybody. Omitted, the entry is bare and the server it spawns is
-    read-only, which is the default that matters: the file is shared, and an entry
-    that could spend by accident is what the switches exist to prevent.
+    `write`/`spend` land in the entry only when asked for in that same command
+    (`--register --write --spend`); omitted, the entry is bare and the server
+    it spawns stays read-only. That matters because `.mcp.json` is shared —
+    an entry that could spend by accident is exactly what these switches
+    prevent.
     """
     return _write(
         config.project_root / MCP_CONFIG_NAME,
@@ -93,13 +92,12 @@ def register(config: Config, *, write: bool = False, spend: bool = False) -> Pat
 def is_registered(config: Config) -> bool:
     """Whether `.mcp.json` already registers this project's server.
 
-    **The key, not the argument vector.** An operator may have registered the
-    server with `--write` or `--spend` in its `args`, or added them by hand
-    afterwards; comparing the whole entry would read that as unregistered and
-    have every build tell them to register a server that is already there.
+    Matches by the server key, not the whole entry — an operator may have
+    added `--write`/`--spend` to its `args` by hand, and comparing the full
+    entry would misread that as unregistered.
 
-    Only so a build can *mention* that it does not; a build that acted on this
-    would be the side effect this module exists to remove.
+    Only used so a build can *mention* it's unregistered — acting on it would
+    be exactly the side effect this module exists to avoid.
     """
     path = config.project_root / MCP_CONFIG_NAME
     try:
@@ -127,20 +125,20 @@ def render_mcp_json(config: Config, *, write: bool = False, spend: bool = False)
 def _entry(
     project_root: Path, *, local: bool, write: bool = False, spend: bool = False
 ) -> dict[str, object]:
-    """The `mcpServers` value.
+    """Builds the `mcpServers` entry value.
 
-    A client spawns the server with the directory holding its config as the cwd,
-    so an entry written into the project root needs no target — cwd already
-    answers it. An entry copied anywhere else carries the root absolutely,
-    because nothing about a foreign checkout can be said relative to this one,
-    and it names the bare command for the same reason: this machine's resolution
-    is not a fact about that one.
+    A client spawns the server with the config's directory as cwd, so the
+    local entry (written into this project root) needs no target — cwd
+    already answers it. A foreign entry (copied into somebody else's config)
+    carries the project root absolutely instead, since nothing about a
+    foreign checkout can be said relative to this one.
 
-    **The switches reach the local entry only.** The copy in `AGENTS.md` is for
-    somebody else's config, and what this operator authorized on this machine is
-    not a fact about that one — a snippet carrying `--spend` would be telling a
-    stranger to spend a key. A consumer who wants to write adds them knowingly,
-    which the contract says in prose beside the flagless JSON.
+    **`write`/`spend` reach the local entry only.** The foreign copy (in
+    `AGENTS.md`) is for somebody else's machine, and what this operator
+    authorized here isn't a fact about theirs — shipping `--spend` in it
+    would be telling a stranger to spend a key. The contract explains this in
+    prose beside the flagless JSON, so a consumer who wants to write adds it
+    knowingly.
     """
     args = ["mcp"]
     if not local:
@@ -153,14 +151,15 @@ def _entry(
 
 
 def _command() -> str:
-    """`PATH` first, then the console script beside this interpreter.
+    """Resolves `okragged` via `PATH` first, then beside this interpreter.
 
-    The registration is spawned by a client, not from an activated shell, so
-    `okragged` installed into a venv is invisible to the spawn and the whole
-    server is lost to a bare `CONNECTION_CLOSED`. Beside `sys.executable` is
-    where that install actually sits (`okf/validate.py::_okflint`, same reason).
-    Tried second rather than first because `.mcp.json` is not gitignored: a
-    resolvable name travels to another checkout and an absolute one does not.
+    A client spawns the registered command directly, not from an activated
+    shell, so an `okragged` installed only into a venv is invisible to it and
+    the server dies at spawn with a bare `CONNECTION_CLOSED`. Falls back to
+    beside `sys.executable`, the same reasoning as `okf/validate.py::_okflint`.
+    `PATH` is tried first (not beside-first) because `.mcp.json` isn't
+    gitignored: a bare resolvable name travels to another checkout, an
+    absolute path doesn't.
     """
     if shutil.which(COMMAND):
         return COMMAND
@@ -335,12 +334,11 @@ def _types(concepts: list[Concept]) -> list[str]:
 
 
 def _write(path: Path, text: str) -> Path:
-    """Temp file plus rename, as `okf/writer.py` does for a concept.
+    """Writes via temp file plus rename, same as `okf/writer.py` does for a concept.
 
-    Load-bearing for `.mcp.json` and not merely tidy: it is read, merged and
-    written back, and it holds other people's server registrations. A truncated
-    write there costs the user every other server in the file, not one
-    regenerable artifact of ours.
+    Matters more here than tidiness: `.mcp.json` holds other people's server
+    registrations too, so a truncated write costs the user every server in
+    the file, not just this one regenerable entry.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=path.parent, suffix=".tmp")

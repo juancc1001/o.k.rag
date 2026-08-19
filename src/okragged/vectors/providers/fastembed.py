@@ -2,7 +2,7 @@
 
 Registered but behind an optional extra: onnxruntime and the model weights are
 ~150 MB, which is not something a default install should pay for before the
-provider question (DESIGN §12 Risk 4) has been settled by measurement.
+provider question (DESIGN.md §12 Risk 4) has been settled by measurement.
 
     pip install -e ".[fastembed]"
 """

@@ -1,4 +1,4 @@
-"""embed -> project -> graph (DESIGN §6.8, §6.9, §8).
+"""embed -> project -> graph (DESIGN.md §6.8, §6.9, §8).
 
 Stages 8 and 9 of the pipeline, and separable from 1–7 by design: nothing in the
 build path uses embeddings, so `okragged build` never calls this and a bundle is
@@ -69,9 +69,10 @@ class IndexSummary:
 
 
 def index(config: Config) -> IndexSummary:
-    """Embed, project, write the graph. Holds the project lock: this reads the
-    bundle a `build` may be swapping under it, and two of these interleaving
-    would write one matrix and another's meta beside it (§13 M5 item 6)."""
+    """Embeds, projects, writes the graph. Holds the project lock (`lock.py`,
+    DESIGN.md §5) — this reads the bundle a `build` may be swapping under it,
+    and two `index` runs interleaving would write one matrix beside another's
+    meta."""
     with hold(config.sidecar_root, "index"):
         return _index(config)
 

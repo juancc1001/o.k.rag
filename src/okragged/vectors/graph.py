@@ -1,4 +1,4 @@
-"""`.okragged/graph.json` — two graphs over one set of nodes (DESIGN §8).
+"""`.okragged/graph.json` — two graphs over one set of nodes (DESIGN.md §8).
 
 The link graph is authored and sparse; the semantic graph is computed and dense.
 The value is the difference: a **ghost edge** is a pair the embeddings say is
@@ -120,7 +120,7 @@ def _ghosts(
 
 
 def trust(concept: Concept) -> str:
-    """The spec's trust tier, read off `verified`. Never written back (§4.4)."""
+    """The spec's trust tier, read off `verified`. Never written back (DESIGN.md §4.4)."""
     if not concept.verified:
         return "unverified"
     if any(str(entry.get("by", "")).startswith("human:") for entry in concept.verified):

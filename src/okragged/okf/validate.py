@@ -196,14 +196,14 @@ def _run_okflint(report: Report, bundle_root: Path) -> None:
 
 
 def _okflint() -> str | None:
-    """Beside this interpreter first, then `PATH`.
+    """Resolved beside this interpreter first, then via `PATH`.
 
     A console script installed into the same venv as okragged sits next to
-    `sys.executable`, and that directory is only on `PATH` if a shell activated
-    the venv. The MCP server is spawned by its `.mcp.json` entry rather than
-    from a shell, so `which` missed it and `lint` told an agent okflint was not
-    installed while `okragged check` in a terminal ran it — the same bundle,
-    validated to two different standards depending on who asked.
+    `sys.executable`, but that directory is only on `PATH` if a shell activated
+    the venv. The MCP server is spawned from its `.mcp.json` entry rather than
+    a shell, so `which` alone would miss it — `lint` told an agent okflint
+    wasn't installed while `okragged check` in a terminal found it, validating
+    the same bundle to two different standards depending on who asked.
     """
     beside = Path(sys.executable).parent / ("okflint.exe" if os.name == "nt" else "okflint")
     return str(beside) if beside.is_file() else shutil.which("okflint")

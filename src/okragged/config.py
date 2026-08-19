@@ -7,14 +7,9 @@ from pydantic import BaseModel, Field
 
 
 def _default_actor() -> str:
-    """`generated.by` for every concept this build writes.
-
-    Derived from the installed version rather than written out, because this
-    string is stamped into the bundle: a hand-kept copy that missed a release
-    would not merely misreport the tool, it would misattribute provenance in
-    every concept produced after it. `okragged.__version__` is the same value
-    and `pyproject.toml` is the only place it is declared.
-    """
+    """`generated.by` for every concept this build writes — derived from the
+    installed version (same value as `okragged.__version__`) so a hand-kept
+    copy can't drift and misattribute provenance in the bundle."""
     from . import _installed_version
 
     return f"okragged/{_installed_version()}"
@@ -52,7 +47,7 @@ class TypesConfig(BaseModel):
 
 class VectorsConfig(BaseModel):
     provider: str = "gemini"
-    """Not DESIGN §12 Risk 4's answer — that is measured on a real corpus. This is
+    """Not DESIGN.md §12 Risk 4's answer — that is measured on a real corpus. This is
     the one that needs no extra credential and no extra dependency."""
     model: str | None = None
     """None -> the provider's DEFAULT_MODEL."""
@@ -79,9 +74,9 @@ class Config(BaseModel):
 
     @property
     def bundle_root(self) -> Path:
-        """The published bundle. One answer, always — a staged run reads from here
-        and writes into `.okragged/staging/` (§6.6), which is `staging.Area`'s job
-        rather than a second meaning for this path."""
+        """The published bundle directory. A staged run reads from here and
+        writes into `.okragged/staging/` instead (see `staging.py`) — this path
+        itself never gets a second meaning."""
         return self.project_root / self.bundle.root
 
     @property

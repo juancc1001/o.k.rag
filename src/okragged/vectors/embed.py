@@ -1,4 +1,4 @@
-"""One vector per concept, over `title + description + body` (DESIGN §6.8).
+"""One vector per concept, over `title + description + body` (DESIGN.md §6.8).
 
 Nothing in the build path uses this. Embeddings exist for the graph — layout and
 the missing-link lint — and they live in `.okragged/`, never in the bundle.
@@ -90,7 +90,7 @@ def embed_bundle(config: Config) -> EmbedSummary:
 
 
 def _embed_one(impl, concept: Concept, *, model: str, dim: int) -> np.ndarray:
-    """Mean-pool the chunks, keep only the concept vector (§6.8).
+    """Mean-pool the chunks, keep only the concept vector (DESIGN.md §6.8).
 
     Chunk vectors are deliberately not stored: the retrieval path is progressive
     disclosure, not chunk RAG.
