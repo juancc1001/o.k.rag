@@ -25,8 +25,19 @@ dependencies = [
 
 [project.optional-dependencies]
 # mcp is in dev for the same reason okflint is: without it the tests that need it
-# skip, and a suite that quietly skips its server tests is not a passing suite
-dev = ["pytest>=8.0", "okflint>=0.3.1", "mcp>=2.0", "fastapi>=0.115", "markdown-it-py>=3.0"]
+# skip, and a suite that quietly skips its server tests is not a passing suite.
+# build + hatchling are here so tests/test_packaging.py can run `python -m build
+# --no-isolation` offline, instead of needing network to fetch the build backend
+# `[build-system]` already declares
+dev = [
+    "pytest>=8.0",
+    "okflint>=0.3.1",
+    "mcp>=2.0",
+    "fastapi>=0.115",
+    "markdown-it-py>=3.0",
+    "build>=1.0",
+    "hatchling>=1.18",
+]
 # all three deliberately optional: umap-learn pulls numba, fastembed pulls ~150 MB
 # of onnxruntime, and the MCP SDK pulls starlette, uvicorn and opentelemetry for a
 # server that speaks over a pipe. None is needed to produce or validate a bundle.

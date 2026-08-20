@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import os
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -37,6 +39,63 @@ def _force_utf8_output() -> None:
 @app.callback()
 def _main() -> None:
     _force_utf8_output()
+
+
+def _web_root() -> Path:
+    """`web/`, resolved relative to this checkout - absent on an installed wheel,
+    which ships `api/static/` prebuilt instead."""
+    return Path(__file__).resolve().parents[2] / "web"
+
+
+def _view_is_stale(web_root: Path, static_dir: Path = STATIC_DIR) -> bool:
+    """Built output missing, or older than anything that produces it."""
+    index_html = static_dir / "index.html"
+    if not index_html.is_file():
+        return True
+    watched = [web_root / "index.html", web_root / "vite.config.ts", web_root / "package.json"]
+    src = web_root / "src"
+    if src.is_dir():
+        watched.extend(p for p in src.rglob("*") if p.is_file())
+    newest = max((p.stat().st_mtime for p in watched if p.is_file()), default=0.0)
+    return newest > index_html.stat().st_mtime
+
+
+def _build_view(web_root: Path) -> str | None:
+    """`npm install` (if `node_modules` is missing) then `npm run build`.
+
+    Returns an error message on failure, `None` on success. Follows the same
+    subprocess-encoding pattern as `okf/validate.py::_run_okflint` - never let
+    a child inherit the locale codepage.
+    """
+    npm = shutil.which("npm")
+    if npm is None:
+        return "npm not found on PATH - install Node 20+, or run it yourself in web/"
+    if not (web_root / "node_modules").is_dir():
+        proc = subprocess.run(
+            [npm, "install"],
+            cwd=web_root,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            # the child's own stdout is a pipe, so its Python picks the locale
+            # codepage on its own unless told otherwise (see `_run_okflint`)
+            env={**os.environ, "PYTHONIOENCODING": "utf-8"},
+        )
+        if proc.returncode != 0:
+            return f"npm install failed:\n{proc.stdout}{proc.stderr}"
+    proc = subprocess.run(
+        [npm, "run", "build"],
+        cwd=web_root,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env={**os.environ, "PYTHONIOENCODING": "utf-8"},
+    )
+    if proc.returncode != 0:
+        return f"npm run build failed:\n{proc.stdout}{proc.stderr}"
+    return None
 
 
 def _load() -> Config:
@@ -212,16 +271,45 @@ def mcp(
         raise typer.Exit(2) from None
 
 
+@app.command("build-view")
+def build_view() -> None:
+    """Build the graph view from web/. Checkout-only - a wheel ships it prebuilt."""
+    web_root = _web_root()
+    if not web_root.is_dir():
+        typer.secho(
+            "no web/ here - this is an installed wheel, which ships the view prebuilt",
+            fg="bright_black",
+        )
+        raise typer.Exit(0)
+    typer.secho(f"building the view from {web_root}...", fg="bright_black")
+    error = _build_view(web_root)
+    if error:
+        typer.secho(error, fg="red")
+        raise typer.Exit(1)
+    typer.secho(f"  wrote {STATIC_DIR}", fg="green")
+
+
 @app.command()
 def serve(
     host: str = typer.Option("127.0.0.1", help="Interface to bind."),
     port: int = typer.Option(8000, help="Port to bind."),
+    all_: bool = typer.Option(
+        False, "--all", help="Build the view first if it is missing or stale, then serve."
+    ),
 ) -> None:
     """Serve the read-only API, and the graph view when it has been built."""
     cfg = _load()
     if not cfg.bundle_root.exists():
         typer.secho(f"no bundle at {cfg.bundle_root}", fg="red")
         raise typer.Exit(2)
+
+    if all_:
+        web_root = _web_root()
+        if web_root.is_dir() and _view_is_stale(web_root):
+            typer.secho(f"building the view from {web_root}...", fg="bright_black")
+            error = _build_view(web_root)
+            if error:
+                typer.secho(error, fg="red")
 
     try:
         application = create_app(cfg)
