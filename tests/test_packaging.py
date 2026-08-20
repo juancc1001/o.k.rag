@@ -38,6 +38,12 @@ pytestmark = pytest.mark.skipif(
     reason='the "dev" extra was not installed: pip install -e ".[dev]"',
 )
 
+_view_built = pytest.mark.skipif(
+    not (REPO_ROOT / "src/okragged/api/static/index.html").is_file(),
+    reason="web/ has never been built in this checkout: run `npm install && npm run build` "
+    "in web/, or `okragged build-view`",
+)
+
 
 @pytest.fixture(scope="module")
 def built_artifacts(tmp_path_factory):
@@ -66,6 +72,7 @@ def test_the_wheel_carries_the_sources_module(built_artifacts):
     assert "okragged/sources/local.py" in names
 
 
+@_view_built
 def test_the_wheel_carries_the_built_graph_view(built_artifacts):
     with zipfile.ZipFile(built_artifacts["wheel"]) as z:
         names = z.namelist()
@@ -79,6 +86,7 @@ def test_the_sdist_carries_the_sources_module(built_artifacts):
     assert any(n.endswith("src/okragged/sources/local.py") for n in names)
 
 
+@_view_built
 def test_the_sdist_carries_the_built_graph_view(built_artifacts):
     with tarfile.open(built_artifacts["sdist"]) as t:
         names = t.getnames()
