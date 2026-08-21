@@ -33,6 +33,7 @@ dev = [
     "pytest>=8.0",
     "okflint>=0.3.1",
     "mcp>=2.0",
+    "pyjwt[crypto]>=2.8",
     "fastapi>=0.115",
     "markdown-it-py>=3.0",
     "build>=1.0",
@@ -43,7 +44,10 @@ dev = [
 # server that speaks over a pipe. None is needed to produce or validate a bundle.
 umap = ["umap-learn>=0.5"]
 fastembed = ["fastembed>=0.4"]
-mcp = ["mcp>=2.0"]
+# pyjwt[crypto] pinned explicitly: `mcp` pulls plain pyjwt transitively, but RS256/ES256
+# verification (agent/auth.py) needs the `cryptography` backend, which this feature
+# actually depends on rather than borrows by luck.
+mcp = ["mcp>=2.0", "pyjwt[crypto]>=2.8"]
 # the graph view's server half. markdown-it-py renders the concept body for the
 # side panel; it arrives transitively today, and depending on that would be luck
 api = ["fastapi>=0.115", "uvicorn>=0.30", "markdown-it-py>=3.0"]

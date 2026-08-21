@@ -52,7 +52,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-from ..config import Config
+from ..config import Config, McpConfig
 from ..config import load as load_config
 from .contract import CONTRACT_URI, INDEX_URI, render_agents_md
 from .lint import lint as run_lint
@@ -71,8 +71,27 @@ INSTRUCTIONS = (
 reading it works in its own tree and has none of this one's."""
 
 
-def build_server(config: Config, *, write: bool = False, spend: bool = False):
-    server = _mcp_server()(name="okragged", instructions=INSTRUCTIONS)
+def build_server(
+    config: Config,
+    *,
+    write: bool = False,
+    spend: bool = False,
+    http_auth: McpConfig | None = None,
+):
+    server_kwargs: dict[str, Any] = {}
+    if http_auth is not None:
+        from mcp.server.auth.settings import AuthSettings
+
+        from .auth import JWKSTokenVerifier
+
+        server_kwargs["auth"] = AuthSettings(
+            issuer_url=http_auth.issuer_url,
+            resource_server_url=http_auth.resource_server_url,
+            required_scopes=http_auth.required_scopes or None,
+        )
+        server_kwargs["token_verifier"] = JWKSTokenVerifier(http_auth)
+
+    server = _mcp_server()(name="okragged", instructions=INSTRUCTIONS, **server_kwargs)
 
     @server.resource(
         CONTRACT_URI,
@@ -187,7 +206,15 @@ def build_server(config: Config, *, write: bool = False, spend: bool = False):
     return server
 
 
-def main(project_root: Path, *, write: bool = False, spend: bool = False) -> None:
+def main(
+    project_root: Path,
+    *,
+    write: bool = False,
+    spend: bool = False,
+    transport: str = "stdio",
+    host: str = "127.0.0.1",
+    port: int = 8001,
+) -> None:
     config = load_config(project_root)
     # Two credentials sit behind this one switch: the embedding key `search` needs
     # to embed a query — `[vectors].provider` defaults to Gemini, so reading the
@@ -201,7 +228,16 @@ def main(project_root: Path, *, write: bool = False, spend: bool = False) -> Non
         # utf-8-sig: a BOM otherwise renames the first key and the credential
         # reads as missing, which surfaces as a search that cannot embed
         load_dotenv(project_root / ".env", encoding="utf-8-sig")
-    build_server(config, write=write, spend=spend).run()
+
+    if transport == "stdio":
+        build_server(config, write=write, spend=spend).run()
+        return
+
+    from .auth import require_http_auth_config
+
+    require_http_auth_config(config.mcp)
+    server = build_server(config, write=write, spend=spend, http_auth=config.mcp)
+    server.run(transport="streamable-http", host=host, port=port)
 
 
 def _mcp_server():

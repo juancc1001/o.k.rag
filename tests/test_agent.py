@@ -1486,12 +1486,24 @@ def test_the_server_command_takes_its_project_from_the_environment_too(
 
 def test_the_server_writes_and_spends_only_when_the_invocation_says_so(project, monkeypatch):
     _, plain = served(project, monkeypatch, ["mcp", "--project", str(project)])
-    assert plain == {"write": False, "spend": False}
+    assert plain == {
+        "write": False,
+        "spend": False,
+        "transport": "stdio",
+        "host": "127.0.0.1",
+        "port": 8001,
+    }
 
     _, asked = served(
         project, monkeypatch, ["mcp", "--project", str(project), "--write", "--spend"]
     )
-    assert asked == {"write": True, "spend": True}
+    assert asked == {
+        "write": True,
+        "spend": True,
+        "transport": "stdio",
+        "host": "127.0.0.1",
+        "port": 8001,
+    }
 
 
 def test_no_environment_variable_can_turn_writing_or_spending_on(project, monkeypatch):
@@ -1502,7 +1514,13 @@ def test_no_environment_variable_can_turn_writing_or_spending_on(project, monkey
         monkeypatch.setenv(var, "1")
 
     _, modes = served(project, monkeypatch, ["mcp", "--project", str(project)])
-    assert modes == {"write": False, "spend": False}
+    assert modes == {
+        "write": False,
+        "spend": False,
+        "transport": "stdio",
+        "host": "127.0.0.1",
+        "port": 8001,
+    }
 
 
 def test_the_server_command_says_so_on_stderr_when_there_is_no_bundle_to_serve(

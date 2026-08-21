@@ -382,6 +382,26 @@ Above them, the handshake `instructions` say what the bundle is and to fetch the
 
 The server needs the MCP SDK, an optional extra — `pip install -e ".[mcp]"`. Everything else in the contract is generated without it.
 
+### Hosting over http — `okragged mcp --transport http`
+
+A second way to run the server, beside stdio: over a port, for many remote consumers, rather than for one local client `.mcp.json` spawns. It exists because credential-free reads — the whole point of `search` and `read_concept` working with no key at all — are a feature over stdio and an exposure the moment the same server is reachable over a port: anyone who can reach it reads the whole corpus. So this transport authenticates every request as an **OAuth 2.1 resource server**. okragged never issues tokens; it verifies bearer tokens an external authorization server issued, against that issuer's published JWKS. Configure the issuer in `okragged.toml`, not `.env` — none of these three is a secret, only the issuer's public identity and this server's own resource URL:
+
+```toml
+[mcp]
+issuer_url = "https://issuer.example.com"
+resource_server_url = "https://mcp.example.com"
+jwks_url = "https://issuer.example.com/.well-known/jwks.json"
+required_scopes = []   # optional; a token must carry every scope listed
+```
+
+```powershell
+okragged mcp --transport http --host 0.0.0.0 --port 8001   # 8001, not serve's 8000
+```
+
+All three URLs are required — missing any of them fails fast, before the server binds a port, naming which `[mcp]` key is absent. A request with no bearer token, or one that fails signature, issuer, audience, expiry, or scope verification, gets a `401` with a `WWW-Authenticate` header pointing at this server's `.well-known/oauth-protected-resource` metadata; no check is skippable. A validly authenticated request reaches exactly the tools a stdio instance without `--write` offers: `search`, `read_concept`, `lint`.
+
+**Read-only, for now.** `--write` and `--spend` are refused under `--transport http` — a remote writer needs the revision model and the spend scope [§13 M8](DESIGN.md#13-milestones) has not built yet (criteria 3 and 4). The stdio path is completely untouched: `.mcp.json` still spawns the unauthenticated, local-process-only server it always has.
+
 ### What gets written into frontmatter
 
 ```yaml
@@ -617,7 +637,7 @@ random_state = 42          # fixed, or the layout reshuffles every run
 .\.venv\Scripts\python.exe -m pytest tests -q
 ```
 
-374 tests. No credentials and no network needed — the end-to-end test stubs the model and asserts the emitted bundle is conformant, so "one file in, one conformant concept out" is covered offline. The embedding provider is stubbed the same way, in a three-dimensional toy space, so what two concepts are "similar" is something the test states rather than something a model decides.
+391 tests. No credentials and no network needed — the end-to-end test stubs the model and asserts the emitted bundle is conformant, so "one file in, one conformant concept out" is covered offline. The embedding provider is stubbed the same way, in a three-dimensional toy space, so what two concepts are "similar" is something the test states rather than something a model decides.
 
 | File | Covers |
 |---|---|
@@ -637,6 +657,8 @@ random_state = 42          # fixed, or the layout reshuffles every run
 | `tests/test_encoding.py` | the [encoding policy](#encoding-policy), enforced by AST scan (including the child-process `env` rule), plus BOM tolerance, the piped-child crash reproduced, and LF-only output end to end |
 | `tests/test_cli_view.py` | `okragged build-view` / `okragged serve --all`: staleness detection against a fake `web/` + built-output layout, and the `npm` subprocess wrapper skipped gracefully when `npm` is missing or `web/` does not exist - `subprocess.run` itself is monkeypatched, so a cold `node_modules` never needs network |
 | `tests/test_packaging.py` | the packaging defect class fixed in `4cac126` - a real `python -m build --no-isolation` (offline, since `build` and `hatchling` are `dev` dependencies) inspected directly for `okragged/sources/` and the built `api/static/index.html` in both the wheel and the sdist |
+| `tests/test_agent_auth.py` | `JWKSTokenVerifier` against a locally generated test keypair - a valid token accepted, a wrong signature/issuer/audience/expiry/scope each rejected, no network call; plus the wired-up `MCPServer`'s `streamable_http_app()` driven in-process with Starlette's `TestClient` - an unauthenticated request refused with a `WWW-Authenticate` header naming the protected-resource metadata, an authenticated one past the auth gate, and the route table carrying no bundle or static file mount |
+| `tests/test_cli_mcp_http.py` | `okragged mcp --transport http`'s own validation, `agent.server.main` monkeypatched so nothing binds a socket: an unknown `--transport` value, `--write`/`--spend` refused under `http`, `[mcp]` config missing naming which key (exercised for real, since that path fails before touching the MCP SDK), and both the http and the unchanged stdio call reaching `main` with the right arguments |
 
 Nothing skips on a normal install. okflint is resolved beside the running interpreter before `PATH` is consulted, so a venv install is found whether or not a shell activated it — which is also why `lint` over MCP reports real conformance rather than "okflint not installed".
 

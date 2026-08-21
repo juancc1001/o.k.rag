@@ -249,8 +249,27 @@ def mcp(
         help="Read this project's .env. Search may then embed a query on your key, "
         "and with --write the recorded source is synthesized on it too.",
     ),
+    transport: str = typer.Option(
+        "stdio",
+        "--transport",
+        help="stdio (what .mcp.json spawns) or http (OAuth 2.1 resource-server auth; read-only for now).",
+    ),
+    host: str = typer.Option("127.0.0.1", "--host", help="Interface to bind. http transport only."),
+    port: int = typer.Option(8001, "--port", help="Port to bind. http transport only."),
 ) -> None:
-    """Serve this bundle to an MCP client over stdio. What .mcp.json registers."""
+    """Serve this bundle over stdio (what .mcp.json spawns), or over authenticated http."""
+    if transport not in ("stdio", "http"):
+        typer.secho(f"unknown --transport {transport!r} (stdio or http)", fg="red", err=True)
+        raise typer.Exit(2)
+    if transport == "http" and (write or spend):
+        typer.secho(
+            "http transport is read-only for now - write/spend need M8's revision model "
+            "and spend scope first",
+            fg="red",
+            err=True,
+        )
+        raise typer.Exit(2)
+
     # the target is explicit because it has to be: a server that inferred its
     # bundle from __file__ could not survive being pip-installed, and the
     # consumer this exists for is spawning it from a different tree entirely
@@ -262,11 +281,17 @@ def mcp(
         typer.secho(f"no bundle at {cfg.bundle_root}", fg="red", err=True)
         raise typer.Exit(2)
 
+    from .agent.auth import MissingAuthConfig, require_http_auth_config
     from .agent.server import main as serve_mcp
 
     try:
-        serve_mcp(root, write=write, spend=spend)
-    except RuntimeError as exc:  # the MCP SDK is an optional extra
+        # validated before the "serving" line prints, or a misconfigured [mcp]
+        # would claim to be serving and then immediately fail
+        if transport == "http":
+            require_http_auth_config(cfg.mcp)
+            typer.echo(f"serving http://{host}:{port}/mcp (authenticated)")
+        serve_mcp(root, write=write, spend=spend, transport=transport, host=host, port=port)
+    except (RuntimeError, MissingAuthConfig) as exc:  # the MCP SDK is an optional extra
         typer.secho(str(exc), fg="red", err=True)
         raise typer.Exit(2) from None
 

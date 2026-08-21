@@ -917,7 +917,7 @@ M5 made the tool installable. Nothing has been installed *from anywhere*: `okrag
 
 **Exit criterion. Portability verified locally; the index publish is not.** `python -m build` produces both artifacts from this checkout; inspecting them directly (not trusting the config) confirms `okragged/sources/` and `okragged/api/static/index.html` are present in the wheel and in the sdist, and `tests/test_packaging.py` now runs that same inspection on every suite run rather than once by hand. A throwaway venv with the built wheel `pip install`ed into it — no Node, no checkout, no editable install — runs `okragged --help` and finds the packaged static directory inside its own `site-packages`, which is the M6-era defect (the view findable only inside the producer's own project tree) staying fixed for a real install rather than only for this tree. What remains is M5's own first clause, run against the real index rather than a local build: `pip install okragged` from PyPI, on a machine that is not the producer's. That step is the repo owner's alone — nothing here attempts it — and it is the only thing separating this milestone's local verification from being done for real.
 
-**M8 — hosted server. Proposed, and a different product from M5.**
+**M8 — hosted server. In progress — criterion 1 built for reads, criterion 2 holds by construction and is locked in by a test, criteria 3-5 open. A different product from M5.**
 
 M5 makes the bundle *portable*: you hand someone a directory, they install a package, they run their own server over their own copy. M8 makes it *shared*: one machine holds the bundle and many consumers connect to it. That inverts several properties, which is why it is a separate milestone rather than the end of M5.
 
@@ -929,9 +929,11 @@ M5 makes the bundle *portable*: you hand someone a directory, they install a pac
 
    **Authenticated reads are a mode, not a default, and only here.** Under M5 the consumer holds the directory and can `cat` it, so a credential demanded over the protocol while the same bytes sit readable on their disk is theatre — filesystem permissions already decided. Read auth means something exactly when the server is the only path to the bytes.
 
+   **Built.** `okragged mcp --transport http` is the second way to run the server — over a port, authenticated, for many remote consumers — beside the untouched stdio path (`.mcp.json`, unauthenticated, local-process-only). okragged never issues tokens; `agent/auth.py::JWKSTokenVerifier` verifies bearer tokens an external authorization server issued, against that issuer's published JWKS (RS256/ES256, `iss`/`aud`/`exp` all required, no check skippable), and `config.py::McpConfig` (a new `[mcp]` table: `issuer_url`, `resource_server_url`, `jwks_url`, `required_scopes`) is what `--transport http` refuses to start without. `--write`/`--spend` are refused under this transport — criteria 3 and 4 are what would make a remote write safe, and neither is built yet.
+
 2. **The bundle is reachable through tools and never as files, and that is what makes authentication sufficient.** A hosted server must not expose `bundle/` — no static mount, no download route, no path that hands over a file. Every byte that crosses the boundary crosses it as a tool result, which is the same surface `search` and `read_concept` already define and already confine. Get that right and authenticating the tools protects everything; get it wrong and no amount of auth on the tools matters, because the files are beside them.
 
-   This is checkable offline, so it is a test rather than a convention. Note `serve` today mounts the built view at `/` (§11) — the built view, which is public by construction. That mount must never grow to include the bundle.
+   This is checkable offline, so it is a test rather than a convention — **and now one**: `tests/test_agent_auth.py::test_the_http_app_mounts_no_bundle_or_static_route` asserts the wired-up `streamable_http_app()` route table carries only the protocol endpoint and the auth metadata route it declared, nothing resembling a file mount. It needed no new mounting logic, because `streamable_http_app()` never had any to begin with. Note `serve` today mounts the built view at `/` (§11) — the built view, which is public by construction. That mount must never grow to include the bundle.
 
    **Per-concept scoping is deliberately not here.** Deciding *what* a given consumer may see is a separate question from *whether* they may connect, and nothing needs it yet — a bundle a host is willing to serve is one it is willing to serve. It is staged in `NEXT-STEPS.md`, not committed, and it would have to stay coarse if it ever lands: indexes carry every child's `title` and `description` verbatim, so serving the map while withholding the bodies still discloses the map.
 
@@ -940,7 +942,7 @@ M5 makes the bundle *portable*: you hand someone a directory, they install a pac
 4. **Writing becomes remote spend on the host's key** — but the scope model and the rate limit that answers it are **M6's**, not this milestone's, because the same question already exists over stdio. What hosting adds is that the host's key is the *only* key: under M6 a consumer can be made to bring their own, and here there is nowhere else for the cost to land.
 5. **`verified` loses its referent.** §4.4's trust tiers assume one owner who confirms. With several humans able to promote a concept, "a human reviewed it" has to say *which* human, and the spec's actor field is where that lands.
 
-Transport is the least of it: the SDK speaks streamable HTTP, and M3 already brings uvicorn.
+Transport was the least of it: the SDK speaks streamable HTTP, and M3 already brought uvicorn — criterion 1's actual weight was the auth wiring, not the socket.
 
 **M9 — connectors.** `BigQuerySource` (asset family) and `BlobSource` (document family). Note the `Source` protocol they implement is settled by M5, not by them.
 

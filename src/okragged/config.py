@@ -63,6 +63,17 @@ class ProjectionConfig(BaseModel):
     random_state: int = 42
 
 
+class McpConfig(BaseModel):
+    issuer_url: str | None = None
+    resource_server_url: str | None = None
+    jwks_url: str | None = None
+    required_scopes: list[str] = Field(default_factory=list)
+    """All optional/`None` by default. `okragged mcp --transport http` refuses to
+    start unless all three URLs are set - none of these is a secret (the issuer's
+    public identity and this server's own resource URL, not a credential), so
+    they belong in `okragged.toml` rather than `.env`."""
+
+
 class Config(BaseModel):
     project_root: Path
     bundle: BundleConfig = Field(default_factory=BundleConfig)
@@ -71,6 +82,7 @@ class Config(BaseModel):
     types: TypesConfig = Field(default_factory=TypesConfig)
     vectors: VectorsConfig = Field(default_factory=VectorsConfig)
     projection: ProjectionConfig = Field(default_factory=ProjectionConfig)
+    mcp: McpConfig = Field(default_factory=McpConfig)
 
     @property
     def bundle_root(self) -> Path:
@@ -107,4 +119,5 @@ def load(project_root: Path | None = None) -> Config:
         types=TypesConfig(**raw.get("types", {})),
         vectors=VectorsConfig(**raw.get("vectors", {})),
         projection=ProjectionConfig(**raw.get("projection", {})),
+        mcp=McpConfig(**raw.get("mcp", {})),
     )
