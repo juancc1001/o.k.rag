@@ -226,21 +226,30 @@ def _unauthored(recorded: AddedSource, reason: str) -> AddedSource:
 def _write(config: Config, slug: str, content: str) -> tuple[Path, bool]:
     """The generated path, and whether this call wrote it.
 
+    Claims a name with `open(path, "x", ...)` — the same exclusive-create
+    `lock.py::_claim` uses — rather than an `exists()` check followed by a
+    separate write: two concurrent callers can both see a name free between
+    those two steps, and the second `write_text()` would silently overwrite the
+    first's. Exclusive create fails atomically instead, so the loser falls
+    through to the content-match check below rather than clobbering the winner.
+
     Identical bytes reuse the path they are already at: the ingest that follows
     then skips on the content hash, so re-asserting the same thing costs nothing.
     Different bytes under a name taken today get a suffix rather than overwriting
     a source somebody else's concepts already derive from.
     """
     directory = config.sources_root / DIRECTORY
+    directory.mkdir(parents=True, exist_ok=True)
     stem = f"{datetime.now(timezone.utc):%Y-%m-%d}-{slug}"
     for suffix in ("", *(f"-{n}" for n in range(2, 100))):
         path = _confined(directory, f"{stem}{suffix}.md")
-        if not path.exists():
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(content, encoding="utf-8", newline="\n")
+        try:
+            with open(path, "x", encoding="utf-8", newline="\n") as fh:
+                fh.write(content)
             return path, True
-        if path.is_file() and path.read_text(encoding="utf-8-sig") == content:
-            return path, False
+        except FileExistsError:
+            if path.is_file() and path.read_text(encoding="utf-8-sig") == content:
+                return path, False
     raise ValueError(f"too many sources already named {stem!r} today")
 
 

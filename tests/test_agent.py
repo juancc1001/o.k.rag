@@ -15,6 +15,7 @@ import json
 import os
 import re
 import sys
+import threading
 from pathlib import Path
 
 import pytest
@@ -1141,6 +1142,56 @@ def test_add_source_takes_no_lock_and_is_not_refused_by_a_writer_holding_one(
         result = added(ingestable)
 
     assert (ingestable / result.uri).is_file()
+
+
+def _concurrently(n: int, call) -> list:
+    """Runs `call(i)` for `i` in `range(n)` on real threads, all started before
+    any is joined - a mocked lock or a sequential loop cannot reproduce the race
+    this exists to catch, only actual concurrent execution can."""
+    results: list = [None] * n
+    barrier = threading.Barrier(n)
+
+    def run(i: int) -> None:
+        barrier.wait()
+        results[i] = call(i)
+
+    threads = [threading.Thread(target=run, args=(i,)) for i in range(n)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    return results
+
+
+def test_concurrent_add_source_calls_with_distinct_text_lose_nothing(ingestable):
+    """The check-then-act race `_write` used to have: two callers landing on the
+    same title-derived slug on the same day could both see the name free and the
+    second `write_text()` would silently clobber the first's prose. Real threads,
+    because a mocked lock or a sequential loop cannot reproduce a race that only
+    exists between two system calls actually interleaving."""
+    n = 8
+    texts = [f"Assertion number {i} about invoices and refunds." for i in range(n)]
+    results = _concurrently(n, lambda i: added(ingestable, text=texts[i], title="Same Title"))
+
+    uris = {result.uri for result in results}
+    assert len(uris) == n, "every distinct assertion must land at its own path"
+    written = {(ingestable / uri).read_text(encoding="utf-8-sig") for uri in uris}
+    assert written == {text + "\n" for text in texts}
+
+
+def test_concurrent_add_source_calls_with_identical_text_collapse_to_one_file(ingestable):
+    """The other half of the same race: identical assertions racing for the same
+    name must all agree on one file rather than one winning and the rest getting
+    spurious suffixes, or the corpus grows a source for every retry of the same
+    assertion."""
+    n = 8
+    results = _concurrently(n, lambda i: added(ingestable, title="Same Title"))
+
+    uris = {result.uri for result in results}
+    assert len(uris) == 1, "identical assertions must resolve to one file"
+    assert sum(result.recorded for result in results) == 1, "only the winner writes"
+    path = ingestable / uris.pop()
+    assert path.read_text(encoding="utf-8-sig") == ASSERTION + "\n"
 
 
 # --- the server ------------------------------------------------------------------
