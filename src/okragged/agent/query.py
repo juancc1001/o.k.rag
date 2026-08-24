@@ -137,10 +137,10 @@ def _alternating(vectored: list[Hit], unvectored: list[Hit], k: int) -> list[Hit
 
 def read_concept(config: Config, concept_id: str) -> str:
     """The raw file, frontmatter included. Reserved files (`index.md`) too."""
-    return _resolve(config.bundle_root, concept_id).read_text(encoding="utf-8-sig")
+    return resolve_concept_path(config.bundle_root, concept_id).read_text(encoding="utf-8-sig")
 
 
-def _resolve(bundle_root: Path, concept_id: str) -> Path:
+def resolve_concept_path(bundle_root: Path, concept_id: str) -> Path:
     relative = concept_id.strip().replace("\\", "/").lstrip("/").removesuffix(".md")
     path = bundle_root / f"{relative}.md"
     inside = path.resolve().is_relative_to(bundle_root.resolve())

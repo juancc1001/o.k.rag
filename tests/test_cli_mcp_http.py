@@ -1,10 +1,13 @@
-"""`okragged mcp --transport http` (DESIGN.md §13 M8, criterion 1): the CLI's
-own validation, kept offline by monkeypatching `agent.server.main` rather than
-letting it actually bind a socket - same style as `tests/test_cli_view.py`.
+"""`okragged mcp --transport http` (DESIGN.md §13 M8, criteria 1 and 4): the
+CLI's own validation, kept offline by monkeypatching `agent.server.main`
+rather than letting it actually bind a socket - same style as
+`tests/test_cli_view.py`.
 
-The one case that is *not* monkeypatched is the missing-`[mcp]`-config path:
-`MissingAuthConfig` is raised by the real `agent.server.main` before it ever
-touches the MCP SDK, so exercising it for real needs no extra and no network.
+The cases that are *not* monkeypatched are the missing-config paths:
+`MissingAuthConfig`, from either `require_http_auth_config` or (for
+`--write --spend` together) `require_http_spend_config`, is raised before
+`agent.server.main` is ever reached, so exercising them for real needs no
+extra and no network.
 """
 
 from __future__ import annotations
@@ -58,13 +61,55 @@ def test_an_unknown_transport_is_refused(project, monkeypatch):
 
 
 @pytest.mark.parametrize("flag", ["--write", "--spend"])
-def test_http_transport_refuses_write_or_spend_without_calling_main(project, monkeypatch, flag):
+def test_http_transport_allows_write_or_spend_alone(project, monkeypatch, flag):
+    """Neither needs a spend scope or a rate limit on its own: plain --write only
+    records a source (concurrency-safe since M8 criterion 3), and --spend alone
+    only lets `search` embed a query on the host's key - unchanged since M6."""
+    write_mcp_config(project)
     result, seen = served(
         project, monkeypatch, ["mcp", "--project", str(project), "--transport", "http", flag]
     )
+    assert result.exit_code == 0, result.output
+    assert seen != []
+
+
+def test_http_transport_refuses_write_and_spend_together_with_no_spend_config(project):
+    """`MissingAuthConfig` from the real `require_http_spend_config`, raised before
+    `agent.server.main` is ever reached - needs no monkeypatch, same style as the
+    missing-[mcp]-config test below."""
+    write_mcp_config(project)
+    result = runner.invoke(
+        cli.app,
+        ["mcp", "--project", str(project), "--transport", "http", "--write", "--spend"],
+    )
+
     assert result.exit_code == 2
-    assert seen == []
-    assert "read-only" in result.stderr
+    assert "[mcp]" in result.stderr
+    for key in ("spend_scopes", "spend_rate_limit_per_hour"):
+        assert key in result.stderr
+    assert "serving" not in result.stdout, "must not claim to serve before validation passes"
+
+
+def test_http_transport_with_full_spend_config_allows_write_and_spend_together(
+    project, monkeypatch
+):
+    (project / "okragged.toml").write_text(
+        MCP_TOML
+        + 'spend_scopes = ["okragged:spend"]\n'
+        + "spend_rate_limit_per_hour = 5\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    result, seen = served(
+        project,
+        monkeypatch,
+        ["mcp", "--project", str(project), "--transport", "http", "--write", "--spend"],
+    )
+
+    assert result.exit_code == 0, result.output
+    _, modes = seen[0]
+    assert modes["write"] is True
+    assert modes["spend"] is True
 
 
 # --- the missing-config path, exercised for real -----------------------------------

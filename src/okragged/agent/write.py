@@ -19,13 +19,20 @@ with the operator's key. With it, reachable only via `--write --spend`, the
 same call ingests that one path and returns the concepts it authored.
 
 **The guard on the synthesizing mode is only that the operator launched the
-instance with both switches — nothing more.** There's no identity here and
-no rate limit: a caller who owns the process could present any token it's
-asked for and delete any counter kept beside the bundle. So the switches only
-establish that whoever configured this server is the one paying. That holds
-while the caller and the payer are the same person — a producer driving
-their own agent — and stops holding the moment somebody else is on the far
-end of a channel, which is where an identity and a spend scope belong instead.
+instance with both switches — nothing more, and that is still true here.**
+This module has no identity and no rate limit, and never will: a caller who
+owns the process could present any token it's asked for and delete any
+counter kept beside the bundle, so neither would mean anything at this layer.
+Under stdio that is the whole guard, and it holds exactly while the caller and
+the payer are the same person — a producer driving their own agent.
+
+**Under `--transport http` the gate lives one layer up, in `agent/server.py`
+and `agent/auth.py`, not here** (DESIGN.md §13 M8, criterion 4): the caller's
+identity is a verified JWT claim `write.py` never sees, `authorize_spend`
+checks it against `[mcp].spend_scopes` and a `SpendRateLimiter` before this
+module's `add_source` is ever called, and a refused call never reaches this
+function at all. This module stays what it always was — recording and
+synthesizing, not attributing a call to whoever made it.
 
 The run is a partial one over the file just written, which safely skips the
 vanished-source sweep by construction rather than by a check (that sweep
@@ -254,8 +261,9 @@ def _write(config: Config, slug: str, content: str) -> tuple[Path, bool]:
 
 
 def _confined(directory: Path, name: str) -> Path:
-    """The mirror of `query._resolve` on the write side: the caller names no
-    path, and the name derived from what it did say cannot leave this directory."""
+    """The mirror of `query.resolve_concept_path` on the write side: the caller
+    names no path, and the name derived from what it did say cannot leave this
+    directory."""
     path = directory / name
     if not path.resolve().is_relative_to(directory.resolve()):
         raise ValueError(f"refusing to write outside {DIRECTORY}/")

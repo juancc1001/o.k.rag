@@ -1,8 +1,11 @@
 """The stdio MCP server (DESIGN.md §10).
 
 Tools over capability that already exists: `search` and `read_concept` from
-`agent/query.py`, `lint` from `agent/lint.py`, and `add_source` from
-`agent/write.py`, which writes one prose file into `sources/`.
+`agent/query.py`, `lint` from `agent/lint.py`, `add_source` from
+`agent/write.py`, which writes one prose file into `sources/`, and
+`verify_concept` from `agent/verify.py`, offered only under `--transport http`
+with `[mcp].verify_scopes` set (DESIGN.md §13 M8, criterion 5) - stdio has no
+authenticated identity to attribute a confirmation to.
 
 **Two switches, both off by default, and each is a property of the instance
 rather than of a call.** `write` decides whether `add_source` is registered at
@@ -54,10 +57,12 @@ from typing import Any
 
 from ..config import Config, McpConfig
 from ..config import load as load_config
+from .auth import SpendRateLimiter, authorize_spend, authorize_verify
 from .contract import CONTRACT_URI, INDEX_URI, render_agents_md
 from .lint import lint as run_lint
 from .query import read_concept as read_one
 from .query import search as run_search
+from .verify import verify_concept as run_verify_concept
 from .write import add_source as run_add_source
 
 INSTRUCTIONS = (
@@ -150,6 +155,17 @@ def build_server(
     # instance: one that promised a concept where none is coming, or told the
     # caller to run a build that already ran, would be worse than silent.
     if write and spend:
+        # One limiter per running server, closed over by the tool below, so it
+        # accumulates across calls in this process rather than resetting per
+        # call - "a rate limit that survives a loop" (DESIGN.md §13 M8,
+        # criterion 4). Only meaningful under http, where the caller's identity
+        # is a verified JWT claim; stdio has no such identity and this stays
+        # unbuilt for it, unchanged since M6 item 5.
+        spend_limiter = (
+            SpendRateLimiter(http_auth.spend_rate_limit_per_hour)
+            if http_auth is not None
+            else None
+        )
 
         @server.tool()
         def add_source(text: str, title: str | None = None) -> dict[str, Any]:
@@ -172,8 +188,15 @@ def build_server(
             the concept is in the bundle and readable and only its vector is
             missing, so `search` finds it by traversal until `okragged index` runs.
             **This call spends the operator's credential - a synthesis and an
-            embedding - and nothing here rate-limits it.**
+            embedding.** Under stdio that spend is bounded only by the operator
+            having launched this instance. Under `--transport http` it is also
+            refused outright for a token missing `[mcp].spend_scopes`, and
+            rate-limited per identity at `[mcp].spend_rate_limit_per_hour` -
+            refused before anything is written, never charged to a caller who
+            was refused.
             """
+            if http_auth is not None:
+                authorize_spend(http_auth, spend_limiter)
             return asdict(run_add_source(config, text, title, synthesize=True))
 
     elif write:
@@ -197,6 +220,36 @@ def build_server(
             written.
             """
             return asdict(run_add_source(config, text, title))
+
+    # `verify_scopes` alone is the switch - no CLI flag of its own, exactly like
+    # `required_scopes` needs none. Under stdio there is no identity to bind an
+    # entry to, and the file-edit path already serves the single local operator,
+    # so this tool never exists there regardless of `write`.
+    if write and http_auth is not None and http_auth.verify_scopes:
+
+        @server.tool()
+        def verify_concept(concept_id: str) -> dict[str, Any]:
+            """Record that a human has reviewed this concept, as one more entry
+            in its `verified` list.
+
+            **Appends. Never replaces or clears** the list, and never touches
+            `status` - promoting `draft` to `stable` stays a separate, human-owned
+            file edit. `concept_id` must already name a concept in the bundle, or
+            this raises rather than authoring one.
+
+            `by` is never an argument: it is always `human:<your own verified
+            identity>`, taken from the bearer token this call was authenticated
+            with, never a string you supply. Gated by `[mcp].verify_scopes` - a
+            token missing every scope listed there is refused before anything is
+            written - and, unlike `add_source`, **there is no rate limit**:
+            nothing here spends anybody's credential.
+
+            Once a concept carries a `verified` entry, a future `okragged build`
+            will not silently overwrite it - the same protection a hand-edited
+            `verified` block already gets.
+            """
+            identity = authorize_verify(http_auth)
+            return asdict(run_verify_concept(config, concept_id, identity))
 
     @server.tool()
     def lint() -> dict[str, Any]:
