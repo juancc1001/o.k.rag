@@ -83,7 +83,7 @@ class ItemOutcome:
     skipped: bool = False
     """Unchanged since the last ingest — reused wholesale, no model call."""
     protected: dict[str, str] = field(default_factory=dict)
-    """concept_id -> why a human owns it; the replacement went to .okragged/proposed/."""
+    """concept_id -> why a human owns it; the replacement went to .okrag/proposed/."""
     removed: list[str] = field(default_factory=list)
     """Concepts the previous run produced for this source and this one did not."""
     candidates: dict[str, list[str]] = field(default_factory=dict)
@@ -159,7 +159,7 @@ def ingest(
 
     **Never registers the MCP server.** `.mcp.json` is the machine's own MCP
     client config, not derived from the bundle, so nothing here touches it —
-    that's `okragged agent --register` or `agent.register()` (see
+    that's `okrag agent --register` or `agent.register()` (see
     `agent/contract.py`).
 
     `progress` is called as the run moves through its stages; see `Progress`.
@@ -530,7 +530,7 @@ def _write(
     concept is protected, and whether one already existed, are both facts about
     the tree a reader can currently see.
 
-    A protected concept's replacement goes to `.okragged/proposed/` for the
+    A protected concept's replacement goes to `.okrag/proposed/` for the
     human to resolve instead — the one place a human's edit overrides the model's.
     """
     concept_id = concept.concept_id
@@ -681,7 +681,7 @@ def _deprecate_vanished(
     """A vanished source deprecates its concepts; it never deletes them.
 
     Deprecated concepts stay for links and history (DESIGN.md §6.1) — deletion
-    is an explicit `okragged prune`, never a side effect of an input file
+    is an explicit `okrag prune`, never a side effect of an input file
     disappearing.
 
     One commit per vanished source, same as everywhere else: the status change
@@ -780,7 +780,7 @@ def _build(
         ],
         generated={"by": config.bundle.actor, "at": _now()},
         status="draft",
-        extra={"x_okragged_source_hash": item.content_sha256},
+        extra={"x_okrag_source_hash": item.content_sha256},
     )
 
 

@@ -177,7 +177,7 @@ def _run_okflint(report: Report, bundle_root: Path) -> None:
         return
     manifest = bundle_root.parent / MANIFEST_NAME
     if not manifest.exists():
-        report.okflint_note = f"no {MANIFEST_NAME}; run `okragged build` to generate one"
+        report.okflint_note = f"no {MANIFEST_NAME}; run `okrag build` to generate one"
         return
     proc = subprocess.run(
         [exe, "validate", "--manifest", str(manifest), str(bundle_root)],
@@ -198,11 +198,11 @@ def _run_okflint(report: Report, bundle_root: Path) -> None:
 def _okflint() -> str | None:
     """Resolved beside this interpreter first, then via `PATH`.
 
-    A console script installed into the same venv as okragged sits next to
+    A console script installed into the same venv as okrag sits next to
     `sys.executable`, but that directory is only on `PATH` if a shell activated
     the venv. The MCP server is spawned from its `.mcp.json` entry rather than
     a shell, so `which` alone would miss it — `lint` told an agent okflint
-    wasn't installed while `okragged check` in a terminal found it, validating
+    wasn't installed while `okrag check` in a terminal found it, validating
     the same bundle to two different standards depending on who asked.
     """
     beside = Path(sys.executable).parent / ("okflint.exe" if os.name == "nt" else "okflint")

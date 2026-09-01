@@ -20,17 +20,17 @@ from pathlib import Path
 
 import pytest
 
-from okragged import agent, config as config_module, okf, pipeline
-from okragged.agent import contract
-from okragged.synth import MissingCredential, SynthResult, WeaveResult
-from okragged.vectors import EmbedError
-from okragged.vectors.providers import gemini
+from okrag import agent, config as config_module, okf, pipeline
+from okrag.agent import contract
+from okrag.synth import MissingCredential, SynthResult, WeaveResult
+from okrag.vectors import EmbedError
+from okrag.vectors.providers import gemini
 
 TOML = """\
 [bundle]
 root = "bundle"
 okf_version = "0.2"
-actor = "okragged/test"
+actor = "okrag/test"
 title = "Test Bundle"
 
 [sources.local]
@@ -81,7 +81,7 @@ CONCEPTS = [
 def project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     for var in ("GEMINI_API_KEY", "GOOGLE_API_KEY"):
         monkeypatch.delenv(var, raising=False)
-    (tmp_path / "okragged.toml").write_text(TOML, encoding="utf-8", newline="\n")
+    (tmp_path / "okrag.toml").write_text(TOML, encoding="utf-8", newline="\n")
     bundle = tmp_path / "bundle"
     for fields in CONCEPTS:
         okf.write_concept(bundle, okf.Concept(status="draft", **fields))
@@ -94,7 +94,7 @@ def cfg(project: Path):
 
 
 def write_graph(project: Path, graph: dict) -> None:
-    sidecar = project / ".okragged"
+    sidecar = project / ".okrag"
     sidecar.mkdir(parents=True, exist_ok=True)
     (sidecar / "graph.json").write_text(
         json.dumps(graph), encoding="utf-8", newline="\n"
@@ -109,7 +109,7 @@ PRODUCER_PATH = re.compile(
     r"""
     (?<![:\w/\\])(?:[\w.-]+[/\\])+[\w.-]+      # a path: at least one directory segment
     | (?<![\w:/\\])[A-Za-z]:[/\\][^\s`'"]*     # a drive-lettered absolute path
-    | (?<![\w./\\])(?:\.mcp\.json|okragged\.toml|AGENTS\.md)\b   # producer-root files
+    | (?<![\w./\\])(?:\.mcp\.json|okrag\.toml|AGENTS\.md)\b   # producer-root files
     """,
     re.VERBOSE,
 )
@@ -118,7 +118,7 @@ PRODUCER_PATH = re.compile(
 def producer_paths(text: str) -> list[str]:
     """Every token in `text` that addresses a file rather than naming a resource.
 
-    A URI is not a path: `okragged://contract` survives this, which is the whole
+    A URI is not a path: `okrag://contract` survives this, which is the whole
     point of exporting the contract over the protocol instead of pointing at it.
     A bare filename survives too — `index.md` describes the bundle's own shape and
     is reached with `read_concept`, not opened.
@@ -149,7 +149,7 @@ def test_search_returns_pointers_and_never_a_body(project):
 def test_search_with_no_credential_at_all_answers_by_traversing_the_bundle(project):
     result = agent.search(cfg(project), "revenue recognition", k=8)
     assert result.path == agent.TRAVERSAL
-    assert "okragged index" in result.note
+    assert "okrag index" in result.note
     assert [hit.concept_id for hit in result.hits][:1] == ["revenue-policy"]
 
 
@@ -207,7 +207,7 @@ def test_search_uses_the_stored_vectors_when_a_credential_can_embed_the_query(
 ):
     monkeypatch.setenv("GEMINI_API_KEY", "test-key-not-used")
     monkeypatch.setattr(gemini, "embed", fake_embed)
-    from okragged import vectors
+    from okrag import vectors
 
     vectors.index(cfg(project))
 
@@ -220,7 +220,7 @@ def test_search_uses_the_stored_vectors_when_a_credential_can_embed_the_query(
 def test_a_query_that_cannot_be_embedded_falls_back_to_traversal(project, monkeypatch):
     monkeypatch.setenv("GEMINI_API_KEY", "test-key-not-used")
     monkeypatch.setattr(gemini, "embed", fake_embed)
-    from okragged import vectors
+    from okrag import vectors
 
     vectors.index(cfg(project))
 
@@ -241,7 +241,7 @@ def test_a_bundle_whose_vectors_cover_every_concept_answers_with_an_empty_note(
     nothing. A note on every search would be a note nobody reads."""
     monkeypatch.setenv("GEMINI_API_KEY", "test-key-not-used")
     monkeypatch.setattr(gemini, "embed", fake_embed)
-    from okragged import vectors
+    from okrag import vectors
 
     vectors.index(cfg(project))
 
@@ -260,7 +260,7 @@ def test_a_concept_written_since_the_last_index_is_ranked_rather_than_skipped(
     concept in front of it, reporting the neighbours and saying nothing."""
     monkeypatch.setenv("GEMINI_API_KEY", "test-key-not-used")
     monkeypatch.setattr(gemini, "embed", fake_embed)
-    from okragged import vectors
+    from okrag import vectors
 
     vectors.index(cfg(project))
 
@@ -281,7 +281,7 @@ def test_a_concept_written_since_the_last_index_is_ranked_rather_than_skipped(
     assert result.path == agent.MERGED
     assert "grooming" in [hit.concept_id for hit in result.hits]
     assert "1 concept(s) have no stored vector" in result.note
-    assert "not comparable" in result.note and "okragged index" in result.note
+    assert "not comparable" in result.note and "okrag index" in result.note
 
 
 def test_a_query_matching_none_of_the_unvectored_concepts_still_says_they_exist(
@@ -293,7 +293,7 @@ def test_a_query_matching_none_of_the_unvectored_concepts_still_says_they_exist(
     whether it matters."""
     monkeypatch.setenv("GEMINI_API_KEY", "test-key-not-used")
     monkeypatch.setattr(gemini, "embed", fake_embed)
-    from okragged import vectors
+    from okrag import vectors
 
     vectors.index(cfg(project))
 
@@ -373,11 +373,11 @@ def test_lint_reports_a_concept_past_its_stale_after(project):
 def test_lint_says_why_it_has_no_ghost_edges_until_the_index_has_run(project):
     report = agent.lint(cfg(project))
     assert report.ghosts == []
-    assert "okragged index" in report.ghosts_note
+    assert "okrag index" in report.ghosts_note
 
 
 def test_lint_reports_the_ghost_edges_the_index_computed(project):
-    sidecar = project / ".okragged"
+    sidecar = project / ".okrag"
     sidecar.mkdir(parents=True, exist_ok=True)
     (sidecar / "graph.json").write_text(
         json.dumps({"ghosts": [{"source": "holidays", "target": "pricing", "similarity": 0.9}]}),
@@ -421,7 +421,7 @@ def test_lint_reports_a_graph_that_no_longer_describes_this_bundle(project):
     )
     note = agent.lint(cfg(project)).ghosts_note
     assert "out of date" in note
-    assert "okragged index" in note
+    assert "okrag index" in note
 
 
 def test_a_graph_that_still_describes_the_bundle_is_not_called_out_of_date(project):
@@ -457,7 +457,7 @@ def test_the_contract_tells_an_agent_to_read_the_index_before_whole_concepts(pro
 
 
 def test_the_contract_names_the_index_as_a_resource_before_it_names_a_path(project):
-    """This text is served as `okragged://contract` to a consumer holding no
+    """This text is served as `okrag://contract` to a consumer holding no
     directory of ours, so step one cannot be an instruction to open a file. The
     path stays for a reader who does hold it - second, and marked as conditional."""
     text = agent.render_agents_md(cfg(project))
@@ -491,7 +491,7 @@ def test_the_contract_describes_the_instance_modes_instead_of_asserting_one(proj
     text = agent.render_agents_md(cfg(project))
     for tool in ("search", "read_concept", "lint", "add_source"):
         assert f"`{tool}`" in text
-    for mode in ("`okragged mcp`", "`okragged mcp --write`", "`okragged mcp --write --spend`"):
+    for mode in ("`okrag mcp`", "`okrag mcp --write`", "`okrag mcp --write --spend`"):
         assert f"| {mode} |" in text
     assert "what its tool list shows" in text
     assert "property of the instance" in text
@@ -508,19 +508,19 @@ def test_the_contract_says_a_recorded_source_is_not_yet_a_concept(project):
     arrives with a `build` nobody on this surface can trigger."""
     text = agent.render_agents_md(cfg(project))
     assert "records only" in text
-    assert "okragged build" in text
+    assert "okrag build" in text
 
 
 def test_the_contract_no_longer_offers_a_way_to_re_ingest_the_corpus(project):
     """The tool is gone, so the contract must not describe one (§13 M5)."""
     text = agent.render_agents_md(cfg(project))
     assert "| `ingest` |" not in text
-    assert "okragged build" in text
+    assert "okrag build" in text
 
 
 def test_the_generated_contract_names_no_path_in_the_producers_tree(project):
     """The M5 invariant, over the file as well as over the wire: `AGENTS.md` is
-    served as `okragged://contract` to a consumer with none of these directories.
+    served as `okrag://contract` to a consumer with none of these directories.
 
     Two kinds of path survive it, and both are addresses rather than instructions
     to open a file here: the bundle's own index, which is what `read_concept`
@@ -550,10 +550,10 @@ def test_the_path_check_catches_the_operations_text_it_replaced():
         "Three, over the MCP server registered in `.mcp.json`.\n"
         "- **ingest** — re-reads `sources/`, and only pays for the files whose bytes "
         "changed.\n"
-        "- **lint** — Ghost edges come from `.okragged/graph.json`, so run `okragged "
+        "- **lint** — Ghost edges come from `.okrag/graph.json`, so run `okrag "
         "index` if it reports having none to read."
     )
-    assert producer_paths(was) == [".mcp.json", ".okragged/graph.json"]
+    assert producer_paths(was) == [".mcp.json", ".okrag/graph.json"]
 
 
 def test_the_contract_explains_the_verified_rule_without_asserting_nobody_writes_it(project):
@@ -583,13 +583,13 @@ def test_registering_the_server_leaves_the_other_mcp_servers_alone(project):
 
     assert registered["mcpServers"]["other"] == {"command": "node"}
     assert registered["extra"] == 1
-    assert registered["mcpServers"]["okragged"]["args"] == ["mcp"]
+    assert registered["mcpServers"]["okrag"]["args"] == ["mcp"]
 
 
 def registered_entry(project) -> dict:
     agent.register(cfg(project))
     loaded = json.loads((project / ".mcp.json").read_text(encoding="utf-8-sig"))
-    return loaded["mcpServers"]["okragged"]
+    return loaded["mcpServers"]["okrag"]
 
 
 def test_the_registration_entry_names_the_bare_console_script_when_path_resolves_it(
@@ -601,7 +601,7 @@ def test_the_registration_entry_names_the_bare_console_script_when_path_resolves
 
     entry = registered_entry(project)
 
-    assert entry == {"command": "okragged", "args": ["mcp"]}
+    assert entry == {"command": "okrag", "args": ["mcp"]}
     assert not producer_paths(json.dumps(entry))
 
 
@@ -609,12 +609,12 @@ def test_an_unresolvable_command_falls_back_to_the_script_beside_this_interprete
     project, monkeypatch
 ):
     """The failure this replaces was total and unreadable: a client spawns the
-    server from `.mcp.json`, never from an activated shell, so `okragged` installed
+    server from `.mcp.json`, never from an activated shell, so `okrag` installed
     into a venv is not on the spawn's `PATH` and the whole server dies as
     `CONNECTION_CLOSED`. Same exposure as `okf/validate.py::_okflint`."""
     venv = project / "venv" / "Scripts"
     venv.mkdir(parents=True)
-    beside = venv / ("okragged.exe" if os.name == "nt" else "okragged")
+    beside = venv / ("okrag.exe" if os.name == "nt" else "okrag")
     beside.write_bytes(b"")
     monkeypatch.setattr(contract.shutil, "which", lambda name: None)
     monkeypatch.setattr(contract.sys, "executable", str(venv / "python.exe"))
@@ -622,7 +622,7 @@ def test_an_unresolvable_command_falls_back_to_the_script_beside_this_interprete
     command = registered_entry(project)["command"]
 
     assert command == str(beside)
-    assert Path(command).stem == "okragged", "the console script, not an interpreter"
+    assert Path(command).stem == "okrag", "the console script, not an interpreter"
 
 
 def test_the_fallback_gives_up_rather_than_naming_a_script_that_is_not_there(
@@ -633,7 +633,7 @@ def test_the_fallback_gives_up_rather_than_naming_a_script_that_is_not_there(
     monkeypatch.setattr(contract.shutil, "which", lambda name: None)
     monkeypatch.setattr(contract.sys, "executable", str(project / "nowhere" / "python.exe"))
 
-    assert registered_entry(project)["command"] == "okragged"
+    assert registered_entry(project)["command"] == "okrag"
 
 
 def test_writing_the_contract_does_not_register_the_server(project):
@@ -672,7 +672,7 @@ def test_the_contract_hands_a_foreign_project_an_entry_that_names_the_root_absol
 ):
     """A consumer's cwd is its own tree, so the target has to be spelled out."""
     text = agent.render_agents_md(cfg(project))
-    assert '"command": "okragged"' in text
+    assert '"command": "okrag"' in text
     assert '"--project"' in text
     assert project.resolve().as_posix() in text
 
@@ -699,13 +699,13 @@ def test_nothing_the_agent_layer_does_writes_into_the_bundle(project):
     assert bundle_bytes(project) == before, "nothing derived may enter bundle/"
 
 
-# --- okragged agent, and what --register adds ------------------------------------
+# --- okrag agent, and what --register adds ------------------------------------
 
 
 def run_cli(project: Path, monkeypatch, args: list[str]):
     from typer.testing import CliRunner
 
-    from okragged import cli
+    from okrag import cli
 
     monkeypatch.chdir(project)
     result = CliRunner().invoke(cli.app, args)
@@ -725,11 +725,11 @@ def test_the_agent_command_registers_only_when_asked(project, monkeypatch):
     run_cli(project, monkeypatch, ["agent", "--register"])
 
     entry = json.loads((project / ".mcp.json").read_text(encoding="utf-8-sig"))
-    entry = entry["mcpServers"]["okragged"]
+    entry = entry["mcpServers"]["okrag"]
     assert entry["args"] == ["mcp"]
     # bare on PATH or the console script beside this interpreter; never an
     # interpreter and never a script path (see `contract._command`)
-    assert Path(entry["command"]).stem == "okragged"
+    assert Path(entry["command"]).stem == "okrag"
 
 
 def test_registering_says_what_the_entry_it_wrote_grants(project, monkeypatch):
@@ -749,7 +749,7 @@ def test_registering_with_the_switches_puts_them_in_the_entrys_arguments(project
     run_cli(project, monkeypatch, ["agent", "--register", "--write", "--spend"])
 
     entry = json.loads((project / ".mcp.json").read_text(encoding="utf-8-sig"))
-    assert entry["mcpServers"]["okragged"]["args"] == ["mcp", "--write", "--spend"]
+    assert entry["mcpServers"]["okrag"]["args"] == ["mcp", "--write", "--spend"]
 
 
 def test_registering_without_the_switches_writes_the_entry_it_always_wrote(project, monkeypatch):
@@ -782,7 +782,7 @@ def test_the_switches_are_refused_rather_than_ignored_without_register(project, 
     Silently dropping a switch somebody typed is worse than refusing it."""
     from typer.testing import CliRunner
 
-    from okragged import cli
+    from okrag import cli
 
     monkeypatch.chdir(project)
     result = CliRunner().invoke(cli.app, ["agent", "--write"])
@@ -801,7 +801,7 @@ def test_the_entry_the_contract_hands_a_foreign_project_carries_no_switches(
     text = agent.render_agents_md(cfg(project))
 
     foreign = json.loads(text.split("```json")[1].split("```")[0])
-    assert foreign["mcpServers"]["okragged"]["args"] == [
+    assert foreign["mcpServers"]["okrag"]["args"] == [
         "mcp",
         "--project",
         project.resolve().as_posix(),
@@ -860,7 +860,7 @@ def ingestable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key-not-used")
     monkeypatch.setattr(pipeline, "synthesize", fake_synthesize)
     monkeypatch.setattr(pipeline, "weave", lambda **kw: WeaveResult(kw["body"], invented=[]))
-    (tmp_path / "okragged.toml").write_text(TOML, encoding="utf-8", newline="\n")
+    (tmp_path / "okrag.toml").write_text(TOML, encoding="utf-8", newline="\n")
     (tmp_path / "sources").mkdir()
     for name in ("alpha", "beta"):
         (tmp_path / "sources" / f"{name}.md").write_text(
@@ -912,7 +912,7 @@ def added(
     title: str | None = None,
     synthesize: bool = False,
 ):
-    from okragged.agent.write import add_source
+    from okrag.agent.write import add_source
 
     return add_source(config_module.load(project), text, title, synthesize=synthesize)
 
@@ -984,7 +984,7 @@ def test_the_next_build_authors_the_concept_the_added_source_describes(
         produced.concept_id,
     )
     assert result.uri in concept.sources[0].resource
-    assert concept.extra["x_okragged_source_hash"]
+    assert concept.extra["x_okrag_source_hash"]
 
 
 def test_adding_a_source_leaves_the_rest_of_the_corpus_alone_and_undeprecated(ingestable):
@@ -1029,7 +1029,7 @@ def test_add_source_refuses_text_that_is_already_a_concept(ingestable):
 
 def test_add_source_refuses_when_the_configured_globs_would_never_discover_it(ingestable):
     """`include` is configurable, so the file could land where nothing reads it."""
-    (ingestable / "okragged.toml").write_text(
+    (ingestable / "okrag.toml").write_text(
         TOML.replace('include = ["**/*.md"]', 'include = ["*.md"]'),
         encoding="utf-8",
         newline="\n",
@@ -1054,14 +1054,14 @@ def test_a_synthesizing_call_authors_the_concept_instead_of_leaving_it_to_a_buil
         concept_id,
     )
     assert result.uri in concept.sources[0].resource
-    assert concept.extra["x_okragged_source_hash"]
+    assert concept.extra["x_okrag_source_hash"]
 
 
 def test_a_spending_write_leaves_what_it_authored_findable_by_search(
     ingestable, monkeypatch
 ):
     """The write path and the read path on one clock. Concept vectors come from
-    `okragged index`, which nothing on this surface can trigger, so without this
+    `okrag index`, which nothing on this surface can trigger, so without this
     the call authors a concept `search` cannot rank until a human runs a command —
     knowledge added over the protocol that the protocol cannot find."""
     embeddable(monkeypatch)
@@ -1083,7 +1083,7 @@ def test_a_write_that_cannot_embed_still_authors_and_says_the_vectors_are_behind
 
     assert result.synthesized and result.concepts
     assert not result.indexed
-    assert "readable" in result.errors[0] and "okragged index" in result.errors[0]
+    assert "readable" in result.errors[0] and "okrag index" in result.errors[0]
     assert "GEMINI_API_KEY" in result.errors[0]
 
 
@@ -1104,7 +1104,7 @@ def test_a_lock_another_writer_holds_is_reported_with_the_prose_kept(ingestable)
     flight refuses it — a failure mode recording does not have. It may not raise:
     the source file is already written, and a traceback would tell the caller their
     assertion was lost while it sat in `sources/` waiting for that build."""
-    from okragged import lock
+    from okrag import lock
 
     config = config_module.load(ingestable)
     with lock.hold(config.sidecar_root, "some other build"):
@@ -1113,7 +1113,7 @@ def test_a_lock_another_writer_holds_is_reported_with_the_prose_kept(ingestable)
     assert not result.synthesized
     assert (ingestable / result.uri).is_file()
     assert "some other build" in result.errors[0]
-    assert "is recorded" in result.errors[0] and "okragged build" in result.errors[0]
+    assert "is recorded" in result.errors[0] and "okrag build" in result.errors[0]
 
 
 def test_a_missing_synthesis_credential_is_reported_and_named_as_the_synthesis_one(
@@ -1136,11 +1136,11 @@ def test_a_missing_synthesis_credential_is_reported_and_named_as_the_synthesis_o
 def test_add_source_takes_no_lock_and_is_not_refused_by_a_writer_holding_one(
     ingestable,
 ):
-    """It writes one file into `sources/`, which okragged never reads back as
+    """It writes one file into `sources/`, which okrag never reads back as
     state: the path is generated per assertion and identical bytes reuse it, so
     there is nothing for a concurrent build to collide with. Taking the lock would
     make recording an assertion fail for the duration of somebody's rebuild."""
-    from okragged import lock
+    from okrag import lock
 
     config = config_module.load(ingestable)
     with lock.hold(config.sidecar_root, "some other build"):
@@ -1185,7 +1185,7 @@ def test_concurrent_add_source_calls_with_distinct_text_lose_nothing(ingestable)
 
 
 def verified(project: Path, identity: str = "user-1", concept_id: str = "revenue-policy"):
-    from okragged.agent.verify import verify_concept
+    from okrag.agent.verify import verify_concept
 
     return verify_concept(cfg(project), concept_id, identity)
 
@@ -1220,7 +1220,7 @@ def test_verify_concept_never_touches_status(project):
 
 
 def test_verify_concept_refuses_an_unknown_concept_id(project):
-    from okragged.agent.verify import verify_concept
+    from okrag.agent.verify import verify_concept
 
     with pytest.raises(LookupError):
         verify_concept(cfg(project), "no-such-concept", "user-1")
@@ -1234,8 +1234,8 @@ def test_two_concurrent_verifications_of_the_same_concept_lose_no_entry(project)
     at all. Retrying on `LockHeld` (rather than treating it as a failure) is
     what a caller who wants both entries to land actually does with the lock
     this reuses."""
-    from okragged.agent.verify import verify_concept
-    from okragged.lock import LockHeld
+    from okrag.agent.verify import verify_concept
+    from okrag.lock import LockHeld
 
     def verify_with_retry(identity: str):
         while True:
@@ -1268,7 +1268,7 @@ def test_concurrent_add_source_calls_with_identical_text_collapse_to_one_file(in
 # --- the server ------------------------------------------------------------------
 
 def server_for(project: Path, *, write: bool = False, spend: bool = False):
-    from okragged.agent.server import build_server
+    from okrag.agent.server import build_server
 
     return build_server(cfg(project), write=write, spend=spend)
 
@@ -1415,8 +1415,8 @@ def test_each_write_mode_describes_the_tool_its_own_instance_actually_offers(pro
     recording = flat(anyio.run(lambda: described(write=True))["add_source"])
     synthesizing = flat(anyio.run(lambda: described(write=True, spend=True))["add_source"])
 
-    assert "No concept appears until someone runs `okragged build`" in recording
-    assert "okragged build" not in synthesizing
+    assert "No concept appears until someone runs `okrag build`" in recording
+    assert "okrag build" not in synthesizing
     assert "spends the operator's credential" in synthesizing
     assert "spend_rate_limit_per_hour" in synthesizing
 
@@ -1439,7 +1439,7 @@ def test_the_server_does_not_read_the_projects_env_unless_spending_is_enabled(
     inherited it merely for being pointed at their directory, and the one thing it
     buys is the embedding key `search` spends — so it is now asked for or absent.
     """
-    from okragged.agent import server as server_module
+    from okrag.agent import server as server_module
 
     write_env(project, "GEMINI_API_KEY=the-producers-key")
     monkeypatch.setattr(
@@ -1461,8 +1461,8 @@ def test_with_spending_off_search_traverses_though_the_env_holds_a_credential(
     """Non-vacuous because the vectors are on disk: traversal is chosen by the
     absent credential, not by an absent index. The consumer keeps an answer and
     the producer keeps their quota, and `search` says which path answered."""
-    from okragged import vectors
-    from okragged.agent import server as server_module
+    from okrag import vectors
+    from okrag.agent import server as server_module
 
     monkeypatch.setenv("GEMINI_API_KEY", "test-key-not-used")
     monkeypatch.setattr(gemini, "embed", fake_embed)
@@ -1554,7 +1554,7 @@ def test_the_path_check_catches_the_instruction_and_the_entry_it_replaced():
     `agent/AGENTS.md` was the contract, and M4's registration entry spawned the
     server through the producer's own venv.
     """
-    from okragged.agent.server import INSTRUCTIONS
+    from okrag.agent.server import INSTRUCTIONS
 
     was = (
         "An Open Knowledge Format bundle. Read index.md first, then read whole concept "
@@ -1567,15 +1567,15 @@ def test_the_path_check_catches_the_instruction_and_the_entry_it_replaced():
     assert producer_paths(INSTRUCTIONS) == []
 
 
-# --- okragged mcp ----------------------------------------------------------------
+# --- okrag mcp ----------------------------------------------------------------
 
 
 def served(project: Path, monkeypatch, args: list[str]) -> tuple[Path, dict]:
-    """What `okragged mcp` would have served, and how, without serving it."""
+    """What `okrag mcp` would have served, and how, without serving it."""
     from typer.testing import CliRunner
 
-    from okragged import cli
-    from okragged.agent import server
+    from okrag import cli
+    from okrag.agent import server
 
     seen: list[tuple[Path, dict]] = []
     monkeypatch.setattr(server, "main", lambda root, **modes: seen.append((root, modes)))
@@ -1602,7 +1602,7 @@ def test_the_server_command_takes_its_project_from_the_environment_too(
     elsewhere = tmp_path / "consumer"
     elsewhere.mkdir()
     monkeypatch.chdir(elsewhere)
-    monkeypatch.setenv("OKRAGGED_PROJECT", str(project))
+    monkeypatch.setenv("OKRAG_PROJECT", str(project))
     assert served_root(project, monkeypatch, ["mcp"]) == project
 
 
@@ -1632,7 +1632,7 @@ def test_no_environment_variable_can_turn_writing_or_spending_on(project, monkey
     """`--project` takes an `envvar` and these deliberately do not. An instance is
     what the operator who wrote its `.mcp.json` entry asked for: a mode a stray
     variable could switch on is the ambient authority this change removes."""
-    for var in ("OKRAGGED_WRITE", "OKRAGGED_SPEND"):
+    for var in ("OKRAG_WRITE", "OKRAG_SPEND"):
         monkeypatch.setenv(var, "1")
 
     _, modes = served(project, monkeypatch, ["mcp", "--project", str(project)])
@@ -1651,7 +1651,7 @@ def test_the_server_command_says_so_on_stderr_when_there_is_no_bundle_to_serve(
     """stdout carries the protocol, so a diagnostic there corrupts the session."""
     from typer.testing import CliRunner
 
-    from okragged import cli
+    from okrag import cli
 
     monkeypatch.chdir(tmp_path)
     result = CliRunner().invoke(cli.app, ["mcp"])

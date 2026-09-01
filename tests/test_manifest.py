@@ -7,11 +7,11 @@ import subprocess
 import pytest
 import yaml
 
-from okragged import okf
-from okragged.okf.validate import _okflint
+from okrag import okf
+from okrag.okf.validate import _okflint
 
 OKFLINT = _okflint()
-"""Resolved the way okragged resolves it — beside this interpreter, then `PATH`.
+"""Resolved the way okrag resolves it — beside this interpreter, then `PATH`.
 Branching on `shutil.which` instead would skip these whenever the venv is not
 activated, which is exactly the case the resolution exists to cover."""
 
@@ -49,7 +49,7 @@ def test_okflint_is_found_beside_the_interpreter_when_path_does_not_have_it(
 ):
     """The MCP server is spawned from `.mcp.json`, not from an activated venv."""
     # okf/__init__ re-exports the `validate` function, shadowing the module name
-    validate_module = importlib.import_module("okragged.okf.validate")
+    validate_module = importlib.import_module("okrag.okf.validate")
 
     scripts = tmp_path / "Scripts"
     scripts.mkdir()
@@ -64,7 +64,7 @@ def test_okflint_is_found_beside_the_interpreter_when_path_does_not_have_it(
 
 def test_okflint_still_falls_back_to_path_when_nothing_sits_beside_it(tmp_path, monkeypatch):
     # okf/__init__ re-exports the `validate` function, shadowing the module name
-    validate_module = importlib.import_module("okragged.okf.validate")
+    validate_module = importlib.import_module("okrag.okf.validate")
 
     monkeypatch.setattr(validate_module.sys, "executable", str(tmp_path / "python.exe"))
     monkeypatch.setattr(validate_module.shutil, "which", lambda _: "/elsewhere/okflint")
@@ -83,7 +83,7 @@ def test_okflint_agrees_with_the_builtin_checks(tmp_path):
             title="A",
             description="d",
             body="See [missing](/nope.md).",
-            generated={"by": "okragged/test", "at": "2026-08-04T00:00:00Z"},
+            generated={"by": "okrag/test", "at": "2026-08-04T00:00:00Z"},
         ),
     )
     okf.write_indexes(bundle, "0.2", "T")

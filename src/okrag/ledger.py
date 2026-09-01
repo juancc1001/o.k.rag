@@ -1,4 +1,4 @@
-"""The idempotency ledger — `.okragged/manifest.json` (DESIGN.md §5).
+"""The idempotency ledger — `.okrag/manifest.json` (DESIGN.md §5).
 
 Not `okf/manifest.py`, which generates `okf-base.yaml` for okflint. This one is
 sidecar state, and it answers the three questions a rebuild has to ask:
@@ -138,7 +138,7 @@ class Ledger:
             return "carries a `verified` block"
         record = self.concepts.get(concept_id)
         if record is not None and body_hash(concept.body) != record.body_sha256:
-            return "edited since okragged last wrote it"
+            return "edited since okrag last wrote it"
         return None
 
     def note_concept(self, concept_id: str, source_uri: str, body: str) -> None:

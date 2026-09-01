@@ -1,4 +1,4 @@
-"""`okragged build-view` / `okragged serve --all`: staleness detection and the
+"""`okrag build-view` / `okrag serve --all`: staleness detection and the
 npm subprocess wrapper, kept offline by monkeypatching subprocess itself - a
 cold `node_modules` needs network, which the suite's no-network invariant forbids.
 """
@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from okragged import cli
+from okrag import cli
 
 runner = CliRunner()
 

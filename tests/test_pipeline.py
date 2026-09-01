@@ -4,9 +4,9 @@ from pathlib import Path
 
 import pytest
 
-from okragged import config as config_module
-from okragged import okf, pipeline
-from okragged.synth import (
+from okrag import config as config_module
+from okrag import okf, pipeline
+from okrag.synth import (
     MAX_CONCEPT_WORDS,
     Outline,
     ProviderHTTPError,
@@ -42,8 +42,8 @@ def project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setattr(pipeline, "weave", fake_weave)
     (tmp_path / "sources").mkdir()
     (tmp_path / "sources" / "revenue-policy.md").write_text(SAMPLE, encoding="utf-8")
-    (tmp_path / "okragged.toml").write_text(
-        '[bundle]\nroot = "bundle"\nokf_version = "0.2"\nactor = "okragged/test"\n\n'
+    (tmp_path / "okrag.toml").write_text(
+        '[bundle]\nroot = "bundle"\nokf_version = "0.2"\nactor = "okrag/test"\n\n'
         '[sources.local]\npath = "sources"\ninclude = ["**/*.md"]\n\n'
         '[types]\nallowed = ["Document", "Policy"]\nallow_new = true\n',
         encoding="utf-8",
@@ -94,9 +94,9 @@ def test_one_file_in_one_conformant_concept_out(project, monkeypatch):
     concept = okf.parse(written, "revenue-policy")
     assert concept.type == "Policy"
     assert concept.status == "draft"
-    assert concept.generated == {"by": "okragged/test", "at": concept.generated["at"]}
+    assert concept.generated == {"by": "okrag/test", "at": concept.generated["at"]}
     assert concept.sources[0].id == "revenue-policy"
-    assert concept.extra["x_okragged_source_hash"]
+    assert concept.extra["x_okrag_source_hash"]
     # never fabricate a verification event
     assert concept.verified == []
 

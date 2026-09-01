@@ -8,11 +8,11 @@ from pydantic import BaseModel, Field
 
 def _default_actor() -> str:
     """`generated.by` for every concept this build writes — derived from the
-    installed version (same value as `okragged.__version__`) so a hand-kept
+    installed version (same value as `okrag.__version__`) so a hand-kept
     copy can't drift and misattribute provenance in the bundle."""
     from . import _installed_version
 
-    return f"okragged/{_installed_version()}"
+    return f"okrag/{_installed_version()}"
 
 
 class BundleConfig(BaseModel):
@@ -77,10 +77,10 @@ class McpConfig(BaseModel):
     resource_server_url: str | None = None
     jwks_url: str | None = None
     required_scopes: list[str] = Field(default_factory=list)
-    """All optional/`None` by default. `okragged mcp --transport http` refuses to
+    """All optional/`None` by default. `okrag mcp --transport http` refuses to
     start unless all three URLs are set - none of these is a secret (the issuer's
     public identity and this server's own resource URL, not a credential), so
-    they belong in `okragged.toml` rather than `.env`."""
+    they belong in `okrag.toml` rather than `.env`."""
     spend_scopes: list[str] = Field(default_factory=list)
     """Checked only for the synthesizing `add_source` tool, not for connecting
     at all - an ordinary read-only consumer's token satisfies `required_scopes`
@@ -110,7 +110,7 @@ class Config(BaseModel):
     @property
     def bundle_root(self) -> Path:
         """The published bundle directory. A staged run reads from here and
-        writes into `.okragged/staging/` instead (see `staging.py`) — this path
+        writes into `.okrag/staging/` instead (see `staging.py`) — this path
         itself never gets a second meaning."""
         return self.project_root / self.bundle.root
 
@@ -120,7 +120,7 @@ class Config(BaseModel):
 
     @property
     def sidecar_root(self) -> Path:
-        return self.project_root / ".okragged"
+        return self.project_root / ".okrag"
 
     @property
     def bundle_title(self) -> str:
@@ -131,7 +131,7 @@ class Config(BaseModel):
 
 def load(project_root: Path | None = None) -> Config:
     root = (project_root or Path.cwd()).resolve()
-    path = root / "okragged.toml"
+    path = root / "okrag.toml"
     # utf-8-sig: hand-edited file, so tolerate a BOM (tomllib would reject it)
     raw = tomllib.loads(path.read_text(encoding="utf-8-sig")) if path.exists() else {}
     return Config(

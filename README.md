@@ -1,8 +1,8 @@
-# okragged
+# okrag
 
 Turns a folder of files into a conformant **Open Knowledge Format (OKF) v0.2** bundle — a directory of markdown concepts with YAML frontmatter that agents and humans can both read, with no SDK required.
 
-**Status: M1–M4 done; M5–M7 in progress with their implementations built and only real-world exit criteria (a real PyPI publish, a session from a truly foreign checkout) still open; M8 done.** A long source is planned into sections, and each becomes its own concept under a parent. A second pass weaves cross-links into the prose, every directory gets an `index.md`, and a rebuild only touches the sources that changed. `okragged index` then embeds the bundle, projects it to 2D, and writes a `graph.json` with both edge layers, while `okragged serve` renders it — a sigma.js map where proximity represents semantic similarity and a **ghost edge** connects a pair that embeddings indicate are related but nobody linked. Every build generates the **agent contract** in `agent/AGENTS.md`; the packaged MCP server exposes `search`, `read_concept`, `add_source`, `lint`, and — on a hosted, OAuth-authenticated instance configured to offer it — `verify_concept`, none of which *requires* a credential to call. Over stdio the server is read-only unless launched otherwise, and reads no `.env` file unless requested; over `--transport http` every request is authenticated as an OAuth 2.1 resource server, and writing or spending additionally needs the scopes and rate limit configured for it (see [Hosting over http](#hosting-over-http--okragged-mcp---transport-http)). See [Roadmap and open work](#roadmap-and-open-work).
+**Status: M1–M4 done; M5–M7 in progress with their implementations built and only real-world exit criteria (a real PyPI publish, a session from a truly foreign checkout) still open; M8 done.** A long source is planned into sections, and each becomes its own concept under a parent. A second pass weaves cross-links into the prose, every directory gets an `index.md`, and a rebuild only touches the sources that changed. `okrag index` then embeds the bundle, projects it to 2D, and writes a `graph.json` with both edge layers, while `okrag serve` renders it — a sigma.js map where proximity represents semantic similarity and a **ghost edge** connects a pair that embeddings indicate are related but nobody linked. Every build generates the **agent contract** in `agent/AGENTS.md`; the packaged MCP server exposes `search`, `read_concept`, `add_source`, `lint`, and — on a hosted, OAuth-authenticated instance configured to offer it — `verify_concept`, none of which *requires* a credential to call. Over stdio the server is read-only unless launched otherwise, and reads no `.env` file unless requested; over `--transport http` every request is authenticated as an OAuth 2.1 resource server, and writing or spending additionally needs the scopes and rate limit configured for it (see [Hosting over http](#hosting-over-http--okrag-mcp---transport-http)). See [Roadmap and open work](#roadmap-and-open-work).
 
 - Architecture, data model and rationale: [`DESIGN.md`](DESIGN.md)
 - **Roadmap and milestones (M1–M11): [`DESIGN.md` §13](DESIGN.md#13-milestones)**
@@ -13,12 +13,12 @@ Turns a folder of files into a conformant **Open Knowledge Format (OKF) v0.2** b
 
 A vector database gives you semantic retrieval and nothing a human can read: the meaning lives in float arrays and what comes back is a chunk with no structure around it. A folder of markdown gives you the opposite — portable, readable, diffable — but retrievable only by grep and by whatever links someone remembered to write.
 
-okragged is designed to have both, and what makes that possible is the **sidecar rule** ([`DESIGN.md` §2](DESIGN.md#2-the-three-layer-model)): nothing derived ever goes inside `bundle/`. Embeddings, the ANN index, the 2D projection and the content hashes all live in `.okragged/`, which is disposable and rebuildable. The bundle therefore stays something you can `tar` up and hand to someone who has never heard of okragged, while *also* being the corpus of a vector index — with no `embedding:` frontmatter key and no `.faiss` file anywhere near it. Swapping embedding providers is deleting `embeddings.npy` and re-embedding; `bundle/` does not notice.
+okrag is designed to have both, and what makes that possible is the **sidecar rule** ([`DESIGN.md` §2](DESIGN.md#2-the-three-layer-model)): nothing derived ever goes inside `bundle/`. Embeddings, the ANN index, the 2D projection and the content hashes all live in `.okrag/`, which is disposable and rebuildable. The bundle therefore stays something you can `tar` up and hand to someone who has never heard of okrag, while *also* being the corpus of a vector index — with no `embedding:` frontmatter key and no `.faiss` file anywhere near it. Swapping embedding providers is deleting `embeddings.npy` and re-embedding; `bundle/` does not notice.
 
 What the vectors add on top of the markdown:
 
-- **Node position** in the graph — proximity means semantic similarity rather than connectivity. **Computed** by `okragged index`.
-- **Ghost edges** — pairs of concepts that are highly similar but have *no* markdown link between them. Links alone cannot reveal a missing link. A ghost edge is the lint signal that two concepts may concern the same subject without being connected. Ghost edges are **computed** by `okragged index`, shown in the view mounted by `okragged serve`, and reported by the `lint` tool.
+- **Node position** in the graph — proximity means semantic similarity rather than connectivity. **Computed** by `okrag index`.
+- **Ghost edges** — pairs of concepts that are highly similar but have *no* markdown link between them. Links alone cannot reveal a missing link. A ghost edge is the lint signal that two concepts may concern the same subject without being connected. Ghost edges are **computed** by `okrag index`, shown in the view mounted by `okrag serve`, and reported by the `lint` tool.
 - **Semantic search** over concepts. The MCP server's `search` works without them by traversing the indexes and the links; embeddings upgrade that path rather than enable it, and only when a credential is present to embed the query with.
 
 Embeddings sit deliberately outside the build path ([§6.8](DESIGN.md)). Concepts are produced, validated and consumed without them, which is why `build` never calls an embedding model and `index` is a separate command.
@@ -40,7 +40,7 @@ python3 -m venv .venv
 ./.venv/bin/python -m pip install -e ".[dev]"
 ```
 
-This installs the `okragged` console script plus `okflint` (the OKF linter), `pytest`, and the MCP SDK — the last two so the suite runs whole rather than skipping its server tests. Runtime dependencies: `anthropic`, `google-genai`, `markitdown[all]`, `numpy`, `pydantic`, `python-dotenv`, `pyyaml`, `typer`.
+This installs the `okrag` console script plus `okflint` (the OKF linter), `pytest`, and the MCP SDK — the last two so the suite runs whole rather than skipping its server tests. Runtime dependencies: `anthropic`, `google-genai`, `markitdown[all]`, `numpy`, `pydantic`, `python-dotenv`, `pyyaml`, `typer`.
 
 Four extras are deliberately *not* installed by default, because none is needed to produce or validate a bundle:
 
@@ -48,12 +48,12 @@ Four extras are deliberately *not* installed by default, because none is needed 
 .\.venv\Scripts\python.exe -m pip install -e ".[umap]"        # umap-learn; pulls numba
 .\.venv\Scripts\python.exe -m pip install -e ".[fastembed]"   # local embeddings; ~150 MB of onnxruntime
 .\.venv\Scripts\python.exe -m pip install -e ".[mcp]"         # the MCP SDK; pulls starlette + uvicorn
-.\.venv\Scripts\python.exe -m pip install -e ".[api]"         # FastAPI + uvicorn, for `okragged serve`
+.\.venv\Scripts\python.exe -m pip install -e ".[api]"         # FastAPI + uvicorn, for `okrag serve`
 ```
 
-Without `umap`, `okragged index` projects with PCA and says so. Without `fastembed`, the local embedding provider reports the extra rather than an import error. Without `mcp`, everything except starting the MCP server still works — `okragged agent` still generates the contract, and the server reports the extra when it is launched. Without `api`, `okragged serve` reports the extra instead of starting.
+Without `umap`, `okrag index` projects with PCA and says so. Without `fastembed`, the local embedding provider reports the extra rather than an import error. Without `mcp`, everything except starting the MCP server still works — `okrag agent` still generates the contract, and the server reports the extra when it is launched. Without `api`, `okrag serve` reports the extra instead of starting.
 
-The graph view is built separately and needs Node 20+ — see [The graph view](#the-graph-view--okragged-serve) for the five commands that put it on screen.
+The graph view is built separately and needs Node 20+ — see [The graph view](#the-graph-view--okrag-serve) for the five commands that put it on screen.
 
 `markitdown[all]` prints a `Couldn't find ffmpeg` warning on import. It only affects audio extraction and is safe to ignore.
 
@@ -67,7 +67,7 @@ copy .env.example .env      # cp on macOS/Linux
 Verify everything at once:
 
 ```powershell
-.\.venv\Scripts\okragged doctor
+.\.venv\Scripts\okrag doctor
 .\.venv\Scripts\python.exe -m pytest tests -q
 ```
 
@@ -75,7 +75,7 @@ Verify everything at once:
 
 ### Providers
 
-Two stages of `okragged build` call a model — synthesis and link-weave — and both use the same provider. Set which one in `okragged.toml`:
+Two stages of `okrag build` call a model — synthesis and link-weave — and both use the same provider. Set which one in `okrag.toml`:
 
 ```toml
 [synth]
@@ -87,14 +87,14 @@ provider = "gemini"     # gemini | anthropic
 | `gemini` | `GEMINI_API_KEY` or `GOOGLE_API_KEY` | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) | `gemini-2.5-pro` |
 | `anthropic` | `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, or an `ant auth login` profile | [platform.claude.com](https://platform.claude.com/settings/keys) | `claude-opus-5` |
 
-Both enforce the concept schema natively, so output shape is guaranteed rather than parsed out of prose — Anthropic via `output_config.format`, Gemini via `response_json_schema`. Provider modules live in `src/okragged/synth/providers/` and are thin: authentication, request shape, and decline detection. Adding a third means adding one module.
+Both enforce the concept schema natively, so output shape is guaranteed rather than parsed out of prose — Anthropic via `output_config.format`, Gemini via `response_json_schema`. Provider modules live in `src/okrag/synth/providers/` and are thin: authentication, request shape, and decline detection. Adding a third means adding one module.
 
 Two provider-specific notes:
 
 - `[synth].effort` applies to **Anthropic only**. Gemini has no equivalent, so its thinking depth stays at the model default.
 - Model IDs change. If `doctor` says your configured model is unavailable, set `[synth].model` to one of the names it lists.
 
-`okragged index` has its own provider, set separately in `[vectors]`, because the embedding question is genuinely open ([`DESIGN.md` §12](DESIGN.md#12-risks-and-open-questions) Risk 4) and is meant to be settled by measuring ghost-edge quality on a real corpus:
+`okrag index` has its own provider, set separately in `[vectors]`, because the embedding question is genuinely open ([`DESIGN.md` §12](DESIGN.md#12-risks-and-open-questions) Risk 4) and is meant to be settled by measuring ghost-edge quality on a real corpus:
 
 | Provider | Credential | Model | Notes |
 |---|---|---|---|
@@ -124,18 +124,18 @@ Swapping between them is a config edit: `embeddings_meta.json` records which pro
 
 **No tool on the MCP surface *requires* a credential, `add_source` included.** Recording prose calls no model, so the whole surface answers for a consumer holding somebody else's bundle and no key of their own — which is what M4 is for. Over stdio there is nobody to charge: MCP has no identity, the server being a subprocess of whatever client spawned it, so "whose key pays" would otherwise be settled by an accident of environment precedence.
 
-**And `okragged mcp` no longer reads your `.env` unless you ask it to.** The server used to load the project's `.env` merely for being pointed at that directory, and what that buys is the *embedding* key `search` uses to embed a query — so a consumer's search spent the producer's quota. Reads cost money even where writes do not. Two switches, both off by default, and neither reads an environment variable, because a mode a stray variable could turn on is the ambient authority this removes:
+**And `okrag mcp` no longer reads your `.env` unless you ask it to.** The server used to load the project's `.env` merely for being pointed at that directory, and what that buys is the *embedding* key `search` uses to embed a query — so a consumer's search spent the producer's quota. Reads cost money even where writes do not. Two switches, both off by default, and neither reads an environment variable, because a mode a stray variable could turn on is the ambient authority this removes:
 
 | invocation | the corpus | your credentials |
 |---|---|---|
-| `okragged mcp` | read-only; `add_source` is absent, not present-and-refusing | unread — `search` traverses the index and says so |
+| `okrag mcp` | read-only; `add_source` is absent, not present-and-refusing | unread — `search` traverses the index and says so |
 | `--spend` | read-only | read; `search` may embed the query |
-| `--write` | `add_source` records prose for the next `okragged build` | unread |
+| `--write` | `add_source` records prose for the next `okrag build` | unread |
 | `--write --spend` | `add_source` records prose, **authors its concept, and embeds it** so `search` can rank it | read; a `[synth]` call for the concept and a `[vectors]` one for its vector |
 
 **Over stdio, what stands behind the spending mode is that you launched it, and nothing else.** There is no identity and no rate limit: a caller who owns the process could present any token he was asked for and delete any counter kept beside the bundle. So `--write --spend` there is for an instance *you* run for *your* agent, where the caller and the payer are the same person; it is not a way to let somebody else spend your key on terms.
 
-**Over `--transport http`, that changes** — see [Hosting over http](#hosting-over-http--okragged-mcp---transport-http) below, which is where a channel with someone else on the far end exists at all and where [§13 M8 criterion 4](DESIGN.md#13-milestones) binds an identity and a rate limit to it.
+**Over `--transport http`, that changes** — see [Hosting over http](#hosting-over-http--okrag-mcp---transport-http) below, which is where a channel with someone else on the far end exists at all and where [§13 M8 criterion 4](DESIGN.md#13-milestones) binds an identity and a rate limit to it.
 
 `build` **fails its pre-flight before doing work** — it refuses before extracting your corpus rather than after, so a missing key never leaves debris.
 
@@ -143,44 +143,44 @@ Swapping between them is a config edit: `embeddings_meta.json` records which pro
 
 | Entry point | Reads |
 |---|---|
-| `okragged <command>` | `.env` beside `okragged.toml`, then the environment |
-| `okragged mcp --project X` | `X/.env`, then the environment |
+| `okrag <command>` | `.env` beside `okrag.toml`, then the environment |
+| `okrag mcp --project X` | `X/.env`, then the environment |
 | the Python API | **nothing** — see below |
 
-The library deliberately reads no `.env`. `okragged` the command loads one because a human typed the command; a function call has no business going looking for a dotfile in whatever directory it was invoked from. Put the key in the environment, or hand `build` a `Config` for a project whose keys you loaded yourself.
+The library deliberately reads no `.env`. `okrag` the command loads one because a human typed the command; a function call has no business going looking for a dotfile in whatever directory it was invoked from. Put the key in the environment, or hand `build` a `Config` for a project whose keys you loaded yourself.
 
 **For a consumer registering the server against someone else's bundle**, supply nothing at all — no `env` block, no key:
 
 ```json
-{"mcpServers": {"okragged": {
-  "command": "okragged",
+{"mcpServers": {"okrag": {
+  "command": "okrag",
   "args": ["mcp", "--project", "/path/to/the/bundle"]
 }}}
 ```
 
 Every tool that instance offers works that way. `search` answers by traversal instead of by embedding kNN and says which path answered. Add `--write` to the `args` if that instance should also offer `add_source`, and `--spend` if it should read the project's `.env`. Those two together turn `add_source` into one that authors the concept as well, which is why they belong to an instance you run for your own agent rather than to one you registered against somebody else's directory — `X/.env` is the *producer's* file, and may be neither present on your machine nor yours to use. Put your own key in this entry's `env` instead.
 
-`.env` is gitignored; `.env.example` is the committed template. `okragged doctor` reports both providers, whether each credential was found, and whether the configured model exists for your key.
+`.env` is gitignored; `.env.example` is the committed template. `okrag doctor` reports both providers, whether each credential was found, and whether the configured model exists for your key.
 
 ---
 
 ## Usage
 
 ```powershell
-okragged doctor                # both providers, credentials, reachability, model availability
-okragged build --dry-run       # extract + report only. No model calls, no writes.
-okragged build                 # full pipeline -> bundle/ + okf-base.yaml
-okragged index                 # embed + project + graph.json -> .okragged/ only
-okragged build-view            # build the graph view from web/ (checkout only)
-okragged serve                 # the read-only API, and the graph view if it is built
-okragged serve --all           # ... building the view first if it is missing or stale
-okragged check                 # validate an existing bundle without rebuilding
-okragged agent                 # regenerate agent/AGENTS.md (offline)
-okragged agent --register      # also register the server in .mcp.json, read-only
-okragged agent --register --write --spend   # ... as a writing, spending instance
-okragged mcp --project <dir>   # serve a bundle to an MCP client over stdio, read-only
-okragged mcp --write --spend   # ... offering add_source, on your credential
-okragged extract <file>        # print extracted text for one file (offline, for debugging)
+okrag doctor                # both providers, credentials, reachability, model availability
+okrag build --dry-run       # extract + report only. No model calls, no writes.
+okrag build                 # full pipeline -> bundle/ + okf-base.yaml
+okrag index                 # embed + project + graph.json -> .okrag/ only
+okrag build-view            # build the graph view from web/ (checkout only)
+okrag serve                 # the read-only API, and the graph view if it is built
+okrag serve --all           # ... building the view first if it is missing or stale
+okrag check                 # validate an existing bundle without rebuilding
+okrag agent                 # regenerate agent/AGENTS.md (offline)
+okrag agent --register      # also register the server in .mcp.json, read-only
+okrag agent --register --write --spend   # ... as a writing, spending instance
+okrag mcp --project <dir>   # serve a bundle to an MCP client over stdio, read-only
+okrag mcp --write --spend   # ... offering add_source, on your credential
+okrag extract <file>        # print extracted text for one file (offline, for debugging)
 ```
 
 Each of these is a function too — see [Driving it from Python](#driving-it-from-python).
@@ -190,9 +190,9 @@ Typical first run:
 ```powershell
 mkdir sources                            # drop your files here
 copy .env.example .env                   # then add your key
-.\.venv\Scripts\okragged doctor            # confirm the provider is reachable
-.\.venv\Scripts\okragged build --dry-run   # confirm discovery + extraction
-.\.venv\Scripts\okragged build
+.\.venv\Scripts\okrag doctor            # confirm the provider is reachable
+.\.venv\Scripts\okrag build --dry-run   # confirm discovery + extraction
+.\.venv\Scripts\okrag build
 ```
 
 Start with two or three files. The first real run is where the synthesis prompt gets tuned. After that, a rebuild only pays for the sources whose bytes changed — a `build` over an untouched corpus makes no model calls at all.
@@ -225,17 +225,17 @@ discover → extract → plan → synthesize → link-weave → emit → validat
 
 | Stage | What happens |
 |---|---|
-| **discover** | Walk `sources/` against the `include`/`exclude` globs. SHA-256 each file and diff against the ledger (`.okragged/manifest.json`). An unchanged file whose concepts are still on disk is **skipped entirely** — extraction and synthesis both. One exception: a file that lost a section to an error last run is re-ingested even unchanged, because a source recorded as finished is never retried until its bytes happen to change, and that section is content missing from the bundle. (A failed *weave* does not count — the concept exists and is valid, only its links are missing.) A file that has disappeared has its concepts marked `status: deprecated` rather than deleted; the spec keeps them for links and history. |
-| **extract** | Bytes → markdown-ish text. `.md`/`.txt`/`.markdown` pass through (read as `utf-8-sig`); everything else goes through markitdown. Results are cached in `.okragged/extracted/<sha256>.json`, so re-runs cost nothing here. An extraction failure is recorded and reported — it does not abort the run. |
+| **discover** | Walk `sources/` against the `include`/`exclude` globs. SHA-256 each file and diff against the ledger (`.okrag/manifest.json`). An unchanged file whose concepts are still on disk is **skipped entirely** — extraction and synthesis both. One exception: a file that lost a section to an error last run is re-ingested even unchanged, because a source recorded as finished is never retried until its bytes happen to change, and that section is content missing from the bundle. (A failed *weave* does not count — the concept exists and is valid, only its links are missing.) A file that has disappeared has its concepts marked `status: deprecated` rather than deleted; the spec keeps them for links and history. |
+| **extract** | Bytes → markdown-ish text. `.md`/`.txt`/`.markdown` pass through (read as `utf-8-sig`); everything else goes through markitdown. Results are cached in `.okrag/extracted/<sha256>.json`, so re-runs cost nothing here. An extraction failure is recorded and reported — it does not abort the run. |
 | **plan** | Only for sources over ~1200 words. One model call returns the parent concept's identity plus, per section, a **verbatim quote of its first words**. The text is then cut at those quotes *in code* — models quote reliably but do not count characters reliably. Matching is whitespace-insensitive, because extracted PDF text breaks lines mid-sentence. A quote that cannot be located is reported as a dropped section rather than silently losing text. Sections under ~150 words fold into their neighbour (§4.3). |
 | **synthesize** | One model call per unit — the whole file when short, otherwise one per section, each with its own `max_tokens`. That per-section budget is the point: a single call returning an array makes every concept share one budget, which is what capped M1 at ~2.5k per concept no matter how long the source was. **Native schema enforcement** means the result is guaranteed rather than parsed out of prose. The system prompt is a frozen prefix (cached on Anthropic) and stays byte-identical across whole-document and per-section calls; section framing goes in the user message. A safety decline, a token-cap stop, or any non-2xx response (429 quota, 5xx, connection failure) becomes a per-unit error, never an aborted run — one failed section costs that section, not the document. |
 | **link-weave** | Once every concept for the run exists, one model call per concept rewrites its body with cross-links woven into the prose. The schema returns the body and nothing else, so the pass cannot change a title, a type or a source. Links are bundle-absolute (`/finance/revenue-policy.md`) and inline — a link asserts a relationship and the sentence around it is what says which, so there is deliberately no "Related" section. A child is told its parent so it can link back (§4.3). Three things the model gets wrong are repaired mechanically rather than prompted against, all three found on a real corpus: an inverted `[/path.md](label)` is swapped back, a raw path used as the label becomes the target's title, and a target that is not a concept is unwrapped to plain text and reported — broken links are spec-legal when a human writes one forward, but a model holding the full index that emits a path outside it guessed. Only concepts this run wrote are woven, so an unchanged corpus still costs nothing. |
-| **emit** | Assemble frontmatter and write the concept, then generate an `index.md` for **every** directory in the bundle, append to `log.md` under today's ISO date newest-first, and generate `okf-base.yaml`. Indexes are read off the bundle rather than accumulated during the run, so a directory whose concepts were all skipped is indexed like one just written, and every entry carries its target's own `title` and `description` — an index can never disagree with the concept it points at. An entry whose concept owns a subdirectory says how many concepts are below it and links to that subdirectory's index, so the root is a map rather than a dead end while disclosure stays progressive. Only the bundle root carries frontmatter (`E3`). Concepts the previous run produced for this source and this one did not are deleted; ids come from model-written titles, so a rebuild renames the tree routinely. A concept a human edited or `verified` is never overwritten — the replacement goes to `.okragged/proposed/` and is reported. Writes are atomic per file (temp + rename), and each **source** commits as a unit: its concepts go to `.okragged/staging/`, and one fenced commit publishes them together with the removal of the stale output its rename left behind and its own ledger entry. So an interrupted run keeps every source it finished, and only the one in flight is redone. The indexes, the log and `okf-base.yaml` are written on the way out and are derived from the bundle, so any later run regenerates them. See [One writer, and a commit per source](#one-writer-and-a-commit-per-source). |
+| **emit** | Assemble frontmatter and write the concept, then generate an `index.md` for **every** directory in the bundle, append to `log.md` under today's ISO date newest-first, and generate `okf-base.yaml`. Indexes are read off the bundle rather than accumulated during the run, so a directory whose concepts were all skipped is indexed like one just written, and every entry carries its target's own `title` and `description` — an index can never disagree with the concept it points at. An entry whose concept owns a subdirectory says how many concepts are below it and links to that subdirectory's index, so the root is a map rather than a dead end while disclosure stays progressive. Only the bundle root carries frontmatter (`E3`). Concepts the previous run produced for this source and this one did not are deleted; ids come from model-written titles, so a rebuild renames the tree routinely. A concept a human edited or `verified` is never overwritten — the replacement goes to `.okrag/proposed/` and is reported. Writes are atomic per file (temp + rename), and each **source** commits as a unit: its concepts go to `.okrag/staging/`, and one fenced commit publishes them together with the removal of the stale output its rename left behind and its own ledger entry. So an interrupted run keeps every source it finished, and only the one in flight is redone. The indexes, the log and `okf-base.yaml` are written on the way out and are derived from the bundle, so any later run regenerates them. See [One writer, and a commit per source](#one-writer-and-a-commit-per-source). |
 | **validate** | Built-in conformance checks, then okflint as the normative gate. |
 
-### The graph — `okragged index`
+### The graph — `okrag index`
 
-A separate command, because nothing in the build path uses a vector. `build` produces the bundle; `index` reads that bundle and writes four files into `.okragged/` and nothing anywhere else.
+A separate command, because nothing in the build path uses a vector. `build` produces the bundle; `index` reads that bundle and writes four files into `.okrag/` and nothing anywhere else.
 
 ```
 embed → project → graph.json
@@ -254,51 +254,51 @@ concept   concepts)
 
 **τ has now met a corpus, and the default lost** ([`DESIGN.md` §12](DESIGN.md#12-risks-and-open-questions) Risk 1). On the 3-PDF Spanish corpus the median similarity across all 153 concept pairs is **0.896**, and 150 of them clear τ = 0.82 — so the threshold excludes almost nothing and the 76 ghost edges are 76 because `knn_k = 8` capped them, not because τ did. That is the predicted failure mode of a single-topic corpus, and it does not by itself say whether the fix is a higher τ, a threshold relative to the corpus's own distribution, or a smaller k. The default has deliberately not moved on one sample. Changing it and re-running `index` costs nothing: the vectors are reused and only the graph is recomputed.
 
-### The graph view — `okragged serve`
+### The graph view — `okrag serve`
 
 **Running it, from nothing, once:**
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install -e ".[api]"   # FastAPI + uvicorn
-.\.venv\Scripts\okragged index                            # writes .okragged/graph.json
+.\.venv\Scripts\okrag index                            # writes .okrag/graph.json
 cd web
 npm install                                             # needs Node 20+
-npm run build                                           # -> src/okragged/api/static/
+npm run build                                           # -> src/okrag/api/static/
 cd ..
-.\.venv\Scripts\okragged serve                            # http://127.0.0.1:8000
+.\.venv\Scripts\okrag serve                            # http://127.0.0.1:8000
 ```
 
-Or, in a checkout, one command instead of the middle three: `okragged serve --all` builds the view first if it is missing or stale (built `index.html` absent, or older than anything under `web/src/`, `web/index.html`, `web/vite.config.ts` or `web/package.json`), then serves as above. `okragged build-view` does just the build half, for when you want the view refreshed without also starting the server. Both need `web/`, which only exists in a checkout — an installed wheel ships `api/static/` prebuilt and has no `web/` to build, so both report that plainly rather than failing.
+Or, in a checkout, one command instead of the middle three: `okrag serve --all` builds the view first if it is missing or stale (built `index.html` absent, or older than anything under `web/src/`, `web/index.html`, `web/vite.config.ts` or `web/package.json`), then serves as above. `okrag build-view` does just the build half, for when you want the view refreshed without also starting the server. Both need `web/`, which only exists in a checkout — an installed wheel ships `api/static/` prebuilt and has no `web/` to build, so both report that plainly rather than failing.
 
 Then open **<http://127.0.0.1:8000>**. Ghost edges are off by default — tick **show ghost edges** in the left panel to see them, and drag **τ** to decide how similar a pair has to be before the graph claims they belong together.
 
-Three of those five steps are one-time setup. After that, run `okragged serve` (or `okragged serve --all`, which only rebuilds the view when it is actually stale) day to day, and run `okragged index` whenever the bundle changes. The view reads `graph.json` and nothing else, so it shows whatever the last `index` computed.
+Three of those five steps are one-time setup. After that, run `okrag serve` (or `okrag serve --all`, which only rebuilds the view when it is actually stale) day to day, and run `okrag index` whenever the bundle changes. The view reads `graph.json` and nothing else, so it shows whatever the last `index` computed.
 
 **While working on the view itself**, run Vite instead, so a save reloads the page:
 
 ```powershell
-.\.venv\Scripts\okragged serve      # terminal 1 — the API on :8000
+.\.venv\Scripts\okrag serve      # terminal 1 — the API on :8000
 cd web; npm run dev               # terminal 2 — the view on :5173, proxying /api
 ```
 
-Open **<http://127.0.0.1:5173>** for that one. `okragged serve` also takes `--host` and `--port`.
+Open **<http://127.0.0.1:5173>** for that one. `okrag serve` also takes `--host` and `--port`.
 
 **If something is missing, the command says which:**
 
 | what you see | what to run |
 |---|---|
 | `the HTTP API needs the optional extra` | `pip install -e ".[api]"` |
-| `no graph.json - /api/graph will 404` | `okragged index` |
-| `no built view - API only` | `npm install && npm run build` in `web/`, or `okragged build-view` |
-| `no bundle at bundle/` | `okragged build` |
+| `no graph.json - /api/graph will 404` | `okrag index` |
+| `no built view - API only` | `npm install && npm run build` in `web/`, or `okrag build-view` |
+| `no bundle at bundle/` | `okrag build` |
 
-The view is optional; the endpoints are not. `okragged serve` runs the API with or without the built view, and [`/api/docs`](http://127.0.0.1:8000/api/docs) is browsable either way.
+The view is optional; the endpoints are not. `okrag serve` runs the API with or without the built view, and [`/api/docs`](http://127.0.0.1:8000/api/docs) is browsable either way.
 
 Four read-only endpoints, all offline, none of which writes anywhere:
 
 | | | |
 |---|---|---|
-| `GET /api/graph` | `graph.json` as `okragged index` wrote it | 404 until it has run |
+| `GET /api/graph` | `graph.json` as `okrag index` wrote it | 404 until it has run |
 | `GET /api/concept/{id}` | frontmatter, body, and the body rendered | 404 for anything outside the bundle |
 | `GET /api/search?q=&k=` | the same two paths as the MCP tool | pointers, never bodies |
 | `GET /api/lint` | the same report as the MCP tool | conformance, ghosts, stale, orphans |
@@ -317,36 +317,36 @@ agent/AGENTS.md        how to read this bundle: structure, type vocabulary,
                        -> regenerated at the end of every build
 .mcp.json              the registration entry, merged into whatever else
                        is already registered
-                       -> written only by `okragged agent --register`
+                       -> written only by `okrag agent --register`
 ```
 
 `AGENTS.md` is written *beside* `bundle/`, never inside it, and it is **derived from the bundle** — concept counts, the structure tree, the type vocabulary — so it is regenerated after every commit. That is what keeps it from describing a bundle that no longer exists.
 
-`.mcp.json` is **not derived from the bundle**. The entry is the same bytes whether the bundle holds no concepts or a thousand, so there is nothing for a rebuild to refresh. More to the point, it is not okragged's file: it is the MCP config for whatever agent works in that directory, shared with every other server registered in it. So a build never writes it — it only mentions when the server is unregistered — and `okragged agent --register` is how you ask. For the same reason it is **not gitignored**: whether your MCP config belongs in your history is your call.
+`.mcp.json` is **not derived from the bundle**. The entry is the same bytes whether the bundle holds no concepts or a thousand, so there is nothing for a rebuild to refresh. More to the point, it is not okrag's file: it is the MCP config for whatever agent works in that directory, shared with every other server registered in it. So a build never writes it — it only mentions when the server is unregistered — and `okrag agent --register` is how you ask. For the same reason it is **not gitignored**: whether your MCP config belongs in your history is your call.
 
-**By default the entry it writes is `okragged mcp` with no switches, which is the read-only instance**, and `--register` says what it granted when it writes it: no `add_source`, and `search` ranking by traversal rather than by embedding your query. Those bytes did not change when the switches arrived — their meaning narrowed — so registering for your own use and finding the writing tool gone would otherwise have nothing to explain it.
+**By default the entry it writes is `okrag mcp` with no switches, which is the read-only instance**, and `--register` says what it granted when it writes it: no `add_source`, and `search` ranking by traversal rather than by embedding your query. Those bytes did not change when the switches arrived — their meaning narrowed — so registering for your own use and finding the writing tool gone would otherwise have nothing to explain it.
 
 **`--register` takes the switches too**, and they land in the entry's `args`:
 
 ```powershell
-okragged agent --register --write --spend   # -> args: ["mcp", "--write", "--spend"]
+okrag agent --register --write --spend   # -> args: ["mcp", "--write", "--spend"]
 ```
 
 Nothing is inferred here — typing that is asking for that entry specifically, which is the same "only when asked" rule the file has always had. Omitted, the entry stays bare. On their own the two switches are refused rather than ignored: they describe the entry `--register` writes, so without it they describe nothing.
 
 The entry in `AGENTS.md` for a *foreign* project stays flagless whatever you registered locally. What you authorized on your machine, with your key, is not a fact about somebody else's — a snippet carrying `--spend` would be telling a stranger to spend a key.
 
-The server is `okragged mcp`, a subcommand of the console script — there is no generated launcher to point at, so the entry is portable:
+The server is `okrag mcp`, a subcommand of the console script — there is no generated launcher to point at, so the entry is portable:
 
 ```json
-{ "mcpServers": { "okragged": { "command": "okragged", "args": ["mcp"] } } }
+{ "mcpServers": { "okrag": { "command": "okrag", "args": ["mcp"] } } }
 ```
 
-No interpreter path and no script path, which is what makes any MCP-capable agent a consumer of the bundle with no okragged-specific code **from any tree at all**. The server takes its bundle from `--project` or `OKRAGGED_PROJECT`, defaulting to the cwd — a client spawns it with the config file's directory as its cwd, so the entry beside the bundle needs no target. To consume the bundle from *another* project, paste the entry `AGENTS.md` prints instead: the same two words plus `--project` and this root, absolutely.
+No interpreter path and no script path, which is what makes any MCP-capable agent a consumer of the bundle with no okrag-specific code **from any tree at all**. The server takes its bundle from `--project` or `OKRAG_PROJECT`, defaulting to the cwd — a client spawns it with the config file's directory as its cwd, so the entry beside the bundle needs no target. To consume the bundle from *another* project, paste the entry `AGENTS.md` prints instead: the same two words plus `--project` and this root, absolutely.
 
-**The bare name is used only when `PATH` actually resolves it.** A client spawns the server from `.mcp.json`, never from an activated shell, so an `okragged` installed into a venv is not on the spawn's `PATH` — the process dies before it says anything and the client reports `CONNECTION_CLOSED` with nothing to read anywhere. `register` therefore falls back to the console script beside the running interpreter, which is where that install sits. This has the same exposure as okflint's resolution below, but with a worse symptom: okflint degrades to "not installed", while this loses the whole server. `PATH` is tried first here rather than second because this file is not gitignored: a bare name travels to another checkout and an absolute one does not. If you would rather the entry stay portable, put okragged on your `PATH` and re-run `okragged agent --register`. For a published package, use `pipx install okragged`, which requires the distribution milestone first. From a checkout today, use `pipx install --editable <root>`; this exposes the console script without putting okragged's dependencies into shared site-packages.
+**The bare name is used only when `PATH` actually resolves it.** A client spawns the server from `.mcp.json`, never from an activated shell, so an `okrag` installed into a venv is not on the spawn's `PATH` — the process dies before it says anything and the client reports `CONNECTION_CLOSED` with nothing to read anywhere. `register` therefore falls back to the console script beside the running interpreter, which is where that install sits. This has the same exposure as okflint's resolution below, but with a worse symptom: okflint degrades to "not installed", while this loses the whole server. `PATH` is tried first here rather than second because this file is not gitignored: a bare name travels to another checkout and an absolute one does not. If you would rather the entry stay portable, put okrag on your `PATH` and re-run `okrag agent --register`. For a published package, use `pipx install okrag`, which requires the distribution milestone first. From a checkout today, use `pipx install --editable <root>`; this exposes the console script without putting okrag's dependencies into shared site-packages.
 
-Four tools always, plus a fifth on the right instance: `add_source` is offered only when started with `--write`, and `verify_concept` only under `--transport http` with `[mcp].verify_scopes` configured ([Hosting over http](#hosting-over-http--okragged-mcp---transport-http)):
+Four tools always, plus a fifth on the right instance: `add_source` is offered only when started with `--write`, and `verify_concept` only under `--transport http` with `[mcp].verify_scopes` configured ([Hosting over http](#hosting-over-http--okrag-mcp---transport-http)):
 
 | Tool | Signature | Credential |
 |---|---|---|
@@ -366,11 +366,11 @@ The ghost list is capped at the 20 strongest, with `ghosts_total` and a note say
 - otherwise → **index traversal**, as `path: index-traversal`: a term ranking over concept titles and descriptions (which is what every index entry is made of, verbatim), the bodies at lower weight, and one hop along the authored links, so a concept the bundle links to a hit surfaces behind it. Accents are folded, so `informaticos` matches `Informáticos`.
 - a matrix that exists but **does not cover every concept** → both, as `path: embeddings+index-traversal`. The covered concepts are ranked by kNN, the rest by traversal, and the two lists are alternated by rank rather than sorted together, because a cosine similarity and a term-overlap score are different quantities. `note` says how many were ranked without a vector and that their scores are not comparable with the others'.
 
-**Read `note` whenever it is not empty.** Vectors come from `okragged index`, a separate command, so a concept written since the last one has no row in the matrix — and kNN cannot return a candidate that is not in it. That case used to match neither fallback, so `search` answered from the vectors it had, with an empty note and no sign that anything had been skipped: a query carrying a concept's exact title came back with eight other concepts. An error would have been better; the fix is that a concept without a vector is ranked by the other path instead of being left out, and that the note is empty only when the ranking saw everything.
+**Read `note` whenever it is not empty.** Vectors come from `okrag index`, a separate command, so a concept written since the last one has no row in the matrix — and kNN cannot return a candidate that is not in it. That case used to match neither fallback, so `search` answered from the vectors it had, with an empty note and no sign that anything had been skipped: a query carrying a concept's exact title came back with eight other concepts. An error would have been better; the fix is that a concept without a vector is ranked by the other path instead of being left out, and that the note is empty only when the ranking saw everything.
 
 The result shape is identical across all three, and the response names which path answered — plus, where the ranking was incomplete or the embedding path could not run, why. Retrieval strategy is deliberately out of scope ([`DESIGN.md` §7](DESIGN.md)); this ranking is meant to be simple enough to explain in a sentence and test without a model.
 
-`add_source` **records, and authors the concept only if the instance was launched to spend.** It writes the prose into `sources/` under a path it generates; on a `--write` instance it stops there and the next `okragged build` authors from it, and on a `--write --spend` instance it goes on to ingest that one path, refresh the vectors over it, and return the concept ids. The refresh is not a separate decision: a concept `search` cannot rank is not worth what the synthesis cost, and `okragged index` is a command nothing on this surface can trigger. It costs one embedding, since a vector whose body hash is unchanged is reused. `indexed: false` with an `errors` entry means the concept is published and readable and only its vector is missing — `[vectors]`' key can be absent while `[synth]`'s resolves — so `search` finds it by traversal until `okragged index` runs. The two are registered as separate tools carrying separate descriptions, because the description is the only channel every client shows a model: one that promised a concept where none is coming, or told a caller to run a build that already ran, is worse than saying nothing. Neither can sweep — a partial run over one path suppresses the vanished-source check (§6.1), and recording starts no run at all.
+`add_source` **records, and authors the concept only if the instance was launched to spend.** It writes the prose into `sources/` under a path it generates; on a `--write` instance it stops there and the next `okrag build` authors from it, and on a `--write --spend` instance it goes on to ingest that one path, refresh the vectors over it, and return the concept ids. The refresh is not a separate decision: a concept `search` cannot rank is not worth what the synthesis cost, and `okrag index` is a command nothing on this surface can trigger. It costs one embedding, since a vector whose body hash is unchanged is reused. `indexed: false` with an `errors` entry means the concept is published and readable and only its vector is missing — `[vectors]`' key can be absent while `[synth]`'s resolves — so `search` finds it by traversal until `okrag index` runs. The two are registered as separate tools carrying separate descriptions, because the description is the only channel every client shows a model: one that promised a concept where none is coming, or told a caller to run a build that already ran, is worse than saying nothing. Neither can sweep — a partial run over one path suppresses the vanished-source check (§6.1), and recording starts no run at all.
 
 **Recording takes no lock; synthesizing does.** The path is generated per assertion and identical bytes reuse it, so a recording call has nothing to collide with and taking the lock would make it fail for the duration of somebody's rebuild. Two concurrent recordings that land on the same generated name — same title-derived slug, same day — resolve correctly rather than one silently overwriting the other's prose: the file is claimed with an atomic exclusive create, the same technique the project lock itself uses, so the loser sees the name taken and either matches it (identical text) or takes the next suffix (different text). Ingesting goes through the pipeline, so it takes the project lock like any other writer — and a build already holding it comes back as a message naming what holds it, not as a traceback. Same for a missing `[synth]` key. In both cases the prose is already recorded and the answer says so: raising there would tell you your assertion was lost while it sat in `sources/` waiting for the build that will pick it up. `recorded: false` means that prose was already on file; `synthesized: false` with an `errors` entry means the file landed and the concept did not.
 
@@ -378,16 +378,16 @@ The result shape is identical across all three, and the response names which pat
 
 | Resource | What it returns |
 |---|---|
-| `okragged://contract` | `AGENTS.md`, rendered by the same function that writes the file |
-| `okragged://index` | the bundle's root `index.md` |
+| `okrag://contract` | `AGENTS.md`, rendered by the same function that writes the file |
+| `okrag://index` | the bundle's root `index.md` |
 
 Above them, the handshake `instructions` say what the bundle is and to fetch the contract — short, self-contained, and naming no path. Nothing the server says over the wire may name a path relative to the producer's root, and `tests/test_agent.py` enforces that with a check pointed at the text it replaced, so it cannot quietly stop biting.
 
 The server needs the MCP SDK, an optional extra — `pip install -e ".[mcp]"`. Everything else in the contract is generated without it.
 
-### Hosting over http — `okragged mcp --transport http`
+### Hosting over http — `okrag mcp --transport http`
 
-A second way to run the server, beside stdio: over a port, for many remote consumers, rather than for one local client `.mcp.json` spawns. It exists because credential-free reads — the whole point of `search` and `read_concept` working with no key at all — are a feature over stdio and an exposure the moment the same server is reachable over a port: anyone who can reach it reads the whole corpus. So this transport authenticates every request as an **OAuth 2.1 resource server**. okragged never issues tokens; it verifies bearer tokens an external authorization server issued, against that issuer's published JWKS. Configure the issuer in `okragged.toml`, not `.env` — none of these three is a secret, only the issuer's public identity and this server's own resource URL:
+A second way to run the server, beside stdio: over a port, for many remote consumers, rather than for one local client `.mcp.json` spawns. It exists because credential-free reads — the whole point of `search` and `read_concept` working with no key at all — are a feature over stdio and an exposure the moment the same server is reachable over a port: anyone who can reach it reads the whole corpus. So this transport authenticates every request as an **OAuth 2.1 resource server**. okrag never issues tokens; it verifies bearer tokens an external authorization server issued, against that issuer's published JWKS. Configure the issuer in `okrag.toml`, not `.env` — none of these three is a secret, only the issuer's public identity and this server's own resource URL:
 
 ```toml
 [mcp]
@@ -397,13 +397,13 @@ jwks_url = "https://issuer.example.com/.well-known/jwks.json"
 required_scopes = []   # optional; a token must carry every scope listed
 
 # only needed for --write --spend together — a synthesizing add_source
-spend_scopes = ["okragged:spend"]   # a token must carry every scope listed here too
+spend_scopes = ["okrag:spend"]   # a token must carry every scope listed here too
 spend_rate_limit_per_hour = 20      # per identity (the token's `sub`, or its `client_id`)
 ```
 
 ```powershell
-okragged mcp --transport http --host 0.0.0.0 --port 8001   # 8001, not serve's 8000
-okragged mcp --transport http --write --spend               # add_source too, gated below
+okrag mcp --transport http --host 0.0.0.0 --port 8001   # 8001, not serve's 8000
+okrag mcp --transport http --write --spend               # add_source too, gated below
 ```
 
 All three URLs are required — missing any of them fails fast, before the server binds a port, naming which `[mcp]` key is absent. A request with no bearer token, or one that fails signature, issuer, audience, expiry, or scope verification, gets a `401` with a `WWW-Authenticate` header pointing at this server's `.well-known/oauth-protected-resource` metadata; no check is skippable. A validly authenticated request reaches exactly the tools a stdio instance with the same `--write`/`--spend` flags offers.
@@ -417,16 +417,16 @@ All three URLs are required — missing any of them fails fast, before the serve
 ```toml
 [mcp]
 # ...the three URLs above, plus:
-verify_scopes = ["okragged:verify"]   # a token must carry every scope listed here too
+verify_scopes = ["okrag:verify"]   # a token must carry every scope listed here too
 ```
 
-`verify_concept(concept_id: str)` appends one `{by: "human:<identity>", at: <now>}` entry to that concept's `verified` list — never replacing it, and never touching `status`, which stays a separate, human-owned file edit. `<identity>` is the caller's own `sub`/`client_id`, taken off the verified bearer token, never a string the call supplies — the same binding `spend_scopes` gives spend, minus a rate limit, because verifying spends nobody's credential and there is nothing to bound per hour. Unlike `spend_scopes`, an unset `verify_scopes` is not a misconfiguration: there is no CLI flag of its own, so a `--write --transport http` deployment that leaves it empty is simply one that does not offer verification, and the tool is absent from that instance's tool list rather than present and refusing. A missing scope, or no authenticated identity at all, is refused before anything is written; once an entry lands, the concept is protected from a future `okragged build` overwriting it, the same way a hand-edited `verified` block already is.
+`verify_concept(concept_id: str)` appends one `{by: "human:<identity>", at: <now>}` entry to that concept's `verified` list — never replacing it, and never touching `status`, which stays a separate, human-owned file edit. `<identity>` is the caller's own `sub`/`client_id`, taken off the verified bearer token, never a string the call supplies — the same binding `spend_scopes` gives spend, minus a rate limit, because verifying spends nobody's credential and there is nothing to bound per hour. Unlike `spend_scopes`, an unset `verify_scopes` is not a misconfiguration: there is no CLI flag of its own, so a `--write --transport http` deployment that leaves it empty is simply one that does not offer verification, and the tool is absent from that instance's tool list rather than present and refusing. A missing scope, or no authenticated identity at all, is refused before anything is written; once an entry lands, the concept is protected from a future `okrag build` overwriting it, the same way a hand-edited `verified` block already is.
 
 ### What gets written into frontmatter
 
 ```yaml
 ---
-type: Policy                        # required by OKF; from the okragged.toml vocabulary
+type: Policy                        # required by OKF; from the okrag.toml vocabulary
 title: Revenue Recognition Policy
 description: When revenue is recognized and how prepayments are deferred.
 resource: file:///C:/.../sources/revenue-policy.md
@@ -437,16 +437,16 @@ sources:
     title: revenue-policy
     last_modified: '2026-08-04'
 generated:
-  by: okragged/0.1.0
+  by: okrag/0.1.0
   at: '2026-08-04T04:29:07Z'
 status: draft
-x_okragged_source_hash: 92933ee5... # producer extension; which source revision this is
+x_okrag_source_hash: 92933ee5... # producer extension; which source revision this is
 ---
 ```
 
-**`verified` is never written because content looks correct.** That field records a confirmation event that actually happened, so writing it on that basis would forge the human-reviewed trust tier. A human promotes a concept by editing the file — or, on a hosted instance configured with `[mcp].verify_scopes`, by calling `verify_concept` over an authenticated session, which appends an entry attributed to their own verified identity rather than to text they typed (see [Hosting over http](#hosting-over-http--okragged-mcp---transport-http) above). Concepts are emitted as `status: draft` and stay there until a human says otherwise; `verify_concept` never changes that either.
+**`verified` is never written because content looks correct.** That field records a confirmation event that actually happened, so writing it on that basis would forge the human-reviewed trust tier. A human promotes a concept by editing the file — or, on a hosted instance configured with `[mcp].verify_scopes`, by calling `verify_concept` over an authenticated session, which appends an entry attributed to their own verified identity rather than to text they typed (see [Hosting over http](#hosting-over-http--okrag-mcp---transport-http) above). Concepts are emitted as `status: draft` and stay there until a human says otherwise; `verify_concept` never changes that either.
 
-New `type` values proposed by the model are **reported, never silently accepted** — they appear in the build summary so you can decide whether to add them to `okragged.toml`.
+New `type` values proposed by the model are **reported, never silently accepted** — they appear in the build summary so you can decide whether to add them to `okrag.toml`.
 
 ### Validation
 
@@ -461,10 +461,10 @@ Broken links are **warnings, not errors** — the spec explicitly permits them, 
 
 ### One writer, and a commit per source
 
-Three things can write this directory — the CLI, the Python API, and a synthesizing `add_source` over MCP — so a write takes `.okragged/lock.json` for its duration and a second one is refused with a message naming what holds it:
+Three things can write this directory — the CLI, the Python API, and a synthesizing `add_source` over MCP — so a write takes `.okrag/lock.json` for its duration and a second one is refused with a message naming what holds it:
 
 ```
-another okragged run holds this project: ingest, pid 26104 on DESKTOP-A, since 2026-08-17T18:02:11Z.
+another okrag run holds this project: ingest, pid 26104 on DESKTOP-A, since 2026-08-17T18:02:11Z.
 Reads are unaffected - `search`, `read_concept`, `lint` and `check` do not take the lock.
 ```
 
@@ -472,7 +472,7 @@ Reads are unaffected - `search`, `read_concept`, `lint` and `check` do not take 
 
 **Read paths never take it.** `search`, `read_concept`, `lint`, `check` and `serve` answer while a write is in flight, and so does `build --dry-run`. A consumer holding a directory of markdown files needs permission from nobody.
 
-The emit is **staged**, and the claim is *recoverable*, not atomic — no filesystem call publishes several files at once on Windows, so the design says so instead of pretending. **The unit that commits is one source**: its concepts go into `.okragged/staging/bundle/` beside the ledger that belongs with them, and one fenced commit places those files, removes the stale output the source's rename left behind, and moves the ledger into place.
+The emit is **staged**, and the claim is *recoverable*, not atomic — no filesystem call publishes several files at once on Windows, so the design says so instead of pretending. **The unit that commits is one source**: its concepts go into `.okrag/staging/bundle/` beside the ledger that belongs with them, and one fenced commit places those files, removes the stale output the source's rename left behind, and moves the ledger into place.
 
 | What is on disk afterwards | What the next run does |
 |---|---|
@@ -494,55 +494,55 @@ The revision model that *many remote* writers need — an expected revision on e
 
 ## Driving it from Python
 
-Everything the CLI does is a function call, and `okragged` exposes the same set under one import. Ten functions, each taking a project directory or a `Config`:
+Everything the CLI does is a function call, and `okrag` exposes the same set under one import. Ten functions, each taking a project directory or a `Config`:
 
 ```python
-import okragged
+import okrag
 
-cfg = okragged.configure("~/corpus", synth={"provider": "gemini"})
-summary = okragged.build(cfg, progress=lambda e: print(e.stage, e.unit))
-print(okragged.check(cfg).ok, [h.concept_id for h in okragged.search(cfg, "revenue").hits])
+cfg = okrag.configure("~/corpus", synth={"provider": "gemini"})
+summary = okrag.build(cfg, progress=lambda e: print(e.stage, e.unit))
+print(okrag.check(cfg).ok, [h.concept_id for h in okrag.search(cfg, "revenue").hits])
 ```
 
 | | | Needs a credential |
 |---|---|---|
-| `configure(project, **sections)` | a `Config`, reading the project's `okragged.toml` and applying section overrides in memory | no |
+| `configure(project, **sections)` | a `Config`, reading the project's `okrag.toml` and applying section overrides in memory | no |
 | `build(project, *, dry_run, only, contract, progress)` | the ingest pipeline → `pipeline.IngestSummary` | `[synth]`, unless `dry_run` |
-| `index(project)` | embed → project → `graph.json`, into `.okragged/` only | `[vectors]` |
+| `index(project)` | embed → project → `graph.json`, into `.okrag/` only | `[vectors]` |
 | `check(project)` | validate an existing bundle → `okf.Report` | no |
 | `search(project, query, k=8)` | pointers, never bodies — the same ranking as the MCP tool | only for the embedding path |
 | `read_concept(project, concept_id)` | the raw file, frontmatter included | no |
 | `lint(project)` | conformance, ghosts, stale, orphans → `LintReport` | no |
 | `add_source(project, text, title=None, synthesize=False)` | record prose in `sources/`; the concept waits for `build` unless `synthesize` | `[synth]` to synthesize |
 | `write_contract(project)` | regenerate `agent/AGENTS.md` | no |
-| `register(project, write=False, spend=False)` | register `okragged mcp` in `.mcp.json`, keeping other servers; the switches go into the entry's args | no |
+| `register(project, write=False, spend=False)` | register `okrag mcp` in `.mcp.json`, keeping other servers; the switches go into the entry's args | no |
 
 The wrappers return what the underlying functions return. There is no `Bundle` object, deliberately: a bundle is a directory ([`DESIGN.md` §2](DESIGN.md#2-the-three-layer-model)), and handing back an object that stands for one would answer a question the design has not decided.
 
 **One thing differs from the CLI, and one thing nothing does:**
 
-- **No `.env` is read.** `okragged` the command loads it because a human typed the command; a function call does not go looking through your filesystem for credentials. Put the key in the environment first (`os.environ`, `python-dotenv`, your process manager — your choice).
-- **Nothing registers an MCP server for you.** `build()` regenerates `agent/AGENTS.md` exactly as `okragged build` does — one derived file beside the bundle you asked for, and `contract=False` skips it. Neither one writes `.mcp.json` — `register()` is the only call that touches it, for the reason given above.
+- **No `.env` is read.** `okrag` the command loads it because a human typed the command; a function call does not go looking through your filesystem for credentials. Put the key in the environment first (`os.environ`, `python-dotenv`, your process manager — your choice).
+- **Nothing registers an MCP server for you.** `build()` regenerates `agent/AGENTS.md` exactly as `okrag build` does — one derived file beside the bundle you asked for, and `contract=False` skips it. Neither one writes `.mcp.json` — `register()` is the only call that touches it, for the reason given above.
 
 `progress` is called as the run moves, with a frozen `Progress(stage, unit, index, total, detail)`: `stage` is one of `discover`, `extract`, `plan`, `synthesize`, `weave`, `source`, `finalize`, `validate`; `unit` is the source uri, or the concept id while weaving; `source` fires once per source however it finished. A reporter that raises is swallowed rather than allowed to abort a run that has already paid for model calls.
 
-`import okragged` costs nothing and prints nothing — every import inside it is deferred, because `markitdown` announces a missing ffmpeg on import and a library that writes to your stderr to be imported is broken.
+`import okrag` costs nothing and prints nothing — every import inside it is deferred, because `markitdown` announces a missing ffmpeg on import and a library that writes to your stderr to be imported is broken.
 
 ### Example: serving it from Python
 
-`create_app` isn't in the curated surface above — it needs the `api` extra, and it doesn't return a summary; it blocks for as long as the server runs, the same as `okragged serve` does. Import it from `okragged.api` and drive `uvicorn` yourself:
+`create_app` isn't in the curated surface above — it needs the `api` extra, and it doesn't return a summary; it blocks for as long as the server runs, the same as `okrag serve` does. Import it from `okrag.api` and drive `uvicorn` yourself:
 
 ```python
 import uvicorn
-from okragged import configure
-from okragged.api import create_app
+from okrag import configure
+from okrag.api import create_app
 
 cfg = configure("~/corpus")
 app = create_app(cfg)  # raises RuntimeError without `pip install -e ".[api]"`
 uvicorn.run(app, host="127.0.0.1", port=8000)
 ```
 
-There's no read/write switch here — the HTTP API is unconditionally read-only, the same four endpoints `okragged serve` exposes ([The graph view](#the-graph-view--okragged-serve)). The read/write/spend distinction belongs to `okragged mcp` (`--write`, `--spend`), not to `serve`.
+There's no read/write switch here — the HTTP API is unconditionally read-only, the same four endpoints `okrag serve` exposes ([The graph view](#the-graph-view--okrag-serve)). The read/write/spend distinction belongs to `okrag mcp` (`--write`, `--spend`), not to `serve`.
 
 ---
 
@@ -552,42 +552,42 @@ There's no read/write switch here — the HTTP API is unconditionally read-only,
 
 | File | Purpose |
 |---|---|
-| `src/okragged/__init__.py` | The [public Python API](#driving-it-from-python) and nothing else: ten functions that resolve `str \| Path \| Config` and delegate to the function the CLI calls, plus `Config` and `Progress`. Every import in it is deferred, so importing the package is silent and cheap. |
-| `src/okragged/cli.py` | Typer CLI: `build`, `index`, `serve`, `check`, `agent`, `mcp`, `extract`, `doctor`. Formatting and exit codes. |
-| `src/okragged/pipeline.py` | Orchestrates the stages; assembles `Concept` objects from synthesis results. Owns `Progress`, the progress callback's event, the lock the run is wrapped in, where each source's commit falls, and the `contract` flag that decides whether layer 3 is regenerated after them. |
-| `src/okragged/ledger.py` | The idempotency ledger, `.okragged/manifest.json`: what each source hashed to, which concepts it produced, and what okragged last wrote into each. Sidecar state — losing it costs a re-ingest, never correctness, so every read path degrades to "no record" rather than raising. Not `okf/manifest.py`, which is the *okflint* manifest. |
-| `src/okragged/lock.py` | One writer per project, `.okragged/lock.json`: exclusive creation, a record naming its holder, and the liveness test that lets a dead holder's lock be reclaimed without a human. Never taken by a read path. |
-| `src/okragged/staging.py` | The per-source commit and its pending-commit record. Owns the placing and its replay, so a crash leaves one source the next run can finish or roll back rather than a mix of two namings. |
-| `src/okragged/config.py` | Loads `okragged.toml` into pydantic models. Owns the `bundle/`, `sources/`, `.okragged/` path resolution. `bundle_root` is the published bundle and nothing else — where a staged run writes is `staging.Area`'s job. |
-| `src/okragged/sources/base.py` | The `Source` protocol and `SourceItem`. Defines the `document` vs `asset` family split that phase-2 connectors plug into. |
-| `src/okragged/sources/local.py` | `LocalFileSource` — the only implemented source. Globbing and hashing. |
-| `src/okragged/extract/__init__.py` | Bytes → text, with the content-hash cache. markitdown plus passthrough. |
-| `src/okragged/synth/prompt.py` | **The synthesis, planning and link-weave system prompts.** Each must stay byte-identical across its pass or prompt caching stops working; the only things that vary are the type vocabulary and the concept index, both snapshotted once per run. Tune concept quality here. |
-| `src/okragged/synth/segment.py` | The planning pass and `cut` — marker matching, document-order sorting, short-section folding. `cut` is pure, so segmentation is testable without a model. |
-| `src/okragged/synth/weave.py` | The link-weave pass and `prune_links` — unwrapping link targets that are not concepts. `prune_links` is pure, so the repair half is testable without a model. Re-anchors a footnote definition the woven body left mid-line, because this pass rewrites the body after the pass that appended it. |
-| `src/okragged/synth/__init__.py` | Provider dispatch plus everything shared: prompt assembly, JSON parsing, required-field checks, footnote repair — appending a definition never written, and anchoring one left mid-line, where it renders as literal text. |
-| `src/okragged/synth/base.py` | The concept and outline JSON schemas, the §4.3 word bounds, `SynthResult`, `SectionContext`, and the error types (`Refused`, `ProviderHTTPError`, `MissingCredential`, `SynthError`). |
-| `src/okragged/synth/providers/claude.py` | Anthropic: `output_config.format`, cached system block, `stop_reason` handling. |
-| `src/okragged/synth/providers/gemini.py` | Gemini: `response_json_schema`, `system_instruction`, `finish_reason` / `block_reason` handling. |
-| `src/okragged/okf/concept.py` | The OKF data model. `render` / `parse` round-trip, unknown-key preservation, `slugify`. |
-| `src/okragged/okf/inventory.py` | The format layer's read side: what is already in a bundle, as `(id, title, description, status)`. Feeds the prompt prefix, link-weave and the indexes. |
-| `src/okragged/okf/writer.py` | Atomic concept writes, the per-directory `index.md` pass, `log.md` date-section insertion, deprecation and stale-concept removal. |
-| `src/okragged/okf/validate.py` | Conformance checks and the okflint subprocess. |
-| `src/okragged/okf/manifest.py` | Generates `okf-base.yaml`. Documents why each key is present or omitted. |
-| `src/okragged/vectors/__init__.py` | `index(config)`: embed → project → graph, and the only place the three stages are wired together. |
-| `src/okragged/vectors/embed.py` | One vector per concept: chunking, mean-pooling, hash-based reuse, per-concept failure isolation. |
-| `src/okragged/vectors/store.py` | `embeddings.npy` + `embeddings_meta.json`. Sidecar state, so a read degrades to "nothing stored"; a provider or model change discards the matrix rather than mixing vector spaces. |
-| `src/okragged/vectors/project.py` | UMAP with a fixed seed, PCA fallback in plain NumPy. Notes what Risk 5 would actually take to fix. |
-| `src/okragged/vectors/knn.py` | Brute-force cosine kNN over the normalized matrix. Twenty lines, and enough until ~100k concepts. |
-| `src/okragged/vectors/graph.py` | `graph.json`: the ghost-edge rule, derived trust tiers, node degree, stats. |
-| `src/okragged/vectors/providers/gemini.py` | `gemini-embedding-001`. Same shape as a `synth` provider: `NAME`, `DEFAULT_MODEL`, `ENV_VARS`, `credential_present()`, `embed()`. |
-| `src/okragged/vectors/providers/fastembed.py` | Local `bge-small-en-v1.5`, behind an optional extra. Registered but not chosen — see `DESIGN.md` §12 Risk 4. |
-| `src/okragged/agent/query.py` | `search` and `read_concept`: the embedding path, the credential-free traversal ranking, the merge that ranks a concept the stored vectors do not cover instead of dropping it, and the id resolution that keeps a read inside the bundle. |
-| `src/okragged/agent/write.py` | `add_source`: the generated path, the recording mode, and the synthesizing one that ingests that path and refreshes the vectors. Nothing after the file is written may raise — every failure is a field in the result. |
-| `src/okragged/agent/lint.py` | The lint report: conformance from `okf/validate.py`, ghost edges read out of `graph.json`, stale concepts, orphans. |
-| `src/okragged/agent/contract.py` | `write_contract` generates `agent/AGENTS.md` and renders what `okragged://contract` serves; `register` writes the `.mcp.json` entry and is called only when asked. No timestamp, so an unchanged bundle regenerates byte-identically. Documents why the two are separate. |
-| `src/okragged/agent/server.py` | The four MCP tools and the two resources, over those functions. Imports the SDK lazily, and writes nothing to stdout — the protocol lives there. |
-| `src/okragged/api/app.py` | The four read-only HTTP endpoints, over the same functions the MCP tools use. Imports FastAPI lazily; mounts the built view from inside the package - never from the user's project root - when it exists. |
+| `src/okrag/__init__.py` | The [public Python API](#driving-it-from-python) and nothing else: ten functions that resolve `str \| Path \| Config` and delegate to the function the CLI calls, plus `Config` and `Progress`. Every import in it is deferred, so importing the package is silent and cheap. |
+| `src/okrag/cli.py` | Typer CLI: `build`, `index`, `serve`, `check`, `agent`, `mcp`, `extract`, `doctor`. Formatting and exit codes. |
+| `src/okrag/pipeline.py` | Orchestrates the stages; assembles `Concept` objects from synthesis results. Owns `Progress`, the progress callback's event, the lock the run is wrapped in, where each source's commit falls, and the `contract` flag that decides whether layer 3 is regenerated after them. |
+| `src/okrag/ledger.py` | The idempotency ledger, `.okrag/manifest.json`: what each source hashed to, which concepts it produced, and what okrag last wrote into each. Sidecar state — losing it costs a re-ingest, never correctness, so every read path degrades to "no record" rather than raising. Not `okf/manifest.py`, which is the *okflint* manifest. |
+| `src/okrag/lock.py` | One writer per project, `.okrag/lock.json`: exclusive creation, a record naming its holder, and the liveness test that lets a dead holder's lock be reclaimed without a human. Never taken by a read path. |
+| `src/okrag/staging.py` | The per-source commit and its pending-commit record. Owns the placing and its replay, so a crash leaves one source the next run can finish or roll back rather than a mix of two namings. |
+| `src/okrag/config.py` | Loads `okrag.toml` into pydantic models. Owns the `bundle/`, `sources/`, `.okrag/` path resolution. `bundle_root` is the published bundle and nothing else — where a staged run writes is `staging.Area`'s job. |
+| `src/okrag/sources/base.py` | The `Source` protocol and `SourceItem`. Defines the `document` vs `asset` family split that phase-2 connectors plug into. |
+| `src/okrag/sources/local.py` | `LocalFileSource` — the only implemented source. Globbing and hashing. |
+| `src/okrag/extract/__init__.py` | Bytes → text, with the content-hash cache. markitdown plus passthrough. |
+| `src/okrag/synth/prompt.py` | **The synthesis, planning and link-weave system prompts.** Each must stay byte-identical across its pass or prompt caching stops working; the only things that vary are the type vocabulary and the concept index, both snapshotted once per run. Tune concept quality here. |
+| `src/okrag/synth/segment.py` | The planning pass and `cut` — marker matching, document-order sorting, short-section folding. `cut` is pure, so segmentation is testable without a model. |
+| `src/okrag/synth/weave.py` | The link-weave pass and `prune_links` — unwrapping link targets that are not concepts. `prune_links` is pure, so the repair half is testable without a model. Re-anchors a footnote definition the woven body left mid-line, because this pass rewrites the body after the pass that appended it. |
+| `src/okrag/synth/__init__.py` | Provider dispatch plus everything shared: prompt assembly, JSON parsing, required-field checks, footnote repair — appending a definition never written, and anchoring one left mid-line, where it renders as literal text. |
+| `src/okrag/synth/base.py` | The concept and outline JSON schemas, the §4.3 word bounds, `SynthResult`, `SectionContext`, and the error types (`Refused`, `ProviderHTTPError`, `MissingCredential`, `SynthError`). |
+| `src/okrag/synth/providers/claude.py` | Anthropic: `output_config.format`, cached system block, `stop_reason` handling. |
+| `src/okrag/synth/providers/gemini.py` | Gemini: `response_json_schema`, `system_instruction`, `finish_reason` / `block_reason` handling. |
+| `src/okrag/okf/concept.py` | The OKF data model. `render` / `parse` round-trip, unknown-key preservation, `slugify`. |
+| `src/okrag/okf/inventory.py` | The format layer's read side: what is already in a bundle, as `(id, title, description, status)`. Feeds the prompt prefix, link-weave and the indexes. |
+| `src/okrag/okf/writer.py` | Atomic concept writes, the per-directory `index.md` pass, `log.md` date-section insertion, deprecation and stale-concept removal. |
+| `src/okrag/okf/validate.py` | Conformance checks and the okflint subprocess. |
+| `src/okrag/okf/manifest.py` | Generates `okf-base.yaml`. Documents why each key is present or omitted. |
+| `src/okrag/vectors/__init__.py` | `index(config)`: embed → project → graph, and the only place the three stages are wired together. |
+| `src/okrag/vectors/embed.py` | One vector per concept: chunking, mean-pooling, hash-based reuse, per-concept failure isolation. |
+| `src/okrag/vectors/store.py` | `embeddings.npy` + `embeddings_meta.json`. Sidecar state, so a read degrades to "nothing stored"; a provider or model change discards the matrix rather than mixing vector spaces. |
+| `src/okrag/vectors/project.py` | UMAP with a fixed seed, PCA fallback in plain NumPy. Notes what Risk 5 would actually take to fix. |
+| `src/okrag/vectors/knn.py` | Brute-force cosine kNN over the normalized matrix. Twenty lines, and enough until ~100k concepts. |
+| `src/okrag/vectors/graph.py` | `graph.json`: the ghost-edge rule, derived trust tiers, node degree, stats. |
+| `src/okrag/vectors/providers/gemini.py` | `gemini-embedding-001`. Same shape as a `synth` provider: `NAME`, `DEFAULT_MODEL`, `ENV_VARS`, `credential_present()`, `embed()`. |
+| `src/okrag/vectors/providers/fastembed.py` | Local `bge-small-en-v1.5`, behind an optional extra. Registered but not chosen — see `DESIGN.md` §12 Risk 4. |
+| `src/okrag/agent/query.py` | `search` and `read_concept`: the embedding path, the credential-free traversal ranking, the merge that ranks a concept the stored vectors do not cover instead of dropping it, and the id resolution that keeps a read inside the bundle. |
+| `src/okrag/agent/write.py` | `add_source`: the generated path, the recording mode, and the synthesizing one that ingests that path and refreshes the vectors. Nothing after the file is written may raise — every failure is a field in the result. |
+| `src/okrag/agent/lint.py` | The lint report: conformance from `okf/validate.py`, ghost edges read out of `graph.json`, stale concepts, orphans. |
+| `src/okrag/agent/contract.py` | `write_contract` generates `agent/AGENTS.md` and renders what `okrag://contract` serves; `register` writes the `.mcp.json` entry and is called only when asked. No timestamp, so an unchanged bundle regenerates byte-identically. Documents why the two are separate. |
+| `src/okrag/agent/server.py` | The four MCP tools and the two resources, over those functions. Imports the SDK lazily, and writes nothing to stdout — the protocol lives there. |
+| `src/okrag/api/app.py` | The four read-only HTTP endpoints, over the same functions the MCP tools use. Imports FastAPI lazily; mounts the built view from inside the package - never from the user's project root - when it exists. |
 | `web/src/encoding.ts` | §8's visual encoding in one place — type colours, degree→size, trust→border — so the legend and the renderer cannot drift. |
 | `web/src/Graph.tsx` | The sigma renderer. Filtering happens in reducers rather than by rebuilding the graph, so dragging τ costs a repaint. |
 
@@ -595,27 +595,27 @@ There's no read/write switch here — the HTTP API is unconditionally read-only,
 
 | Path | Committed? | What it is |
 |---|---|---|
-| `okragged.toml` | yes | Configuration. See below. |
+| `okrag.toml` | yes | Configuration. See below. |
 | `.env.example` | yes | Template for the API key. Copy to `.env`. |
 | `.env` | **no** (gitignored) | Your API key. Read by CLI entry points that load credentials, including `build`, `doctor`, and `mcp --spend`. |
-| `sources/` | **no** (gitignored) | Layer 1 — raw input, yours to supply. **Immutable**; okragged reads, never writes. Not committed: a real corpus is your own material and tends to carry third-party names that do not belong in a permanent history. |
-| `bundle/` | **no** (gitignored) | Layer 2 — the OKF product. The deliverable, portable with no okragged dependency — but concept ids derive from model-written titles, so every rebuild renames the whole tree and the diff is unreadable. Commit an example bundle under `examples/` instead, refreshed on purpose. |
+| `sources/` | **no** (gitignored) | Layer 1 — raw input, yours to supply. **Immutable**; okrag reads, never writes. Not committed: a real corpus is your own material and tends to carry third-party names that do not belong in a permanent history. |
+| `bundle/` | **no** (gitignored) | Layer 2 — the OKF product. The deliverable, portable with no okrag dependency — but concept ids derive from model-written titles, so every rebuild renames the whole tree and the diff is unreadable. Commit an example bundle under `examples/` instead, refreshed on purpose. |
 | `okf-base.yaml` | **no** (gitignored) | Generated okflint manifest, rewritten with the bundle. |
-| `agent/` | **no** (gitignored) | Layer 3 — the generated contract. Not committed for the same reason as `bundle/`: `AGENTS.md` is written from the corpus and carries its names. `okragged agent` rewrites it. |
-| `.mcp.json` | **your call** (not gitignored) | The registration entry: `okragged mcp`, the bare console script when `PATH` resolves it and the one beside the running interpreter when it does not. Other servers already in the file are preserved. Written only by `okragged agent --register` — it is your machine's MCP config rather than okragged output, so committing it is your decision. |
-| `.okragged/` | **no** (gitignored) | Sidecar: the ledger (`manifest.json`), the extraction cache, replacements for concepts a human owns (`proposed/`), the write lock and the source in flight (`lock.json`, `staging/`, `pending-commit.json`), and the vectors — `embeddings.npy`, `embeddings_meta.json`, `layout.json`, `graph.json`. Entirely derived and rebuildable — deleting it costs a full re-ingest and a re-embed, nothing more. |
-| `web/` | yes, minus `node_modules/` | The graph view's source. Built deliberately with `npm run build`, which writes into `src/okragged/api/static/` (gitignored) so one build serves this checkout and an installed user alike. |
+| `agent/` | **no** (gitignored) | Layer 3 — the generated contract. Not committed for the same reason as `bundle/`: `AGENTS.md` is written from the corpus and carries its names. `okrag agent` rewrites it. |
+| `.mcp.json` | **your call** (not gitignored) | The registration entry: `okrag mcp`, the bare console script when `PATH` resolves it and the one beside the running interpreter when it does not. Other servers already in the file are preserved. Written only by `okrag agent --register` — it is your machine's MCP config rather than okrag output, so committing it is your decision. |
+| `.okrag/` | **no** (gitignored) | Sidecar: the ledger (`manifest.json`), the extraction cache, replacements for concepts a human owns (`proposed/`), the write lock and the source in flight (`lock.json`, `staging/`, `pending-commit.json`), and the vectors — `embeddings.npy`, `embeddings_meta.json`, `layout.json`, `graph.json`. Entirely derived and rebuildable — deleting it costs a full re-ingest and a re-embed, nothing more. |
+| `web/` | yes, minus `node_modules/` | The graph view's source. Built deliberately with `npm run build`, which writes into `src/okrag/api/static/` (gitignored) so one build serves this checkout and an installed user alike. |
 | `DESIGN.md` | yes | Architecture, data model, risks, milestones. |
 
-The separation matters: **nothing derived ever goes inside `bundle/`.** A bundle must stay something you can zip up, hand to someone who has never heard of okragged, and read with `cat`. That portability is the whole point of OKF, and an embeddings file or an `embedding:` frontmatter key would destroy it.
+The separation matters: **nothing derived ever goes inside `bundle/`.** A bundle must stay something you can zip up, hand to someone who has never heard of okrag, and read with `cat`. That portability is the whole point of OKF, and an embeddings file or an `embedding:` frontmatter key would destroy it.
 
-### `okragged.toml`
+### `okrag.toml`
 
 ```toml
 [bundle]
 root = "bundle"            # output directory
 okf_version = "0.2"        # written into the bundle-root index.md
-actor = "okragged/0.1.0"   # written as generated.by; defaults to the installed version
+actor = "okrag/0.1.0"   # written as generated.by; defaults to the installed version
 # title = "Derecho Informático"  # heading of the root index.md; omit for the
                            # project directory name, which names the tool
 
@@ -627,7 +627,7 @@ exclude = ["**/~$*", "**/.DS_Store"]
 
 [synth]
 provider = "gemini"        # gemini | anthropic
-# model = "gemini-2.5-pro" # omit for the provider default; `okragged doctor` lists what your key can reach
+# model = "gemini-2.5-pro" # omit for the provider default; `okrag doctor` lists what your key can reach
 effort = "high"            # anthropic only: low | medium | high | xhigh | max
 max_tokens = 16000
 
@@ -635,7 +635,7 @@ max_tokens = 16000
 allowed = ["Document", "Concept", "Entity", "Process", "Decision", "Reference"]
 allow_new = true           # new types are reported in the summary, never silent
 
-[vectors]                  # okragged index only; build never reads these
+[vectors]                  # okrag index only; build never reads these
 provider = "gemini"        # gemini | fastembed (fastembed is an optional extra)
 # model = "gemini-embedding-001"
 dim = 768                  # requested output width; fastembed's 384 is fixed
@@ -670,15 +670,15 @@ random_state = 42          # fixed, or the layout reshuffles every run
 | `tests/test_manifest.py` | manifest keys okflint requires, skip-with-reason behaviour, and cross-checking that okflint agrees with the built-in checks |
 | `tests/test_providers.py` | provider registry and interface, dispatch, schema/required-field enforcement, Gemini credential resolution and decline mapping, non-2xx and transport-failure mapping for both providers, fail-fast pre-flight |
 | `tests/test_vectors.py` | the embedding provider registry, hash-based reuse and per-concept failure isolation, mean-pooling past the window with no chunk vector stored, L2 normalization, a model change re-embedding instead of mixing widths, the PCA fallback and its determinism, the ghost rule (τ, top-k, a link in either direction), derived trust tiers, graph stats, and that `index` writes nothing into `bundle/` |
-| `tests/test_agent.py` | each tool's contract: `search` returning pointers and not bodies, the credential-free traversal path and its ranking (title over body, a linked neighbour over an unrelated mention, folded accents), the embedding path, the fallback when a query cannot be embedded, and the merge that keeps a concept written since the last `okragged index` from being dropped from the ranking in silence, `read_concept` refusing a path out of the bundle, the lint report's orphans/stale/ghosts, the generated `AGENTS.md` content, the split between the contract and registration — that no build of either kind writes `.mcp.json`, that `okragged agent` offers `--register` until it has been used, and that a merge keeps other servers, names a console script rather than an interpreter, and cannot truncate a config it fails to rewrite — `okragged mcp` taking its target from `--project` or the environment, the two resources and the contract served over the wire matching the file on disk byte for byte, a partial `ingest` not deprecating what it did not look at, a source another writer blocked being reported with `synthesized: false` rather than raising over prose already in the corpus, a spending write leaving its concept findable by `search` and saying `indexed: false` with the reason when it cannot, the contract describing the instance modes rather than asserting one, and that none of it writes into `bundle/`, plus `verify_concept` appending an entry to an empty or a non-empty `verified` list without ever touching `status`, refusing an unknown `concept_id`, and two concurrent verifications of the same concept losing neither entry under the project lock. Plus the M5 invariant — nothing the server declares may name a path relative to the producer's root — with a meta-test pointing the check at the M4 text it replaced. The server tests skip without the `mcp` extra. |
-| `tests/test_library.py` | the public API: that importing the package prints nothing and pulls in neither the extraction path nor a provider, `configure` overriding a section in memory, a library `build` regenerating the contract exactly as `okragged build` does while neither registers an MCP server, `register()` being the only call that writes one, no `.env` read from the library path, the progress callback's stages and units, an event that cannot be mutated, a reporter that raises not failing the run, and a path and a `Config` being interchangeable |
+| `tests/test_agent.py` | each tool's contract: `search` returning pointers and not bodies, the credential-free traversal path and its ranking (title over body, a linked neighbour over an unrelated mention, folded accents), the embedding path, the fallback when a query cannot be embedded, and the merge that keeps a concept written since the last `okrag index` from being dropped from the ranking in silence, `read_concept` refusing a path out of the bundle, the lint report's orphans/stale/ghosts, the generated `AGENTS.md` content, the split between the contract and registration — that no build of either kind writes `.mcp.json`, that `okrag agent` offers `--register` until it has been used, and that a merge keeps other servers, names a console script rather than an interpreter, and cannot truncate a config it fails to rewrite — `okrag mcp` taking its target from `--project` or the environment, the two resources and the contract served over the wire matching the file on disk byte for byte, a partial `ingest` not deprecating what it did not look at, a source another writer blocked being reported with `synthesized: false` rather than raising over prose already in the corpus, a spending write leaving its concept findable by `search` and saying `indexed: false` with the reason when it cannot, the contract describing the instance modes rather than asserting one, and that none of it writes into `bundle/`, plus `verify_concept` appending an entry to an empty or a non-empty `verified` list without ever touching `status`, refusing an unknown `concept_id`, and two concurrent verifications of the same concept losing neither entry under the project lock. Plus the M5 invariant — nothing the server declares may name a path relative to the producer's root — with a meta-test pointing the check at the M4 text it replaced. The server tests skip without the `mcp` extra. |
+| `tests/test_library.py` | the public API: that importing the package prints nothing and pulls in neither the extraction path nor a provider, `configure` overriding a section in memory, a library `build` regenerating the contract exactly as `okrag build` does while neither registers an MCP server, `register()` being the only call that writes one, no `.env` read from the library path, the progress callback's stages and units, an event that cannot be mutated, a reporter that raises not failing the run, and a path and a `Config` being interchangeable |
 | `tests/test_env.py` | `.env` loading with and without a BOM, and every `doctor` outcome |
 | `tests/test_writers.py` | the lock and the per-source commit: a second writer refused with the holder named, a lock left by a dead process reclaimed with no human in the loop, an unreadable lock file not wedging the tool, a foreign host judged on age, a reclaimed lock not deleted by the run that lost it, every read path answering while a write holds the lock, a source published by its own commit rather than by the run, the ledger never describing a source whose concepts are not published, a second run paying only for what the interrupted one never committed, a commit interrupted while placing a concept finished by the next run, an unreadable record still publishing what was staged, a commit interrupted between placing the new naming and removing the old one, a vanished source deprecated and forgotten in one commit, and the two interrupts around the weave — before it, concepts published without cross-links and not marked incomplete; during it, no concept left woven against a stale hash |
 | `tests/test_encoding.py` | the [encoding policy](#encoding-policy), enforced by AST scan (including the child-process `env` rule), plus BOM tolerance, the piped-child crash reproduced, and LF-only output end to end |
-| `tests/test_cli_view.py` | `okragged build-view` / `okragged serve --all`: staleness detection against a fake `web/` + built-output layout, and the `npm` subprocess wrapper skipped gracefully when `npm` is missing or `web/` does not exist - `subprocess.run` itself is monkeypatched, so a cold `node_modules` never needs network |
-| `tests/test_packaging.py` | the packaging defect class fixed in `4cac126` - a real `python -m build --no-isolation` (offline, since `build` and `hatchling` are `dev` dependencies) inspected directly for `okragged/sources/` and the built `api/static/index.html` in both the wheel and the sdist |
+| `tests/test_cli_view.py` | `okrag build-view` / `okrag serve --all`: staleness detection against a fake `web/` + built-output layout, and the `npm` subprocess wrapper skipped gracefully when `npm` is missing or `web/` does not exist - `subprocess.run` itself is monkeypatched, so a cold `node_modules` never needs network |
+| `tests/test_packaging.py` | the packaging defect class fixed in `4cac126` - a real `python -m build --no-isolation` (offline, since `build` and `hatchling` are `dev` dependencies) inspected directly for `okrag/sources/` and the built `api/static/index.html` in both the wheel and the sdist |
 | `tests/test_agent_auth.py` | `JWKSTokenVerifier` against a locally generated test keypair - a valid token accepted, a wrong signature/issuer/audience/expiry/scope each rejected, no network call; the wired-up `MCPServer`'s `streamable_http_app()` driven in-process with Starlette's `TestClient` - an unauthenticated request refused with a `WWW-Authenticate` header naming the protected-resource metadata, an authenticated one past the auth gate, and the route table carrying no bundle or static file mount; criterion 4's `authorize_spend`/`SpendRateLimiter` offline against a directly-constructed `AccessToken` - no scope, an exhausted limiter, and a different identity left unaffected, all with an injectable clock - and the write+spend tool driven with `mcp.Client`: a refused spend writing nothing and never reaching `add_source`, an authorized one recording and synthesizing as usual, and the stdio path never calling the gate at all; plus criterion 5's `authorize_verify` offline the same way (no token, no scope, a matching scope named), and `verify_concept` driven with `mcp.Client`: absent with `write` off, absent with `verify_scopes` empty, absent under stdio regardless of flags, a refused call leaving the concept file untouched, and an authorized one appending the entry with `status` left alone |
-| `tests/test_cli_mcp_http.py` | `okragged mcp --transport http`'s own validation, `agent.server.main` monkeypatched so nothing binds a socket: an unknown `--transport` value, `--write`/`--spend` each allowed alone with no extra config, `--write --spend` together refused with no `spend_scopes`/`spend_rate_limit_per_hour` configured and allowed once both are, `[mcp]` config missing naming which key (exercised for real, since these paths fail before touching the MCP SDK), and both the http and the unchanged stdio call reaching `main` with the right arguments |
+| `tests/test_cli_mcp_http.py` | `okrag mcp --transport http`'s own validation, `agent.server.main` monkeypatched so nothing binds a socket: an unknown `--transport` value, `--write`/`--spend` each allowed alone with no extra config, `--write --spend` together refused with no `spend_scopes`/`spend_rate_limit_per_hour` configured and allowed once both are, `[mcp]` config missing naming which key (exercised for real, since these paths fail before touching the MCP SDK), and both the http and the unchanged stdio call reaching `main` with the right arguments |
 
 Nothing skips on a normal install. okflint is resolved beside the running interpreter before `PATH` is consulted, so a venv install is found whether or not a shell activated it — which is also why `lint` over MCP reports real conformance rather than "okflint not installed".
 
@@ -697,16 +697,16 @@ Five separate bugs shipped during M1, all the same defect: **trusting a platform
 | stdout / stderr | reconfigured to UTF-8 at CLI entry | The default is the codepage, so redirecting output crashes |
 | git | `.gitattributes` with `eol=lf` | Otherwise checkout rewrites the bundle to CRLF |
 
-**`tests/test_encoding.py` enforces this statically** — it walks the AST of everything under `src/okragged/` and fails the build if any read, write, or subprocess call deviates. It also contains a meta-test pointing the check at a deliberately bad file, because a guard that always passes guards nothing.
+**`tests/test_encoding.py` enforces this statically** — it walks the AST of everything under `src/okrag/` and fails the build if any read, write, or subprocess call deviates. It also contains a meta-test pointing the check at a deliberately bad file, because a guard that always passes guards nothing.
 
 The five bugs, for reference:
 
 1. **`.env`** — python-dotenv reads UTF-8 by default, so a BOM produced a key literally named `﻿GEMINI_API_KEY`. Silent: `.env` reported "found" while the credential reported "missing".
 2. **Passthrough extraction** — a BOM rode into the synthesis prompt as a leading invisible character.
 3. **okflint subprocess** — `text=True` decoded with cp1252, okflint emits characters outside it, the decode raised inside the reader thread and `stdout` came back as `None`.
-4. **Redirected stdout** — `okragged extract x.pdf > out.txt` raised `UnicodeEncodeError` on any character outside cp1252. Deceptive because `acción` and `€` *are* in cp1252, so it only broke on `≥`, `—`, `≈` and curly quotes — exactly what a model writes into titles and descriptions.
+4. **Redirected stdout** — `okrag extract x.pdf > out.txt` raised `UnicodeEncodeError` on any character outside cp1252. Deceptive because `acción` and `€` *are* in cp1252, so it only broke on `≥`, `—`, `≈` and curly quotes — exactly what a model writes into titles and descriptions.
 
-5. **okflint's own stdout** — fixing #3 only fixed *our* decode. okflint's stdout is a pipe, so its Python chose cp1252 and raised `UnicodeEncodeError` inside its own `print()` while reporting a finding containing `—`. It died mid-report, so its exit code was non-zero and `okragged build` declared a perfectly conformant bundle "NOT conformant: 0 error(s)". The fix is `PYTHONIOENCODING=utf-8` in the child's `env`.
+5. **okflint's own stdout** — fixing #3 only fixed *our* decode. okflint's stdout is a pipe, so its Python chose cp1252 and raised `UnicodeEncodeError` inside its own `print()` while reporting a finding containing `—`. It died mid-report, so its exit code was non-zero and `okrag build` declared a perfectly conformant bundle "NOT conformant: 0 error(s)". The fix is `PYTHONIOENCODING=utf-8` in the child's `env`.
 
 That fourth one was masked in development: Claude Code sets `PYTHONIOENCODING=utf-8:surrogateescape`, so it could not reproduce until the variable was cleared. If you are testing terminal behaviour, check what your environment sets first.
 
@@ -727,19 +727,19 @@ All four items in [`DESIGN.md` §13](DESIGN.md#13-milestones):
 
 ### M3 — done
 
-`okragged index` writes `embeddings.npy`, `embeddings_meta.json`, `layout.json` and `graph.json`, all into `.okragged/`; `okragged serve` exposes four read-only endpoints over them and mounts the sigma.js view. The embedding provider is pluggable and **deliberately undecided** ([`DESIGN.md` §12](DESIGN.md#12-risks-and-open-questions) Risk 4): `gemini` and `fastembed` are both registered, and the choice is config.
+`okrag index` writes `embeddings.npy`, `embeddings_meta.json`, `layout.json` and `graph.json`, all into `.okrag/`; `okrag serve` exposes four read-only endpoints over them and mounts the sigma.js view. The embedding provider is pluggable and **deliberately undecided** ([`DESIGN.md` §12](DESIGN.md#12-risks-and-open-questions) Risk 4): `gemini` and `fastembed` are both registered, and the choice is config.
 
 Run against the 3-PDF Spanish corpus: 18 concepts embedded with `gemini-embedding-001` at dim 768, projected with UMAP, 39 authored links, 76 ghost edges, 0 broken links, and `search` answered by the **embedding** path rather than by traversal for the first time. What the graph then said about τ is above, and it is the milestone's actual result: **the default threshold does not discriminate on a single-topic corpus.**
 
 ### M4 — done
 
-`agent/AGENTS.md`, regenerated at the end of every build, plus the stdio MCP server and on-request `.mcp.json` registration. Verified against the same 3-PDF corpus by spawning the server over stdio exactly as `.mcp.json` does, with no embedding credential: `search` answered by traversal and named the right concept first, `read_concept` returned it whole, `lint` reported 18 concepts and okflint exit 0, and it said it had no ghost edges *because `okragged index` had not run* rather than because there were none.
+`agent/AGENTS.md`, regenerated at the end of every build, plus the stdio MCP server and on-request `.mcp.json` registration. Verified against the same 3-PDF corpus by spawning the server over stdio exactly as `.mcp.json` does, with no embedding credential: `search` answered by traversal and named the right concept first, `read_concept` returned it whole, `lint` reported 18 concepts and okflint exit 0, and it said it had no ghost edges *because `okrag index` had not run* rather than because there were none.
 
 ### M8 — done
 
-`okragged mcp --transport http`: a second way to run the server, over a port, as an OAuth 2.1 resource server, beside the untouched stdio path. See [Hosting over http](#hosting-over-http--okragged-mcp---transport-http) for the config and the tool-gating rules. Five criteria:
+`okrag mcp --transport http`: a second way to run the server, over a port, as an OAuth 2.1 resource server, beside the untouched stdio path. See [Hosting over http](#hosting-over-http--okrag-mcp---transport-http) for the config and the tool-gating rules. Five criteria:
 
-1. **Authenticated reads.** okragged never issues tokens; it verifies bearer tokens an external issuer signed, against that issuer's published JWKS — no check (signature, issuer, audience, expiry, scope) is skippable.
+1. **Authenticated reads.** okrag never issues tokens; it verifies bearer tokens an external issuer signed, against that issuer's published JWKS — no check (signature, issuer, audience, expiry, scope) is skippable.
 2. **The bundle is reachable only through tools, never as files.** Holds by construction — the MCP SDK's `streamable_http_app()` never mounted a static route — and is locked in by a test reading the wired-up route table directly.
 3. **Concurrency is a guarantee, not an assumption.** A real check-then-act race in `add_source`'s new-file path (two concurrent calls landing on the same title-derived slug could silently overwrite one writer's prose) is closed with the same exclusive-create the project lock already uses.
 4. **Writing becomes remote spend on the host's key.** The identity M6 items 1 and 3 needed was already sitting in the verified token; `[mcp].spend_scopes` and `[mcp].spend_rate_limit_per_hour` bind a synthesizing `add_source` to it — refused before anything is written for a missing scope or an exhausted per-identity hourly limit.
@@ -750,9 +750,9 @@ Run against the 3-PDF Spanish corpus: 18 concepts embedded with `gemini-embeddin
 - **Calibrate τ on a second corpus.** The first one saturated the similarity space, which rules the default out without ruling anything in. A corpus spanning more than one topic is what distinguishes "raise τ" from "lower k" from "make the threshold relative".
 - **`POST /api/ingest` + SSE progress.** Deferred with M3, not cancelled. It needed a job registry and progress events `pipeline.ingest` did not emit; [the events landed with the Python API](#driving-it-from-python), the job registry did not.
 - **Grounded answers** (M11, proposed). `search` normalizes by the best hit, so its top result always scores `1.000` — including for a question the bundle cannot answer. Absolute confidence with an abstention floor, offline citation checking, and trust tiers carried into results.
-- **Distribution** (M5, implementation in place; exit criterion open). The rename and the console script have landed, and so has the half that makes a foreign checkout a consumer: `okragged mcp --project <dir>`, a `.mcp.json` entry naming nothing but a command on `PATH`, and the contract served as `okragged://contract` / `okragged://index` rather than as a file only the producer can open. So have `add_source` replacing `ingest` on the MCP surface, [the Python API](#driving-it-from-python), and [the lock and per-source commit](#one-writer-and-a-commit-per-source) that three writers to one bundle require. What is left is the exit criterion itself — a session driven from a checkout that is not the producer's, which nobody has had yet.
-- **An identity, and a spend scope** (M6, the security layer — formally 3 of 5 items built). What exists under plain M5/M6 stdio: `okragged mcp` serves read-only and reads no `.env` unless asked, and `--write --spend` gives you back an `add_source` that authors the concept in the same call, resting on nothing but "you launched it" — caller and payer are the same person there, so there is no identity to bind a scope or a rate limit to and no counter a caller couldn't just delete. Items 1 and 3 stay unbuilt for that single-party case on purpose; they landed instead as **M8 criteria 1 and 4**, the moment a channel exists with someone else on the far end and a host is holding the only key.
-- **Publish** (M7, packaging done and locally verified; exit criterion open). The graph view now reaches both the wheel and the sdist via a hatchling `artifacts` glob rather than a build hook — Node is needed only to *cut* a release, never to install one — and the `sources/` gitignore-anchoring defect that had been silently dropping that module from every wheel is fixed. `LICENSE` and the rest of the publish metadata exist. `okragged build-view` / `okragged serve --all` also shipped here, promoted from a staged idea once M7 made it real. A built sdist and wheel have been inspected directly for both fixes, and a throwaway venv has installed the wheel and found the view with no Node present — what is left is `pip install okragged` against the real index, which is the maintainer's own step.
+- **Distribution** (M5, implementation in place; exit criterion open). The rename and the console script have landed, and so has the half that makes a foreign checkout a consumer: `okrag mcp --project <dir>`, a `.mcp.json` entry naming nothing but a command on `PATH`, and the contract served as `okrag://contract` / `okrag://index` rather than as a file only the producer can open. So have `add_source` replacing `ingest` on the MCP surface, [the Python API](#driving-it-from-python), and [the lock and per-source commit](#one-writer-and-a-commit-per-source) that three writers to one bundle require. What is left is the exit criterion itself — a session driven from a checkout that is not the producer's, which nobody has had yet.
+- **An identity, and a spend scope** (M6, the security layer — formally 3 of 5 items built). What exists under plain M5/M6 stdio: `okrag mcp` serves read-only and reads no `.env` unless asked, and `--write --spend` gives you back an `add_source` that authors the concept in the same call, resting on nothing but "you launched it" — caller and payer are the same person there, so there is no identity to bind a scope or a rate limit to and no counter a caller couldn't just delete. Items 1 and 3 stay unbuilt for that single-party case on purpose; they landed instead as **M8 criteria 1 and 4**, the moment a channel exists with someone else on the far end and a host is holding the only key.
+- **Publish** (M7, packaging done and locally verified; exit criterion open). The graph view now reaches both the wheel and the sdist via a hatchling `artifacts` glob rather than a build hook — Node is needed only to *cut* a release, never to install one — and the `sources/` gitignore-anchoring defect that had been silently dropping that module from every wheel is fixed. `LICENSE` and the rest of the publish metadata exist. `okrag build-view` / `okrag serve --all` also shipped here, promoted from a staged idea once M7 made it real. A built sdist and wheel have been inspected directly for both fixes, and a throwaway venv has installed the wheel and found the view with no Node present — what is left is `pip install okrag` against the real index, which is the maintainer's own step.
 - **Per-concept scoping on a hosted instance.** Deciding *what* a given consumer may see is separate from *whether* they may connect at all, which is all M8 built. Staged, not committed — and it would have to stay coarse if it lands, since the indexes already carry every child's `title` and `description` verbatim.
 - **BigQuery/blob sources.** M9.
 

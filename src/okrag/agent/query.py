@@ -11,7 +11,7 @@ credential, `search` falls back to traversing what the bundle already says
 about itself (DESIGN.md §6.8).
 
 **A concept the stored vectors don't cover is ranked anyway — this isn't a
-nicety.** Vectors come from `okragged index`, a separate command, so any
+nicety.** Vectors come from `okrag index`, a separate command, so any
 concept written since the last run has no row in the matrix, and kNN can't
 rank a candidate that isn't in it. Silently answering from only the covered
 concepts and returning an empty `note` would be worse than an error: the
@@ -97,7 +97,7 @@ def search(config: Config, query: str, k: int = 8) -> SearchResult:
         return SearchResult(
             path=TRAVERSAL,
             hits=_by_traversal(query, k, concepts),
-            note="the stored vectors name no concept in this bundle; run `okragged index`",
+            note="the stored vectors name no concept in this bundle; run `okrag index`",
         )
 
     # ranked over the whole bundle and then narrowed, so the link boosts and the
@@ -115,7 +115,7 @@ def _incomplete(count: int) -> str:
     return (
         f"{count} concept(s) have no stored vector and were ranked by index traversal "
         "instead, so their scores are not comparable with the embedding scores; run "
-        "`okragged index` to embed them"
+        "`okrag index` to embed them"
     )
 
 
@@ -124,7 +124,7 @@ def _alternating(vectored: list[Hit], unvectored: list[Hit], k: int) -> list[Hit
 
     Not sorted together: the two scores are different quantities. Alternating
     gives a concept without a vector the position its own ranking earned it,
-    which is the only ranking it can have until `okragged index` runs.
+    which is the only ranking it can have until `okrag index` runs.
     """
     merged = [
         hit
@@ -165,7 +165,7 @@ def _by_embedding(
     model = config.vectors.model or impl.DEFAULT_MODEL
     store = load_store(config.sidecar_root, config.vectors.provider, model)
     if store.matrix is None or not store.ids:
-        return None, set(), "no stored embeddings for this provider; run `okragged index`"
+        return None, set(), "no stored embeddings for this provider; run `okrag index`"
     if not impl.credential_present():
         return None, set(), (
             f"no credential for embedding provider {config.vectors.provider!r}, "
@@ -178,7 +178,7 @@ def _by_embedding(
     except EmbedError as exc:
         return None, set(), str(exc)
     if raw.ndim != 2 or not raw.size or raw.shape[1] != store.matrix.shape[1]:
-        return None, set(), "the stored vectors are a different width; re-run `okragged index`"
+        return None, set(), "the stored vectors are a different width; re-run `okrag index`"
 
     norm = float(np.linalg.norm(raw[0]))
     vector = raw[0] if norm == 0 else raw[0] / norm

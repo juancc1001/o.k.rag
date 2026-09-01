@@ -13,8 +13,8 @@ stale-output cleanup, deprecation, and human-edit detection are all built on.
 
 **Recording and synthesizing are separate, and which one happens is a
 property of the instance, not of the call.** Without `synthesize` — what an
-`okragged mcp --write` server offers — this writes the file and stops; the
-concept is authored later by `okragged build`, on the operator's machine
+`okrag mcp --write` server offers — this writes the file and stops; the
+concept is authored later by `okrag build`, on the operator's machine
 with the operator's key. With it, reachable only via `--write --spend`, the
 same call ingests that one path and returns the concepts it authored.
 
@@ -42,7 +42,7 @@ only runs over a full scan, DESIGN.md §6.1).
 than a second one.** `--spend` says the operator's credential may be used,
 and a concept nobody can find isn't worth what the synthesis cost. Without
 this refresh, the call would author a concept that `search`'s embedding path
-can't rank until a human separately runs `okragged index` — the write path
+can't rank until a human separately runs `okrag index` — the write path
 and the read path on different clocks. The refresh reuses any vector whose
 body hash is unchanged, so it costs one embedding call, and the graph is
 regenerated locally since `lint` and the view both read it. `index` takes the
@@ -99,7 +99,7 @@ class AddedSource:
     synthesized: bool = False
     """Whether this call authored a concept. False when the instance only records,
     and false when it was asked to and could not — the prose is recorded either
-    way and the next `okragged build` authors from it, which is why the failure is
+    way and the next `okrag build` authors from it, which is why the failure is
     reported here rather than raised."""
     concepts: list[str] = field(default_factory=list)
     """The concept ids this call authored, parent and children, when it did."""
@@ -107,7 +107,7 @@ class AddedSource:
     """Whether `search`'s embedding path can now rank what this call authored.
     False when nothing was authored, and false when the vectors could not be
     refreshed — the concept is in the bundle and readable either way, but until
-    `okragged index` runs it is rankable only by traversal, which `search` says."""
+    `okrag index` runs it is rankable only by traversal, which `search` says."""
     errors: list[str] = field(default_factory=list)
     """Why no concept was authored, or what failed while one was — the vectors
     included. Never a reason the recording did not happen: that raises, having
@@ -161,7 +161,7 @@ def _synthesize(config: Config, recorded: AddedSource) -> AddedSource:
     """Ingest the one path just written, reporting each failure as a result.
 
     The source file exists by the time this runs, so nothing here raises: the
-    assertion is in the corpus and a later `okragged build` authors from it, which
+    assertion is in the corpus and a later `okrag build` authors from it, which
     is the outcome to describe rather than to hide behind a traceback.
     """
     try:
@@ -215,7 +215,7 @@ def _unranked(recorded: AddedSource, reason: str) -> AddedSource:
     told only the reason would read it as the concept having failed."""
     recorded.errors.append(
         f"the concept is in the bundle and readable, but has no vector, so "
-        f"`search` ranks it by index traversal until `okragged index` runs: {reason}"
+        f"`search` ranks it by index traversal until `okrag index` runs: {reason}"
     )
     return recorded
 
@@ -224,7 +224,7 @@ def _unauthored(recorded: AddedSource, reason: str) -> AddedSource:
     """The prose landed and the concept did not, said in one sentence — a caller
     told only the reason would not know their assertion is safe."""
     recorded.errors.append(
-        f"the prose is recorded at {recorded.uri} and the next `okragged build` "
+        f"the prose is recorded at {recorded.uri} and the next `okrag build` "
         f"will author its concept, but this call did not: {reason}"
     )
     return recorded

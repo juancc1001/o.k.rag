@@ -2,7 +2,7 @@
 
 Four endpoints, every one offline and read-only. Each wraps capability that
 already exists — `agent/query.py`, `agent/lint.py`, and the `graph.json`
-`okragged index` wrote — so `search` and `lint` can't drift from the MCP
+`okrag index` wrote — so `search` and `lint` can't drift from the MCP
 tools answering the same questions (DESIGN.md §10). Nothing here writes
 anywhere.
 
@@ -52,7 +52,7 @@ def create_app(config: Config):
         ) from exc
 
     app = FastAPI(
-        title="okragged",
+        title="okrag",
         description="Read-only HTTP access to an OKF bundle and its graph.",
         docs_url="/api/docs",
         openapi_url="/api/openapi.json",
@@ -60,12 +60,12 @@ def create_app(config: Config):
 
     @app.get("/api/graph")
     def graph() -> Response:
-        """`.okragged/graph.json` verbatim: nodes, links, ghosts, stats."""
+        """`.okrag/graph.json` verbatim: nodes, links, ghosts, stats."""
         path = config.sidecar_root / GRAPH_NAME
         if not path.exists():
-            raise HTTPException(404, f"no {GRAPH_NAME}; run `okragged index`")
+            raise HTTPException(404, f"no {GRAPH_NAME}; run `okrag index`")
         # served as the bytes on disk rather than parsed and re-serialized, so
-        # what the frontend renders is what `okragged index` wrote
+        # what the frontend renders is what `okrag index` wrote
         return Response(path.read_text(encoding="utf-8-sig"), media_type="application/json")
 
     @app.get("/api/concept/{concept_id:path}")

@@ -1,8 +1,8 @@
-"""OAuth 2.1 resource-server auth for `okragged mcp --transport http` (DESIGN.md
+"""OAuth 2.1 resource-server auth for `okrag mcp --transport http` (DESIGN.md
 §13 M8, criterion 1), plus the identity-scoped spend gate criterion 4 builds on
 top of it.
 
-okragged never issues tokens - it only verifies ones an external authorization
+okrag never issues tokens - it only verifies ones an external authorization
 server issued, against that issuer's published JWKS. `JWKSTokenVerifier`
 implements the MCP SDK's `TokenVerifier` protocol (`verify_token(token) ->
 AccessToken | None`) and is handed to `MCPServer(token_verifier=...)` alongside
@@ -37,12 +37,12 @@ from ..config import McpConfig
 
 # `pyjwt` is pinned in the `mcp`/`dev` extras, not the base install, so this
 # module keeps its own import lazy - the same reason `_mcp_server()` defers the
-# SDK: `okragged mcp` (plain stdio) must keep working with neither extra
+# SDK: `okrag mcp` (plain stdio) must keep working with neither extra
 # installed, and this module's exception is imported unconditionally by `cli.py`.
 
 
 class MissingAuthConfig(Exception):
-    """`--transport http` with `[mcp]` absent or incomplete in `okragged.toml`."""
+    """`--transport http` with `[mcp]` absent or incomplete in `okrag.toml`."""
 
 
 def require_http_auth_config(config: McpConfig) -> None:
@@ -64,7 +64,7 @@ def require_http_auth_config(config: McpConfig) -> None:
     ]
     if missing:
         raise MissingAuthConfig(
-            f"okragged.toml is missing [mcp].{', [mcp].'.join(missing)} - "
+            f"okrag.toml is missing [mcp].{', [mcp].'.join(missing)} - "
             "http transport needs all three set"
         )
 
@@ -133,7 +133,7 @@ def require_http_spend_config(config: McpConfig) -> None:
         missing.append("spend_rate_limit_per_hour")
     if missing:
         raise MissingAuthConfig(
-            f"okragged.toml is missing [mcp].{', [mcp].'.join(missing)} - "
+            f"okrag.toml is missing [mcp].{', [mcp].'.join(missing)} - "
             "a synthesizing add_source under http transport needs both set"
         )
 
