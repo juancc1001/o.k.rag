@@ -226,10 +226,12 @@ def render_agents_md(config: Config) -> str:
         "| `verified` by `human:…` | trust tier **human-reviewed**. |",
         "| `verified` by anything else | trust tier **machine-confirmed**. |",
         "",
-        "**Never write a `verified` block.** It records a confirmation event that actually "
-        "happened; writing one because the content looks correct forges the human-reviewed "
-        "tier. okragged never writes it and neither should you — a human promotes a concept "
-        "by editing the file.",
+        "**A `verified` entry records a confirmation event that actually happened** — "
+        "writing one because the content looks correct forges the human-reviewed tier. A "
+        "human promotes a concept by editing the file; some hosted instances additionally "
+        "offer a `verify_concept` tool, restricted to a configured scope, that appends a "
+        "real confirmation attributed to that human's own verified identity rather than to "
+        "a string they typed. If your tool list shows it, its own description says so.",
         "",
         "## Operations",
         "",
@@ -277,8 +279,9 @@ def render_agents_md(config: Config) -> str:
         "- **add_source** — for knowledge no document states: two things are related in a "
         "way no source says, and somebody knows it. Give it prose and it writes that prose "
         "into the corpus as a new source, generating the path itself. Every concept traces "
-        "to a source, which is why nothing here writes a concept — or a `verified` block — "
-        "directly. Asserting that x relates to y will mint a third concept linking to both; "
+        "to a source, which is why nothing here writes a concept directly, nor a `verified` "
+        "block — appending one is a separate tool, on the instances that offer it. Asserting "
+        "that x relates to y will mint a third concept linking to both; "
         "it does not rewrite x and y to link back. Whether the concept arrives now or with "
         "the next `okragged build` is the mode difference above, and the result says which: "
         "`synthesized` whether a concept was authored, `concepts` what it was, and "

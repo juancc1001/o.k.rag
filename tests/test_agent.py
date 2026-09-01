@@ -15,6 +15,7 @@ import json
 import os
 import re
 import sys
+import threading
 from pathlib import Path
 
 import pytest
@@ -555,10 +556,15 @@ def test_the_path_check_catches_the_operations_text_it_replaced():
     assert producer_paths(was) == [".mcp.json", ".okragged/graph.json"]
 
 
-def test_the_contract_explains_that_verified_is_never_written(project):
+def test_the_contract_explains_the_verified_rule_without_asserting_nobody_writes_it(project):
+    """§4.4's rule survives M8 criterion 5: a hosted instance may offer a
+    `verify_concept` tool, so the contract may not claim unconditionally that
+    nothing here ever writes one — it describes the possibility instead, the
+    same fix criterion 4 already made for spending (DESIGN.md §13 M8)."""
     text = agent.render_agents_md(cfg(project))
-    assert "Never write a `verified` block" in text
-    assert "human-reviewed" in text
+    assert "forges the human-reviewed tier" in text
+    assert "verify_concept" in text
+    assert "Never write a `verified` block" not in text
 
 
 def test_the_contract_regenerates_byte_identically_from_an_unchanged_bundle(project):
@@ -1143,6 +1149,122 @@ def test_add_source_takes_no_lock_and_is_not_refused_by_a_writer_holding_one(
     assert (ingestable / result.uri).is_file()
 
 
+def _concurrently(n: int, call) -> list:
+    """Runs `call(i)` for `i` in `range(n)` on real threads, all started before
+    any is joined - a mocked lock or a sequential loop cannot reproduce the race
+    this exists to catch, only actual concurrent execution can."""
+    results: list = [None] * n
+    barrier = threading.Barrier(n)
+
+    def run(i: int) -> None:
+        barrier.wait()
+        results[i] = call(i)
+
+    threads = [threading.Thread(target=run, args=(i,)) for i in range(n)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    return results
+
+
+def test_concurrent_add_source_calls_with_distinct_text_lose_nothing(ingestable):
+    """The check-then-act race `_write` used to have: two callers landing on the
+    same title-derived slug on the same day could both see the name free and the
+    second `write_text()` would silently clobber the first's prose. Real threads,
+    because a mocked lock or a sequential loop cannot reproduce a race that only
+    exists between two system calls actually interleaving."""
+    n = 8
+    texts = [f"Assertion number {i} about invoices and refunds." for i in range(n)]
+    results = _concurrently(n, lambda i: added(ingestable, text=texts[i], title="Same Title"))
+
+    uris = {result.uri for result in results}
+    assert len(uris) == n, "every distinct assertion must land at its own path"
+    written = {(ingestable / uri).read_text(encoding="utf-8-sig") for uri in uris}
+    assert written == {text + "\n" for text in texts}
+
+
+def verified(project: Path, identity: str = "user-1", concept_id: str = "revenue-policy"):
+    from okragged.agent.verify import verify_concept
+
+    return verify_concept(cfg(project), concept_id, identity)
+
+
+def verified_concept(project: Path, concept_id: str = "revenue-policy"):
+    return okf.parse(
+        (project / "bundle" / f"{concept_id}.md").read_text(encoding="utf-8-sig"), concept_id
+    )
+
+
+def test_verify_concept_appends_an_entry_to_an_empty_verified_list(project):
+    result = verified(project)
+
+    assert result.concept_id == "revenue-policy"
+    assert result.by == "human:user-1"
+    assert result.trust == "human-reviewed"
+    assert verified_concept(project).verified == [{"by": "human:user-1", "at": result.at}]
+
+
+def test_verify_concept_appends_rather_than_replacing_an_existing_entry(project):
+    verified(project, identity="user-1")
+    verified(project, identity="user-2")
+
+    by = [entry["by"] for entry in verified_concept(project).verified]
+    assert by == ["human:user-1", "human:user-2"]
+
+
+def test_verify_concept_never_touches_status(project):
+    assert verified_concept(project).status == "draft"
+    verified(project)
+    assert verified_concept(project).status == "draft"
+
+
+def test_verify_concept_refuses_an_unknown_concept_id(project):
+    from okragged.agent.verify import verify_concept
+
+    with pytest.raises(LookupError):
+        verify_concept(cfg(project), "no-such-concept", "user-1")
+    assert not (project / "bundle" / "no-such-concept.md").exists()
+
+
+def test_two_concurrent_verifications_of_the_same_concept_lose_no_entry(project):
+    """The lock decision this exercises: without it, two read-modify-writes racing
+    on the same file would each read the same starting `verified` list, and
+    whichever writes last would silently drop the other's entry with no error
+    at all. Retrying on `LockHeld` (rather than treating it as a failure) is
+    what a caller who wants both entries to land actually does with the lock
+    this reuses."""
+    from okragged.agent.verify import verify_concept
+    from okragged.lock import LockHeld
+
+    def verify_with_retry(identity: str):
+        while True:
+            try:
+                return verify_concept(cfg(project), "revenue-policy", identity)
+            except LockHeld:
+                continue
+
+    _concurrently(2, lambda i: verify_with_retry(f"user-{i}"))
+
+    by = {entry["by"] for entry in verified_concept(project).verified}
+    assert by == {"human:user-0", "human:user-1"}
+
+
+def test_concurrent_add_source_calls_with_identical_text_collapse_to_one_file(ingestable):
+    """The other half of the same race: identical assertions racing for the same
+    name must all agree on one file rather than one winning and the rest getting
+    spurious suffixes, or the corpus grows a source for every retry of the same
+    assertion."""
+    n = 8
+    results = _concurrently(n, lambda i: added(ingestable, title="Same Title"))
+
+    uris = {result.uri for result in results}
+    assert len(uris) == 1, "identical assertions must resolve to one file"
+    assert sum(result.recorded for result in results) == 1, "only the winner writes"
+    path = ingestable / uris.pop()
+    assert path.read_text(encoding="utf-8-sig") == ASSERTION + "\n"
+
+
 # --- the server ------------------------------------------------------------------
 
 def server_for(project: Path, *, write: bool = False, spend: bool = False):
@@ -1296,7 +1418,7 @@ def test_each_write_mode_describes_the_tool_its_own_instance_actually_offers(pro
     assert "No concept appears until someone runs `okragged build`" in recording
     assert "okragged build" not in synthesizing
     assert "spends the operator's credential" in synthesizing
-    assert "rate-limits it" in synthesizing
+    assert "spend_rate_limit_per_hour" in synthesizing
 
 
 class _NoRun:
@@ -1486,12 +1608,24 @@ def test_the_server_command_takes_its_project_from_the_environment_too(
 
 def test_the_server_writes_and_spends_only_when_the_invocation_says_so(project, monkeypatch):
     _, plain = served(project, monkeypatch, ["mcp", "--project", str(project)])
-    assert plain == {"write": False, "spend": False}
+    assert plain == {
+        "write": False,
+        "spend": False,
+        "transport": "stdio",
+        "host": "127.0.0.1",
+        "port": 8001,
+    }
 
     _, asked = served(
         project, monkeypatch, ["mcp", "--project", str(project), "--write", "--spend"]
     )
-    assert asked == {"write": True, "spend": True}
+    assert asked == {
+        "write": True,
+        "spend": True,
+        "transport": "stdio",
+        "host": "127.0.0.1",
+        "port": 8001,
+    }
 
 
 def test_no_environment_variable_can_turn_writing_or_spending_on(project, monkeypatch):
@@ -1502,7 +1636,13 @@ def test_no_environment_variable_can_turn_writing_or_spending_on(project, monkey
         monkeypatch.setenv(var, "1")
 
     _, modes = served(project, monkeypatch, ["mcp", "--project", str(project)])
-    assert modes == {"write": False, "spend": False}
+    assert modes == {
+        "write": False,
+        "spend": False,
+        "transport": "stdio",
+        "host": "127.0.0.1",
+        "port": 8001,
+    }
 
 
 def test_the_server_command_says_so_on_stderr_when_there_is_no_bundle_to_serve(

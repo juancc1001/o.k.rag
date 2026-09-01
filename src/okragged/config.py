@@ -27,7 +27,16 @@ class BundleConfig(BaseModel):
 class LocalSourceConfig(BaseModel):
     family: str = "document"
     path: str = "sources"
-    include: list[str] = Field(default_factory=lambda: ["**/*.md"])
+    include: list[str] = Field(
+        default_factory=lambda: [
+            "**/*.md",
+            "**/*.pdf",
+            "**/*.docx",
+            "**/*.xlsx",
+            "**/*.pptx",
+            "**/*.html",
+        ]
+    )
     exclude: list[str] = Field(default_factory=list)
 
 
@@ -63,6 +72,31 @@ class ProjectionConfig(BaseModel):
     random_state: int = 42
 
 
+class McpConfig(BaseModel):
+    issuer_url: str | None = None
+    resource_server_url: str | None = None
+    jwks_url: str | None = None
+    required_scopes: list[str] = Field(default_factory=list)
+    """All optional/`None` by default. `okragged mcp --transport http` refuses to
+    start unless all three URLs are set - none of these is a secret (the issuer's
+    public identity and this server's own resource URL, not a credential), so
+    they belong in `okragged.toml` rather than `.env`."""
+    spend_scopes: list[str] = Field(default_factory=list)
+    """Checked only for the synthesizing `add_source` tool, not for connecting
+    at all - an ordinary read-only consumer's token satisfies `required_scopes`
+    without carrying these (DESIGN.md §13 M8, criterion 4)."""
+    spend_rate_limit_per_hour: int | None = None
+    """Bounds a spend by identity per hour, not per call - cost follows the
+    model and the section count, not the call count. `--transport http --write
+    --spend` refuses to start unless both this and `spend_scopes` are set."""
+    verify_scopes: list[str] = Field(default_factory=list)
+    """Gates `verify_concept`, not connecting at all - parallel to `spend_scopes`
+    but with no paired rate limit, since verifying costs nothing to bound per hour
+    (DESIGN.md §13 M8, criterion 5). Empty means the tool is not offered; there is
+    no CLI flag of its own, so an unset value under `--write --transport http` is
+    read as "this deployment doesn't offer verification", not a misconfiguration."""
+
+
 class Config(BaseModel):
     project_root: Path
     bundle: BundleConfig = Field(default_factory=BundleConfig)
@@ -71,6 +105,7 @@ class Config(BaseModel):
     types: TypesConfig = Field(default_factory=TypesConfig)
     vectors: VectorsConfig = Field(default_factory=VectorsConfig)
     projection: ProjectionConfig = Field(default_factory=ProjectionConfig)
+    mcp: McpConfig = Field(default_factory=McpConfig)
 
     @property
     def bundle_root(self) -> Path:
@@ -107,4 +142,5 @@ def load(project_root: Path | None = None) -> Config:
         types=TypesConfig(**raw.get("types", {})),
         vectors=VectorsConfig(**raw.get("vectors", {})),
         projection=ProjectionConfig(**raw.get("projection", {})),
+        mcp=McpConfig(**raw.get("mcp", {})),
     )
