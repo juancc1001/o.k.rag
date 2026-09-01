@@ -169,7 +169,9 @@ okragged doctor                # both providers, credentials, reachability, mode
 okragged build --dry-run       # extract + report only. No model calls, no writes.
 okragged build                 # full pipeline -> bundle/ + okf-base.yaml
 okragged index                 # embed + project + graph.json -> .okragged/ only
+okragged build-view            # build the graph view from web/ (checkout only)
 okragged serve                 # the read-only API, and the graph view if it is built
+okragged serve --all           # ... building the view first if it is missing or stale
 okragged check                 # validate an existing bundle without rebuilding
 okragged agent                 # regenerate agent/AGENTS.md (offline)
 okragged agent --register      # also register the server in .mcp.json, read-only
@@ -200,6 +202,7 @@ Start with two or three files. The first real run is where the synthesis prompt 
 | `doctor` | provider reachable, model available | no credential, unreachable, or model unavailable | unknown provider name |
 | `build` | all files synthesized, bundle conformant | a file failed, or the bundle is not conformant | no `sources/` directory, no credential, or another writer holds the project |
 | `index` | every concept embedded, graph written | a concept failed to embed | no `bundle/` directory, no credential, or another writer holds the project |
+| `build-view` | view built, or `web/` absent (installed wheel) | `npm install`/`npm run build` failed | — |
 | `serve` | — (runs until interrupted) | — | no `bundle/` directory, or the `api` extra is missing |
 | `check` | bundle conformant | not conformant | no `bundle/` directory |
 | `agent` | contract written | — | no `bundle/` directory |
@@ -263,9 +266,11 @@ cd ..
 .\.venv\Scripts\okragged serve                            # http://127.0.0.1:8000
 ```
 
+Or, in a checkout, one command instead of the middle three: `okragged serve --all` builds the view first if it is missing or stale (built `index.html` absent, or older than anything under `web/src/`, `web/index.html`, `web/vite.config.ts` or `web/package.json`), then serves as above. `okragged build-view` does just the build half, for when you want the view refreshed without also starting the server. Both need `web/`, which only exists in a checkout — an installed wheel ships `api/static/` prebuilt and has no `web/` to build, so both report that plainly rather than failing.
+
 Then open **<http://127.0.0.1:8000>**. Ghost edges are off by default — tick **show ghost edges** in the left panel to see them, and drag **τ** to decide how similar a pair has to be before the graph claims they belong together.
 
-Three of those five steps are one-time setup. After that, run `okragged serve` day to day and run `okragged index` whenever the bundle changes. The view reads `graph.json` and nothing else, so it shows whatever the last `index` computed.
+Three of those five steps are one-time setup. After that, run `okragged serve` (or `okragged serve --all`, which only rebuilds the view when it is actually stale) day to day, and run `okragged index` whenever the bundle changes. The view reads `graph.json` and nothing else, so it shows whatever the last `index` computed.
 
 **While working on the view itself**, run Vite instead, so a save reloads the page:
 
@@ -282,7 +287,7 @@ Open **<http://127.0.0.1:5173>** for that one. `okragged serve` also takes `--ho
 |---|---|
 | `the HTTP API needs the optional extra` | `pip install -e ".[api]"` |
 | `no graph.json - /api/graph will 404` | `okragged index` |
-| `no built view - API only` | `npm install && npm run build` in `web/` |
+| `no built view - API only` | `npm install && npm run build` in `web/`, or `okragged build-view` |
 | `no bundle at bundle/` | `okragged build` |
 
 The view is optional; the endpoints are not. `okragged serve` runs the API with or without the built view, and [`/api/docs`](http://127.0.0.1:8000/api/docs) is browsable either way.
@@ -612,7 +617,7 @@ random_state = 42          # fixed, or the layout reshuffles every run
 .\.venv\Scripts\python.exe -m pytest tests -q
 ```
 
-362 tests. No credentials and no network needed — the end-to-end test stubs the model and asserts the emitted bundle is conformant, so "one file in, one conformant concept out" is covered offline. The embedding provider is stubbed the same way, in a three-dimensional toy space, so what two concepts are "similar" is something the test states rather than something a model decides.
+374 tests. No credentials and no network needed — the end-to-end test stubs the model and asserts the emitted bundle is conformant, so "one file in, one conformant concept out" is covered offline. The embedding provider is stubbed the same way, in a three-dimensional toy space, so what two concepts are "similar" is something the test states rather than something a model decides.
 
 | File | Covers |
 |---|---|
@@ -630,6 +635,8 @@ random_state = 42          # fixed, or the layout reshuffles every run
 | `tests/test_env.py` | `.env` loading with and without a BOM, and every `doctor` outcome |
 | `tests/test_writers.py` | the lock and the per-source commit: a second writer refused with the holder named, a lock left by a dead process reclaimed with no human in the loop, an unreadable lock file not wedging the tool, a foreign host judged on age, a reclaimed lock not deleted by the run that lost it, every read path answering while a write holds the lock, a source published by its own commit rather than by the run, the ledger never describing a source whose concepts are not published, a second run paying only for what the interrupted one never committed, a commit interrupted while placing a concept finished by the next run, an unreadable record still publishing what was staged, a commit interrupted between placing the new naming and removing the old one, a vanished source deprecated and forgotten in one commit, and the two interrupts around the weave — before it, concepts published without cross-links and not marked incomplete; during it, no concept left woven against a stale hash |
 | `tests/test_encoding.py` | the [encoding policy](#encoding-policy), enforced by AST scan (including the child-process `env` rule), plus BOM tolerance, the piped-child crash reproduced, and LF-only output end to end |
+| `tests/test_cli_view.py` | `okragged build-view` / `okragged serve --all`: staleness detection against a fake `web/` + built-output layout, and the `npm` subprocess wrapper skipped gracefully when `npm` is missing or `web/` does not exist - `subprocess.run` itself is monkeypatched, so a cold `node_modules` never needs network |
+| `tests/test_packaging.py` | the packaging defect class fixed in `4cac126` - a real `python -m build --no-isolation` (offline, since `build` and `hatchling` are `dev` dependencies) inspected directly for `okragged/sources/` and the built `api/static/index.html` in both the wheel and the sdist |
 
 Nothing skips on a normal install. okflint is resolved beside the running interpreter before `PATH` is consulted, so a venv install is found whether or not a shell activated it — which is also why `lint` over MCP reports real conformance rather than "okflint not installed".
 
@@ -693,6 +700,7 @@ Run against the 3-PDF Spanish corpus: 18 concepts embedded with `gemini-embeddin
 - **Grounded answers** (M11, proposed). `search` normalizes by the best hit, so its top result always scores `1.000` — including for a question the bundle cannot answer. Absolute confidence with an abstention floor, offline citation checking, and trust tiers carried into results.
 - **Distribution** (M5, implementation in place; exit criterion open). The rename and the console script have landed, and so has the half that makes a foreign checkout a consumer: `okragged mcp --project <dir>`, a `.mcp.json` entry naming nothing but a command on `PATH`, and the contract served as `okragged://contract` / `okragged://index` rather than as a file only the producer can open. So have `add_source` replacing `ingest` on the MCP surface, [the Python API](#driving-it-from-python), and [the lock and per-source commit](#one-writer-and-a-commit-per-source) that three writers to one bundle require. What is left is the exit criterion itself — a session driven from a checkout that is not the producer's, which nobody has had yet.
 - **An identity, and a spend scope** (M6, the security layer — 3 of 5 items built). What exists: `okragged mcp` serves read-only and reads no `.env` unless asked, and `--write --spend` gives you back an `add_source` that authors the concept in the same call. What that mode rests on is only that *you* launched it, so caller and payer are the same person. What is missing is the half that makes the question answerable rather than moot — an identity to attribute a call to, and a spend scope with a rate limit — because a token a caller presents is not an identity when the caller owns the process, and a counter beside the bundle is one he can delete. Those bind where there is a channel and a host holding the only key.
+- **Publish** (M7, packaging done and locally verified; exit criterion open). The graph view now reaches both the wheel and the sdist via a hatchling `artifacts` glob rather than a build hook — Node is needed only to *cut* a release, never to install one — and the `sources/` gitignore-anchoring defect that had been silently dropping that module from every wheel is fixed. `LICENSE` and the rest of the publish metadata exist. `okragged build-view` / `okragged serve --all` also shipped here, promoted from a staged idea once M7 made it real. A built sdist and wheel have been inspected directly for both fixes, and a throwaway venv has installed the wheel and found the view with no Node present — what is left is `pip install okragged` against the real index, which is the maintainer's own step.
 - **BigQuery/blob sources.** M9.
 
 ### Known rough edges in segmentation
