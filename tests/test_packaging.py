@@ -1,6 +1,6 @@
 """Guards the defect class fixed in `4cac126`: a file present on disk, silently
 absent from a built artifact. That commit anchored the `sources/` gitignore
-rule (unanchored, it also matched `src/okragged/sources/`) and force-included
+rule (unanchored, it also matched `src/okrag/sources/`) and force-included
 the gitignored `api/static/**` view assets via `[tool.hatch.build.targets.*]
 artifacts`. Static, not trusted-to-hold, the same way `tests/test_encoding.py`
 guards its own defect class by re-deriving the check rather than by relying on
@@ -39,9 +39,9 @@ pytestmark = pytest.mark.skipif(
 )
 
 _view_built = pytest.mark.skipif(
-    not (REPO_ROOT / "src/okragged/api/static/index.html").is_file(),
+    not (REPO_ROOT / "src/okrag/api/static/index.html").is_file(),
     reason="web/ has never been built in this checkout: run `npm install && npm run build` "
-    "in web/, or `okragged build-view`",
+    "in web/, or `okrag build-view`",
 )
 
 
@@ -68,26 +68,26 @@ def built_artifacts(tmp_path_factory):
 def test_the_wheel_carries_the_sources_module(built_artifacts):
     with zipfile.ZipFile(built_artifacts["wheel"]) as z:
         names = z.namelist()
-    assert "okragged/sources/__init__.py" in names
-    assert "okragged/sources/local.py" in names
+    assert "okrag/sources/__init__.py" in names
+    assert "okrag/sources/local.py" in names
 
 
 @_view_built
 def test_the_wheel_carries_the_built_graph_view(built_artifacts):
     with zipfile.ZipFile(built_artifacts["wheel"]) as z:
         names = z.namelist()
-    assert "okragged/api/static/index.html" in names
+    assert "okrag/api/static/index.html" in names
 
 
 def test_the_sdist_carries_the_sources_module(built_artifacts):
     with tarfile.open(built_artifacts["sdist"]) as t:
         names = t.getnames()
-    assert any(n.endswith("src/okragged/sources/__init__.py") for n in names)
-    assert any(n.endswith("src/okragged/sources/local.py") for n in names)
+    assert any(n.endswith("src/okrag/sources/__init__.py") for n in names)
+    assert any(n.endswith("src/okrag/sources/local.py") for n in names)
 
 
 @_view_built
 def test_the_sdist_carries_the_built_graph_view(built_artifacts):
     with tarfile.open(built_artifacts["sdist"]) as t:
         names = t.getnames()
-    assert any(n.endswith("src/okragged/api/static/index.html") for n in names)
+    assert any(n.endswith("src/okrag/api/static/index.html") for n in names)

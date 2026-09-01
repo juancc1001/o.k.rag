@@ -1,10 +1,10 @@
-"""okragged as a library: the operations `okragged` the command runs, callable directly.
+"""okrag as a library: the operations `okrag` the command runs, callable directly.
 
-    import okragged
+    import okrag
 
-    cfg = okragged.configure("~/corpus")
-    okragged.build(cfg, progress=print)
-    okragged.check(cfg)
+    cfg = okrag.configure("~/corpus")
+    okrag.build(cfg, progress=print)
+    okrag.check(cfg)
 
 Each function takes a project path or a `Config` and delegates to the module that
 does the real work. A bundle is just a directory on disk (DESIGN.md §2), so no
@@ -20,7 +20,7 @@ agent to read) but never touches `.mcp.json` (the machine's MCP client config) �
 only `register()` does that, and nothing here calls it automatically.
 
 Every import below is deferred (function-local, plus `__getattr__` for `Config`
-and `Progress`), so `import okragged` stays cheap: the extraction path pulls in
+and `Progress`), so `import okrag` stays cheap: the extraction path pulls in
 `markitdown`, which prints a warning on import.
 """
 
@@ -48,7 +48,7 @@ def _installed_version() -> str:
     from importlib.metadata import PackageNotFoundError, version
 
     try:
-        return version("okragged")
+        return version("okrag")
     except PackageNotFoundError:  # pragma: no cover - an uninstalled checkout
         return "0+unknown"
 
@@ -70,7 +70,7 @@ __all__ = [
 
 
 def configure(project: str | Path, **overrides: Any) -> Config:
-    """The `Config` for `project`, reading its `okragged.toml` if it has one.
+    """The `Config` for `project`, reading its `okrag.toml` if it has one.
 
     Keyword arguments override whole sections and are validated by pydantic:
     `configure(path, synth={"provider": "gemini"})`. Reads no `.env`.
@@ -96,7 +96,7 @@ def build(
     `[synth]` provider, unless `dry_run`.
 
     Regenerates `agent/AGENTS.md` (docs describing the bundle) by default, same
-    as `okragged build` — pass `contract=False` to skip it. Never registers the
+    as `okrag build` — pass `contract=False` to skip it. Never registers the
     MCP server; that's `register()`.
 
     `only` limits the run to the given source paths, and also skips the sweep
@@ -111,7 +111,7 @@ def build(
 
 def index(project: str | Path | Config) -> IndexSummary:
     """Embed the bundle, project it to 2D, write `graph.json`. Writes only into
-    `.okragged/`, and needs a credential for the `[vectors]` provider."""
+    `.okrag/`, and needs a credential for the `[vectors]` provider."""
     from .vectors import index as index_bundle
 
     return index_bundle(_config(project))
@@ -179,10 +179,10 @@ def write_contract(project: str | Path | Config) -> list[Path]:
 def register(
     project: str | Path | Config, *, write: bool = False, spend: bool = False
 ) -> Path:
-    """Registers `okragged mcp` for this project in `.mcp.json`, preserving any
+    """Registers `okrag mcp` for this project in `.mcp.json`, preserving any
     other servers already registered there. Offline.
 
-    The only function here that writes a file okragged doesn't own — nothing
+    The only function here that writes a file okrag doesn't own — nothing
     calls it automatically, which is why it's a separate function rather than
     a flag on `build()`.
 

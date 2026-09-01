@@ -9,10 +9,10 @@ from __future__ import annotations
 import json
 import shutil
 
-from okragged import config as config_module
-from okragged import okf, pipeline
-from okragged.ledger import LEDGER_NAME, Ledger, body_hash
-from okragged.synth import ProviderHTTPError
+from okrag import config as config_module
+from okrag import okf, pipeline
+from okrag.ledger import LEDGER_NAME, Ledger, body_hash
+from okrag.synth import ProviderHTTPError
 
 # tests/ has no __init__.py, so pytest imports these as top-level modules
 from test_pipeline import (  # noqa: F401  (project/segmented are used as fixtures)
@@ -288,7 +288,7 @@ def test_a_hand_edited_concept_is_not_overwritten(project, monkeypatch):
 
     assert "A human rewrote this by hand." in path.read_text(encoding="utf-8-sig")
     outcome = next(o for o in second.written if o.uri == "sources/revenue-policy.md")
-    assert outcome.protected == {"revenue-policy": "edited since okragged last wrote it"}
+    assert outcome.protected == {"revenue-policy": "edited since okrag last wrote it"}
     proposed = cfg.sidecar_root / "proposed" / "revenue-policy.md"
     assert "Revenue is recognized on delivery" in proposed.read_text(encoding="utf-8-sig")
 
@@ -335,7 +335,7 @@ def test_a_protected_concept_is_not_deleted_as_stale(segmented, monkeypatch):
 # --- the ledger itself -----------------------------------------------------------
 
 
-def test_the_ledger_records_the_body_okragged_wrote(project, monkeypatch):
+def test_the_ledger_records_the_body_okrag_wrote(project, monkeypatch):
     monkeypatch.setattr(pipeline, "synthesize", fake_synthesize)
     cfg = config_module.load(project)
     pipeline.ingest(cfg, dry_run=False)

@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from okragged.synth import (
+from okrag.synth import (
     MAX_CONCEPT_WORDS,
     MIN_SECTION_WORDS,
     ProviderResponse,
@@ -13,7 +13,7 @@ from okragged.synth import (
     needs_segmenting,
     plan,
 )
-from okragged.synth.providers import gemini
+from okrag.synth.providers import gemini
 
 FILLER = "relleno " * (MIN_SECTION_WORDS + 20)
 

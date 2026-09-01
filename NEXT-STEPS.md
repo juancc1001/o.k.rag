@@ -14,13 +14,13 @@ Today `okf/writer.py` writes a directory and nothing else can be true. `@llm-wik
 
 **Why it's tempting.** It makes the bundle addressable from a service without a filesystem, and it separates "what a bundle is" from "where its bytes are" — which is the same separation `okf/` already wants for M10.
 
-**Why it is not obviously right here, and this is the part to resolve first.** The load-bearing property of an okragged bundle is that you can `tar` it and `cat` it with no knowledge of okragged. A Postgres-backed bundle does not have that property; it has an *export* that does. So an adapter layer either demotes the directory from "the product" to "one serialization", or it admits the directory is canonical and everything else is a projection. Those are different products. **Decide that before writing the interface, not after.**
+**Why it is not obviously right here, and this is the part to resolve first.** The load-bearing property of an okrag bundle is that you can `tar` it and `cat` it with no knowledge of okrag. A Postgres-backed bundle does not have that property; it has an *export* that does. So an adapter layer either demotes the directory from "the product" to "one serialization", or it admits the directory is canonical and everything else is a projection. Those are different products. **Decide that before writing the interface, not after.**
 
 **Note on the axis.** This is not `DESIGN.md` §9 / M9. §9 is the `Source` protocol — where knowledge is read *from* (BigQuery, blob storage). This is where the bundle is written *to*. Two independent axes that both use the word "adapter"; keeping them separate in conversation avoids a real design confusion.
 
 **Cost.** Touches `okf/writer.py`, `okf/validate.py`, `pipeline.py::_finalize`, and every test that asserts on paths. Not small.
 
-**Gate.** Cleared — M4 shipped, and the MCP server is the second consumer it asked for. M5's Python API forced the question and **refused it deliberately**: the public functions return the summaries and paths the underlying ones already returned, there is no `Bundle`, and `okragged.__init__` has no name that stands for a bundle. So this item is still open and still undecided — which is the point. Nothing published so far assumes the directory is one serialization among several.
+**Gate.** Cleared — M4 shipped, and the MCP server is the second consumer it asked for. M5's Python API forced the question and **refused it deliberately**: the public functions return the summaries and paths the underlying ones already returned, there is no `Bundle`, and `okrag.__init__` has no name that stands for a bundle. So this item is still open and still undecided — which is the point. Nothing published so far assumes the directory is one serialization among several.
 
 ---
 
@@ -33,7 +33,7 @@ Today `okf/writer.py` writes a directory and nothing else can be true. `@llm-wik
 - drop a citation the previous body carried,
 - shrink a schema-like fenced block.
 
-**Why this belongs here.** §4.4 and §6.4 already refuse to overwrite a concept whose body hash moved or that carries a `verified` block — the human's claim is detected at the level of *the whole file*. These guards work at the level of *what the rewrite does to the content*, which catches a case okragged currently misses: a concept the human has not touched, being rewritten by a later run in a way that quietly loses a section, a source citation, or a frontmatter key the human's tooling depends on.
+**Why this belongs here.** §4.4 and §6.4 already refuse to overwrite a concept whose body hash moved or that carries a `verified` block — the human's claim is detected at the level of *the whole file*. These guards work at the level of *what the rewrite does to the content*, which catches a case okrag currently misses: a concept the human has not touched, being rewritten by a later run in a way that quietly loses a section, a source citation, or a frontmatter key the human's tooling depends on.
 
 Risk 6 in §12 is about human edits versus LLM ownership. This is the same risk one level down, and it is checkable offline — which by CLAUDE.md's own standard makes it a repair, not a prompt rule.
 
@@ -47,7 +47,7 @@ Risk 6 in §12 is about human edits versus LLM ownership. This is the same risk 
 
 **Why it matters here.** Concept ids derive from **model-written titles**. That is untrusted input reaching a path constructor. A title containing `..`, a colon, or the word `nul` is not adversarial — it is a plausible accident of a Spanish legal corpus meeting a slugifier — and on Windows the reserved-name case fails in a confusing way rather than a loud one.
 
-okragged has `tests/test_encoding.py` walking the AST to enforce the I/O encoding policy. There is no equivalent guard on path construction, and the reasoning that justified the encoding test applies unchanged: the platform default is wrong, and a deviating call site should fail the suite rather than fail a user.
+okrag has `tests/test_encoding.py` walking the AST to enforce the I/O encoding policy. There is no equivalent guard on path construction, and the reasoning that justified the encoding test applies unchanged: the platform default is wrong, and a deviating call site should fail the suite rather than fail a user.
 
 **Cost.** Small and self-contained — one module in `okf/`, plus the AST-style test convention already established.
 
@@ -81,7 +81,7 @@ The failure was diagnosed by `gh auth status` showing two logged-in accounts wit
 
 **Worth keeping in mind:** on this machine a "repository not found" is an authentication result until proven otherwise. Check `gh api user --jq '.login'` against the remote's owner before concluding anything about the remote's existence.
 
-**Separately, and still true:** local `main` was 19 commits behind and a `git checkout main` emptied the working tree of every tracked file, which is how this started. That is normal git behaviour, but it is worth noting that `bundle/`, `sources/`, and `.okragged/` are gitignored by design (§13 — ids churn every rebuild, so the diff is unreadable), which means git protects the code and none of the corpus. **The corpus needs its own backup story, separate from the repository.** `HANDOFF-M2.md` was untracked, was never committed, and did not survive.
+**Separately, and still true:** local `main` was 19 commits behind and a `git checkout main` emptied the working tree of every tracked file, which is how this started. That is normal git behaviour, but it is worth noting that `bundle/`, `sources/`, and `.okrag/` are gitignored by design (§13 — ids churn every rebuild, so the diff is unreadable), which means git protects the code and none of the corpus. **The corpus needs its own backup story, separate from the repository.** `HANDOFF-M2.md` was untracked, was never committed, and did not survive.
 
 ---
 
@@ -103,13 +103,13 @@ Considered while planning the hosted server and **deliberately left here.** §13
 - **M8** would address it by URL. Host-specific; dead when the host moves or the tunnel restarts.
 - Two copies of one bundle are indistinguishable from two unrelated bundles. `[bundle].title` is a display string, `okf-base.yaml` names the linter's manifest, and the root `index.md` declares `okf_version` — **none of them identifies the bundle.**
 
-**Why it matters, concretely.** The intended flow is "someone runs okragged over their corpus and exposes it when they want to". For a second person to reach it, they need something to put in `claude mcp add`. Today the only candidates are a path on a machine they do not have or a URL that is valid until it is not. There is no sentence of the form *point me at that corpus* that survives the corpus moving.
+**Why it matters, concretely.** The intended flow is "someone runs okrag over their corpus and exposes it when they want to". For a second person to reach it, they need something to put in `claude mcp add`. Today the only candidates are a path on a machine they do not have or a URL that is valid until it is not. There is no sentence of the form *point me at that corpus* that survives the corpus moving.
 
-**What registration ergonomics do and do not fix.** `claude mcp add <name> -- okragged mcp --project <path>` is a better line for a human than editing JSON, and `AGENTS.md` should probably print it next to the portable entry. It is worth doing and it is not this item: it shortens the instruction, it does not make the target nameable, and it is one client's command, so it cannot be the only form offered.
+**What registration ergonomics do and do not fix.** `claude mcp add <name> -- okrag mcp --project <path>` is a better line for a human than editing JSON, and `AGENTS.md` should probably print it next to the portable entry. It is worth doing and it is not this item: it shortens the instruction, it does not make the target nameable, and it is one client's command, so it cannot be the only form offered.
 
 **Three questions this splits into, and they have different urgencies.**
 
-1. **Does a bundle get a stable id?** The expensive question, and the one to settle early, because it is a public identifier in the same class as the `okragged://` scheme (§13 M5) — reversing it breaks everyone who recorded one. If yes, it belongs in the bundle-root `index.md`, since that is the one file the format already gives frontmatter, and it must be *generated once and never rewritten*, unlike concept ids which churn on every rebuild by design.
+1. **Does a bundle get a stable id?** The expensive question, and the one to settle early, because it is a public identifier in the same class as the `okrag://` scheme (§13 M5) — reversing it breaks everyone who recorded one. If yes, it belongs in the bundle-root `index.md`, since that is the one file the format already gives frontmatter, and it must be *generated once and never rewritten*, unlike concept ids which churn on every rebuild by design.
 2. **Can one server serve more than one bundle?** `--project` is one root per process. Hosted, `https://host/<bundle>` is the obvious shape and is not designed. Cheap to answer, but it depends on (1) for what `<bundle>` is.
 3. **How does a consumer find out a bundle exists at all?** Out of scope for anything soon — that is a directory service, and it is a different product.
 
@@ -119,7 +119,7 @@ Considered while planning the hosted server and **deliberately left here.** §13
 
 - **A URL is a better location, not an identity.** It survives the consumer's machine, which a filesystem path does not. It does not survive the service, and it makes whoever runs the service the source of the name — so the same bundle then has two locations, its owner's disk and that URL, with nothing in the bundle asserting they are the same thing. Question (1) does not go away here; it takes more load.
 
-- **The routing unit and question (2) are one decision seen from two sides.** `--project` is one root per process, so per-bundle routing implies one process per bundle: simple, blast-radius-isolated, and wasteful across many small bundles. One process serving several changes what `okragged mcp` is. Deciding it once, as *how a server addresses bundles*, is cheaper than deciding it twice — as routing and as CLI shape — and finding out later that the two disagree.
+- **The routing unit and question (2) are one decision seen from two sides.** `--project` is one root per process, so per-bundle routing implies one process per bundle: simple, blast-radius-isolated, and wasteful across many small bundles. One process serving several changes what `okrag mcp` is. Deciding it once, as *how a server addresses bundles*, is cheaper than deciding it twice — as routing and as CLI shape — and finding out later that the two disagree.
 
 **The cheap version, which is probably the right first one.** A per-bundle URL does not require multi-tenancy. One owner, one machine, one DNS name they control, a tunnel — that is "live on the web" without becoming a service provider, and it is what "expose it when I want" means in practice. Multi-tenant routing is for when other people's corpora live on your hardware, which is a company rather than a feature: the proxy is a weekend, and M8's five criteria plus uptime, backups and someone else's private legal corpus on your disk are permanent. §12 Risk 7 stops being a design note at that point and becomes a question someone's lawyer asks.
 
@@ -131,12 +131,12 @@ Considered while planning the hosted server and **deliberately left here.** §13
 
 ---
 
-## 11. `okragged` on `PATH` before publication
+## 11. `okrag` on `PATH` before publication
 
-**The problem.** The console script exists only inside `.venv/Scripts`. A client spawning `okragged mcp` from `.mcp.json` does not activate a venv, so the bare name does not resolve and the server dies at spawn. `agent/contract.py::_command` now falls back to the script beside `sys.executable`, which makes it work — the entry is then absolute, and `.mcp.json` is not gitignored. Every other command still has to be spelled `.\.venv\Scripts\okragged`.
+**The problem.** The console script exists only inside `.venv/Scripts`. A client spawning `okrag mcp` from `.mcp.json` does not activate a venv, so the bare name does not resolve and the server dies at spawn. `agent/contract.py::_command` now falls back to the script beside `sys.executable`, which makes it work — the entry is then absolute, and `.mcp.json` is not gitignored. Every other command still has to be spelled `.\.venv\Scripts\okrag`.
 
-**Interim answer.** A tool install of the checkout: `pipx install --editable <root>`, or `uv tool install --editable .`. Both expose the console script without putting okragged's dependency tree into a shared site-packages. `pip install --user -e .` does **not** solve it on this machine: the script lands in `%APPDATA%\Python\Python312\Scripts`, which is not on `PATH` either — tried on 2026-08-17.
+**Interim answer.** A tool install of the checkout: `pipx install --editable <root>`, or `uv tool install --editable .`. Both expose the console script without putting okrag's dependency tree into a shared site-packages. `pip install --user -e .` does **not** solve it on this machine: the script lands in `%APPDATA%\Python\Python312\Scripts`, which is not on `PATH` either — tried on 2026-08-17.
 
-**Why it is staged rather than scheduled.** §13 M7 makes `pip install okragged` real and supersedes this entirely. Until then the producer cannot run M5's own exit criterion, which opens with that command.
+**Why it is staged rather than scheduled.** §13 M7 makes `pip install okrag` real and supersedes this entirely. Until then the producer cannot run M5's own exit criterion, which opens with that command.
 
 **Gate.** Superseded by M7. Worth doing before then only if the absolute entry becomes a nuisance.

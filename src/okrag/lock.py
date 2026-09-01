@@ -1,6 +1,6 @@
-"""One writer per project — `.okragged/lock.json` (DESIGN.md §5).
+"""One writer per project — `.okrag/lock.json` (DESIGN.md §5).
 
-Three things can write to a project directory: `okragged build`, the MCP
+Three things can write to a project directory: `okrag build`, the MCP
 server's `add_source`, and the Python API. Letting two of them interleave is
 worse than an ordinary race here, because concept ids are derived from
 model-written titles — two runs don't overwrite each other's names, they each
@@ -106,7 +106,7 @@ def _claim(path: Path, holder: Holder) -> str:
             other = _read(path)
             if other is not None and _alive(other):
                 raise LockHeld(
-                    f"another okragged run holds this project: {other.describe()}. "
+                    f"another okrag run holds this project: {other.describe()}. "
                     "Reads are unaffected - `search`, `read_concept`, `lint` and "
                     "`check` do not take the lock."
                 ) from None
@@ -114,7 +114,7 @@ def _claim(path: Path, holder: Holder) -> str:
                 # somebody else reclaimed it in the gap; retrying would race with
                 # no upper bound
                 raise LockHeld(
-                    "another okragged run claimed this project while a dead "
+                    "another okrag run claimed this project while a dead "
                     f"holder's lock was being cleared: {path}"
                 ) from None
             note = (

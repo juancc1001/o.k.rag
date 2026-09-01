@@ -1,9 +1,9 @@
 # derived, rebuildable from sources/ + bundle/
-.okragged/
+.okrag/
 
 # your input corpus. Not committed: it is your own material, and a real corpus
 # tends to carry third-party names that do not belong in a permanent history.
-# Anchored to the repo root, or it would also swallow src/okragged/sources/.
+# Anchored to the repo root, or it would also swallow src/okrag/sources/.
 /sources/
 
 # working output. Not committed because concept ids derive from model-written
@@ -13,12 +13,12 @@ bundle/
 okf-base.yaml
 
 # layer 3, generated from the bundle on every build: AGENTS.md carries the
-# corpus's own names for the same reason bundle/ is not committed. `okragged
-# agent` rewrites it. Anchored, or it would also swallow src/okragged/agent/.
+# corpus's own names for the same reason bundle/ is not committed. `okrag
+# agent` rewrites it. Anchored, or it would also swallow src/okrag/agent/.
 #
 # .mcp.json is deliberately NOT here. It is the machine's MCP config, shared with
 # every other server registered in it and written only when you ask
-# (`okragged agent --register`), so whether it belongs in a history is yours.
+# (`okrag agent --register`), so whether it belongs in a history is yours.
 /agent/
 
 # secrets — .env.example is the committed template
@@ -35,7 +35,7 @@ okf-base.yaml
 # the built graph view. Vite writes it inside the package so one build serves a
 # checkout and a wheel alike; it is build output either way, and the wheel takes
 # it from `[tool.hatch.build.targets.wheel] artifacts` rather than from git.
-src/okragged/api/static/
+src/okrag/api/static/
 
 .venv/
 node_modules/

@@ -15,11 +15,11 @@ interrupted run had already paid for.
 
 A run stages one unit at a time; each commit is fenced by a record on disk:
 
-  1. save the ledger into `.okragged/staging/manifest.json`
-  2. write `.okragged/pending-commit.json`   <- from here the commit is replayable
+  1. save the ledger into `.okrag/staging/manifest.json`
+  2. write `.okrag/pending-commit.json`   <- from here the commit is replayable
   3. move each staged concept into `bundle/`
   4. delete the stale output the record names
-  5. `.okragged/staging/manifest.json` -> `.okragged/manifest.json`
+  5. `.okrag/staging/manifest.json` -> `.okrag/manifest.json`
   6. delete the staging area and the record
 
 Every step is idempotent and guarded by what's already on disk, so `reconcile`
@@ -53,7 +53,7 @@ from .ledger import LEDGER_NAME, Ledger
 from .okf import delete_concept
 
 STAGING = "staging"
-"""`.okragged/staging/` — where the unit in flight writes."""
+"""`.okrag/staging/` — where the unit in flight writes."""
 PENDING_NAME = "pending-commit.json"
 BUNDLE = "bundle"
 """The staged tree's name inside the staging area — fixed, not `[bundle].root`

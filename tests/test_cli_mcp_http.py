@@ -1,4 +1,4 @@
-"""`okragged mcp --transport http` (DESIGN.md §13 M8, criteria 1 and 4): the
+"""`okrag mcp --transport http` (DESIGN.md §13 M8, criteria 1 and 4): the
 CLI's own validation, kept offline by monkeypatching `agent.server.main`
 rather than letting it actually bind a socket - same style as
 `tests/test_cli_view.py`.
@@ -17,7 +17,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from okragged import cli
+from okrag import cli
 
 runner = CliRunner()
 
@@ -36,11 +36,11 @@ def project(tmp_path: Path) -> Path:
 
 
 def write_mcp_config(project: Path) -> None:
-    (project / "okragged.toml").write_text(MCP_TOML, encoding="utf-8", newline="\n")
+    (project / "okrag.toml").write_text(MCP_TOML, encoding="utf-8", newline="\n")
 
 
 def served(project: Path, monkeypatch, args: list[str]):
-    from okragged.agent import server
+    from okrag.agent import server
 
     seen: list[tuple[Path, dict]] = []
     monkeypatch.setattr(server, "main", lambda root, **modes: seen.append((root, modes)))
@@ -93,9 +93,9 @@ def test_http_transport_refuses_write_and_spend_together_with_no_spend_config(pr
 def test_http_transport_with_full_spend_config_allows_write_and_spend_together(
     project, monkeypatch
 ):
-    (project / "okragged.toml").write_text(
+    (project / "okrag.toml").write_text(
         MCP_TOML
-        + 'spend_scopes = ["okragged:spend"]\n'
+        + 'spend_scopes = ["okrag:spend"]\n'
         + "spend_rate_limit_per_hour = 5\n",
         encoding="utf-8",
         newline="\n",

@@ -27,8 +27,8 @@ import jwt
 import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
 
-from okragged import config as config_module
-from okragged.agent.auth import (
+from okrag import config as config_module
+from okrag.agent.auth import (
     JWKSTokenVerifier,
     SpendRateLimiter,
     SpendRefused,
@@ -36,7 +36,7 @@ from okragged.agent.auth import (
     authorize_spend,
     authorize_verify,
 )
-from okragged.config import Config, McpConfig
+from okrag.config import Config, McpConfig
 from test_agent import ingestable, project  # noqa: F401  (used as fixtures)
 
 ISSUER = "https://issuer.example.com"
@@ -170,7 +170,7 @@ def http_app(cfg, keys, monkeypatch, **config_overrides):
     pytest.importorskip("mcp", reason='the MCP SDK is an optional extra: pip install -e ".[mcp]"')
     _, public_key = keys
 
-    from okragged.agent.server import build_server
+    from okrag.agent.server import build_server
 
     # `JWKSTokenVerifier.__init__` builds a real `jwt.PyJWKClient` when no
     # `jwk_client` is passed - `build_server` never passes one, so the stub
@@ -219,7 +219,7 @@ def test_the_http_app_mounts_no_bundle_or_static_route(cfg, keys, monkeypatch):
     """Criterion 2, checked by construction: `streamable_http_app()` only ever
     mounts the protocol endpoint plus the auth metadata route it declared -
     never a static file mount. `api/app.py`'s `STATIC_DIR` mount is unrelated
-    and lives behind `okragged serve`, not this transport."""
+    and lives behind `okrag serve`, not this transport."""
     from starlette.routing import Mount
 
     app = http_app(cfg, keys, monkeypatch)
@@ -264,27 +264,27 @@ def set_access_token(monkeypatch, token) -> None:
 
 def test_authorize_spend_refuses_with_no_authenticated_identity_at_all(monkeypatch):
     set_access_token(monkeypatch, None)
-    config = mcp_config(spend_scopes=["okragged:spend"], spend_rate_limit_per_hour=5)
+    config = mcp_config(spend_scopes=["okrag:spend"], spend_rate_limit_per_hour=5)
     with pytest.raises(SpendRefused):
         authorize_spend(config, SpendRateLimiter(5))
 
 
 def test_authorize_spend_refuses_a_token_missing_the_spend_scope(monkeypatch):
     set_access_token(monkeypatch, access_token(scopes=["read"]))
-    config = mcp_config(spend_scopes=["okragged:spend"], spend_rate_limit_per_hour=5)
+    config = mcp_config(spend_scopes=["okrag:spend"], spend_rate_limit_per_hour=5)
     with pytest.raises(SpendRefused):
         authorize_spend(config, SpendRateLimiter(5))
 
 
 def test_authorize_spend_accepts_and_names_a_token_carrying_every_spend_scope(monkeypatch):
-    set_access_token(monkeypatch, access_token(scopes=["read", "okragged:spend"], subject="user-42"))
-    config = mcp_config(spend_scopes=["okragged:spend"], spend_rate_limit_per_hour=5)
+    set_access_token(monkeypatch, access_token(scopes=["read", "okrag:spend"], subject="user-42"))
+    config = mcp_config(spend_scopes=["okrag:spend"], spend_rate_limit_per_hour=5)
     assert authorize_spend(config, SpendRateLimiter(5)) == "user-42"
 
 
 def test_authorize_spend_refuses_once_the_limiter_is_exhausted(monkeypatch):
-    set_access_token(monkeypatch, access_token(scopes=["okragged:spend"]))
-    config = mcp_config(spend_scopes=["okragged:spend"], spend_rate_limit_per_hour=1)
+    set_access_token(monkeypatch, access_token(scopes=["okrag:spend"]))
+    config = mcp_config(spend_scopes=["okrag:spend"], spend_rate_limit_per_hour=1)
     limiter = SpendRateLimiter(1)
 
     assert authorize_spend(config, limiter) == "user-1"
@@ -325,23 +325,23 @@ def test_spend_rate_limiter_forgets_calls_older_than_an_hour():
 
 def test_authorize_verify_refuses_with_no_authenticated_identity_at_all(monkeypatch):
     set_access_token(monkeypatch, None)
-    config = mcp_config(verify_scopes=["okragged:verify"])
+    config = mcp_config(verify_scopes=["okrag:verify"])
     with pytest.raises(VerifyRefused):
         authorize_verify(config)
 
 
 def test_authorize_verify_refuses_a_token_missing_the_verify_scope(monkeypatch):
     set_access_token(monkeypatch, access_token(scopes=["read"]))
-    config = mcp_config(verify_scopes=["okragged:verify"])
+    config = mcp_config(verify_scopes=["okrag:verify"])
     with pytest.raises(VerifyRefused):
         authorize_verify(config)
 
 
 def test_authorize_verify_accepts_and_names_a_token_carrying_every_verify_scope(monkeypatch):
     set_access_token(
-        monkeypatch, access_token(scopes=["read", "okragged:verify"], subject="user-42")
+        monkeypatch, access_token(scopes=["read", "okrag:verify"], subject="user-42")
     )
-    config = mcp_config(verify_scopes=["okragged:verify"])
+    config = mcp_config(verify_scopes=["okrag:verify"])
     assert authorize_verify(config) == "user-42"
 
 
@@ -352,10 +352,10 @@ def synth_server(project: Path, **mcp_overrides):
     """`write=True, spend=True` under http, driven in-process with `mcp.Client` -
     no real socket, no ASGI auth middleware, which is exactly why the tests below
     set the SDK's own contextvar directly rather than presenting a bearer token."""
-    from okragged.agent.server import build_server
+    from okrag.agent.server import build_server
 
     http_auth = mcp_config(
-        spend_scopes=["okragged:spend"], spend_rate_limit_per_hour=5, **mcp_overrides
+        spend_scopes=["okrag:spend"], spend_rate_limit_per_hour=5, **mcp_overrides
     )
     return build_server(Config(project_root=project), write=True, spend=True, http_auth=http_auth)
 
@@ -364,7 +364,7 @@ def test_a_refused_spend_writes_nothing_and_never_reaches_add_source(ingestable,
     import anyio
     from mcp import Client
 
-    from okragged.agent import server as server_module
+    from okrag.agent import server as server_module
 
     def refuse(config, limiter):
         raise SpendRefused("no scope")
@@ -384,7 +384,7 @@ def test_an_authorized_spend_records_and_synthesizes_as_usual(ingestable, monkey
     import anyio
     from mcp import Client
 
-    from okragged.agent import server as server_module
+    from okrag.agent import server as server_module
 
     monkeypatch.setattr(server_module, "authorize_spend", lambda config, limiter: "user-1")
 
@@ -405,8 +405,8 @@ def test_the_stdio_path_never_calls_authorize_spend(ingestable, monkeypatch):
     import anyio
     from mcp import Client
 
-    from okragged.agent import server as server_module
-    from okragged.agent.server import build_server
+    from okrag.agent import server as server_module
+    from okrag.agent.server import build_server
 
     called: list[object] = []
     monkeypatch.setattr(
@@ -430,7 +430,7 @@ def verify_server(project: Path, *, write: bool = True, http_auth=None, **mcp_ov
     """Mirrors `synth_server`'s shape for `verify_concept` rather than `add_source`.
     `http_auth=None` reproduces stdio; passing one reproduces http with whatever
     `verify_scopes` the caller wants to exercise."""
-    from okragged.agent.server import build_server
+    from okrag.agent.server import build_server
 
     return build_server(Config(project_root=project), write=write, http_auth=http_auth)
 
@@ -439,7 +439,7 @@ def test_verify_concept_absent_when_write_is_off(project):
     import anyio
     from mcp import Client
 
-    http_auth = mcp_config(verify_scopes=["okragged:verify"])
+    http_auth = mcp_config(verify_scopes=["okrag:verify"])
 
     async def go():
         async with Client(verify_server(project, write=False, http_auth=http_auth)) as client:
@@ -480,14 +480,14 @@ def test_a_refused_verify_writes_nothing(project, monkeypatch):
     import anyio
     from mcp import Client
 
-    from okragged.agent import server as server_module
+    from okrag.agent import server as server_module
 
     def refuse(config):
         raise VerifyRefused("no scope")
 
     monkeypatch.setattr(server_module, "authorize_verify", refuse)
     before = (project / "bundle" / "revenue-policy.md").read_text(encoding="utf-8-sig")
-    http_auth = mcp_config(verify_scopes=["okragged:verify"])
+    http_auth = mcp_config(verify_scopes=["okrag:verify"])
 
     async def go():
         async with Client(verify_server(project, http_auth=http_auth)) as client:
@@ -503,11 +503,11 @@ def test_an_authorized_verify_appends_the_entry_and_the_file_reflects_it(project
     import anyio
     from mcp import Client
 
-    from okragged import okf
-    from okragged.agent import server as server_module
+    from okrag import okf
+    from okrag.agent import server as server_module
 
     monkeypatch.setattr(server_module, "authorize_verify", lambda config: "user-42")
-    http_auth = mcp_config(verify_scopes=["okragged:verify"])
+    http_auth = mcp_config(verify_scopes=["okrag:verify"])
 
     async def go():
         async with Client(verify_server(project, http_auth=http_auth)) as client:

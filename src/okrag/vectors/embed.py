@@ -1,7 +1,7 @@
 """One vector per concept, over `title + description + body` (DESIGN.md §6.8).
 
 Nothing in the build path uses this. Embeddings exist for the graph — layout and
-the missing-link lint — and they live in `.okragged/`, never in the bundle.
+the missing-link lint — and they live in `.okrag/`, never in the bundle.
 """
 
 from __future__ import annotations

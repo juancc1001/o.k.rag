@@ -27,7 +27,7 @@ from pathlib import Path
 
 import pytest
 
-SRC = Path(__file__).resolve().parent.parent / "src" / "okragged"
+SRC = Path(__file__).resolve().parent.parent / "src" / "okrag"
 
 READ_CALLS = {"read_text"}
 WRITE_CALLS = {"write_text", "open", "fdopen"}
@@ -153,7 +153,7 @@ def test_subprocess_tells_the_child_to_encode_utf8_too():
 
 def test_the_policy_test_actually_finds_offenders(tmp_path, monkeypatch):
     """A guard that always passes guards nothing. Point it at a bad file."""
-    bad = tmp_path / "okragged"
+    bad = tmp_path / "okrag"
     bad.mkdir()
     (bad / "bad.py").write_text(
         "from pathlib import Path\nPath('x').read_text()\n", encoding="utf-8", newline="\n"
@@ -174,7 +174,7 @@ def test_cli_output_survives_a_cp1252_console(tmp_path):
     bug looks intermittent.
     """
     (tmp_path / "sources").mkdir()
-    (tmp_path / "okragged.toml").write_text('[synth]\nprovider = "gemini"\n', encoding="utf-8")
+    (tmp_path / "okrag.toml").write_text('[synth]\nprovider = "gemini"\n', encoding="utf-8")
     doc = tmp_path / "sources" / "simbolos.md"
     doc.write_text(
         "# Política\n\nMárgenes ≥ 20 % — según el análisis (≈3 años).\n",
@@ -184,7 +184,7 @@ def test_cli_output_survives_a_cp1252_console(tmp_path):
 
     env = {**os.environ, "PYTHONIOENCODING": "cp1252"}
     proc = subprocess.run(
-        [sys.executable, "-m", "okragged.cli", "extract", str(doc)],
+        [sys.executable, "-m", "okrag.cli", "extract", str(doc)],
         cwd=tmp_path,
         capture_output=True,
         encoding="utf-8",
@@ -228,7 +228,7 @@ def test_a_piped_child_needs_the_env_to_print_non_cp1252_output():
 
 def test_okflint_is_invoked_with_a_utf8_child_encoding(tmp_path, monkeypatch):
     # okf/__init__ re-exports the `validate` function, shadowing the module name
-    validate_module = importlib.import_module("okragged.okf.validate")
+    validate_module = importlib.import_module("okrag.okf.validate")
 
     bundle = tmp_path / "bundle"
     bundle.mkdir()
@@ -251,10 +251,10 @@ def test_okflint_is_invoked_with_a_utf8_child_encoding(tmp_path, monkeypatch):
     assert "PATH" in seen["env"], "env must extend os.environ, not replace it"
 
 
-def test_a_bom_in_okragged_toml_does_not_break_config_loading(tmp_path):
-    from okragged import config as config_module
+def test_a_bom_in_okrag_toml_does_not_break_config_loading(tmp_path):
+    from okrag import config as config_module
 
-    (tmp_path / "okragged.toml").write_text(
+    (tmp_path / "okrag.toml").write_text(
         '[synth]\nprovider = "gemini"\n', encoding="utf-8-sig"
     )
     cfg = config_module.load(tmp_path)
@@ -262,7 +262,7 @@ def test_a_bom_in_okragged_toml_does_not_break_config_loading(tmp_path):
 
 
 def test_a_bom_in_a_concept_does_not_read_as_missing_frontmatter(tmp_path):
-    from okragged import okf
+    from okrag import okf
 
     bundle = tmp_path / "bundle"
     bundle.mkdir()
@@ -276,7 +276,7 @@ def test_a_bom_in_a_concept_does_not_read_as_missing_frontmatter(tmp_path):
 
 
 def test_a_bom_in_log_md_does_not_survive_a_rewrite(tmp_path):
-    from okragged import okf
+    from okrag import okf
 
     bundle = tmp_path / "bundle"
     bundle.mkdir()
@@ -286,7 +286,7 @@ def test_a_bom_in_log_md_does_not_survive_a_rewrite(tmp_path):
 
 
 def test_written_concepts_use_lf_only(tmp_path):
-    from okragged import okf
+    from okrag import okf
 
     bundle = tmp_path / "bundle"
     okf.write_concept(

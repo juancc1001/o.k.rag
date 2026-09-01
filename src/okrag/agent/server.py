@@ -19,7 +19,7 @@ fail makes a client plan a dead end.
 **Together the two switches decide which `add_source` this is**, and the
 difference reaches the client as a different description rather than as a
 different result: with `write` alone the tool records prose and the concept waits
-for an `okragged build`, and with both it authors the concept as well. What
+for an `okrag build`, and with both it authors the concept as well. What
 stands behind the spending mode is only that the operator launched the instance
 that way — a claim about who is paying, not an authorization; a real identity
 and spend scope are future work, for once there's a channel with somebody else
@@ -96,7 +96,7 @@ def build_server(
         )
         server_kwargs["token_verifier"] = JWKSTokenVerifier(http_auth)
 
-    server = _mcp_server()(name="okragged", instructions=INSTRUCTIONS, **server_kwargs)
+    server = _mcp_server()(name="okrag", instructions=INSTRUCTIONS, **server_kwargs)
 
     @server.resource(
         CONTRACT_URI,
@@ -123,14 +123,14 @@ def build_server(
     def search(query: str, k: int = 8) -> dict[str, Any]:
         """Find concepts. Returns pointers - id, title, description, score - never bodies.
 
-        A way in, not a substitute for the indexes: read the `okragged://index`
+        A way in, not a substitute for the indexes: read the `okrag://index`
         resource first, then read what either one points at.
 
         `path` says which ranking answered: `embeddings`, `index-traversal`, or
         `embeddings+index-traversal` when both did, where the two lists are
         alternated by rank and their scores are **not comparable**. **Read `note`
         whenever it is not empty** - it is what the ranking could not see. A
-        concept written since the last `okragged index` has no vector, so it is
+        concept written since the last `okrag index` has no vector, so it is
         ranked by traversal instead of being left out, and the note says how many
         were.
         """
@@ -186,7 +186,7 @@ def build_server(
             than calling again in a loop. `indexed` says whether `search` can rank
             the new concept by embedding yet: false with an `errors` entry means
             the concept is in the bundle and readable and only its vector is
-            missing, so `search` finds it by traversal until `okragged index` runs.
+            missing, so `search` finds it by traversal until `okrag index` runs.
             **This call spends the operator's credential - a synthesis and an
             embedding.** Under stdio that spend is bounded only by the operator
             having launched this instance. Under `--transport http` it is also
@@ -206,13 +206,13 @@ def build_server(
             """Record knowledge no source document states, as a new source.
 
             Takes prose, not a concept: it is written into the corpus as a source
-            file - the path is generated here and never accepted - and `okragged
+            file - the path is generated here and never accepted - and `okrag
             build` authors the concept from it later, so the concept has real
             provenance. Submit no frontmatter. Nothing on this surface writes a
             `verified` block: that records a confirmation event that actually
             happened, and a human promotes a concept by editing the file.
 
-            This records only. **No concept appears until someone runs `okragged
+            This records only. **No concept appears until someone runs `okrag
             build`**, which is deliberate: synthesis costs money, and nothing
             reachable over this protocol may spend somebody's credential. Say so
             rather than waiting for a concept that is not coming. `recorded:
@@ -244,7 +244,7 @@ def build_server(
             written - and, unlike `add_source`, **there is no rate limit**:
             nothing here spends anybody's credential.
 
-            Once a concept carries a `verified` entry, a future `okragged build`
+            Once a concept carries a `verified` entry, a future `okrag build`
             will not silently overwrite it - the same protection a hand-edited
             `verified` block already gets.
             """
@@ -274,7 +274,7 @@ def main(
     # file unasked spent the producer's quota on a consumer's search — and the
     # `[synth]` key a synthesizing `add_source` spends. Off, `search` answers by
     # index traversal and says which path answered, and `add_source` records prose
-    # for the next `okragged build` to author from.
+    # for the next `okrag build` to author from.
     if spend:
         from dotenv import load_dotenv
 

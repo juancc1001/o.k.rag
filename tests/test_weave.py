@@ -10,12 +10,12 @@ import json
 
 import pytest
 
-from okragged import config as config_module
-from okragged import okf, pipeline, synth
-from okragged.ledger import LEDGER_NAME, Ledger, body_hash
-from okragged.synth import ProviderHTTPError, ProviderResponse, SynthError, WeaveResult, prune_links
-from okragged.synth.prompt import system_prompt, weave_system_prompt, weave_user_prompt
-from okragged.synth.providers import gemini
+from okrag import config as config_module
+from okrag import okf, pipeline, synth
+from okrag.ledger import LEDGER_NAME, Ledger, body_hash
+from okrag.synth import ProviderHTTPError, ProviderResponse, SynthError, WeaveResult, prune_links
+from okrag.synth.prompt import system_prompt, weave_system_prompt, weave_user_prompt
+from okrag.synth.providers import gemini
 
 from test_pipeline import (  # noqa: F401  (project/segmented are used as fixtures)
     SAMPLE,

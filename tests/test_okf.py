@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from okragged import okf
-from okragged.okf.concept import Concept, Source, parse, render, slugify
+from okrag import okf
+from okrag.okf.concept import Concept, Source, parse, render, slugify
 
 
 def make_concept(**overrides) -> Concept:
@@ -12,9 +12,9 @@ def make_concept(**overrides) -> Concept:
         description="Sum of all active subscription revenue normalized to monthly.",
         body="# Definition\n\nSum of active subscriptions.[^src]\n\n[^src]: Finance handbook",
         sources=[Source(id="src", resource="https://example.com/handbook", title="Handbook")],
-        generated={"by": "okragged/0.1.0", "at": "2026-08-04T10:00:00Z"},
+        generated={"by": "okrag/0.1.0", "at": "2026-08-04T10:00:00Z"},
         status="draft",
-        extra={"x_okragged_source_hash": "abc123"},
+        extra={"x_okrag_source_hash": "abc123"},
     )
     return Concept(**{**defaults, **overrides})
 
@@ -34,7 +34,7 @@ def test_round_trip_preserves_producer_extensions():
     assert parsed.title == original.title
     assert parsed.description == original.description
     assert parsed.body == original.body
-    assert parsed.extra["x_okragged_source_hash"] == "abc123"
+    assert parsed.extra["x_okrag_source_hash"] == "abc123"
     assert parsed.sources[0].id == "src"
     assert parsed.generated == original.generated
 

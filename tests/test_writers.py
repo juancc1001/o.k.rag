@@ -31,10 +31,10 @@ from pathlib import Path
 
 import pytest
 
-from okragged import agent, lock, okf, pipeline, staging
-from okragged import config as config_module
-from okragged.ledger import LEDGER_NAME, Ledger, body_hash
-from okragged.synth import WeaveResult
+from okrag import agent, lock, okf, pipeline, staging
+from okrag import config as config_module
+from okrag.ledger import LEDGER_NAME, Ledger, body_hash
+from okrag.synth import WeaveResult
 
 # tests/ has no __init__.py, so pytest imports these as top-level modules
 from test_pipeline import (  # noqa: F401  (project is used as a fixture)
@@ -90,7 +90,7 @@ def interrupt(**_):
 
 
 def test_a_second_writer_is_refused_while_a_live_lock_is_held(tmp_path):
-    sidecar = tmp_path / ".okragged"
+    sidecar = tmp_path / ".okrag"
     with lock.hold(sidecar, "build") as held:
         with pytest.raises(lock.LockHeld) as refused:
             with lock.hold(sidecar, "add_source"):
@@ -139,7 +139,7 @@ def test_a_lock_left_by_a_dead_run_is_reclaimed_without_a_human(project, monkeyp
 
 
 def test_an_unreadable_lock_file_does_not_wedge_the_tool(tmp_path):
-    sidecar = tmp_path / ".okragged"
+    sidecar = tmp_path / ".okrag"
     sidecar.mkdir()
     (sidecar / lock.LOCK_NAME).write_text("{ not json", encoding="utf-8", newline="\n")
 
@@ -151,7 +151,7 @@ def test_an_unreadable_lock_file_does_not_wedge_the_tool(tmp_path):
 
 def test_a_lock_from_another_host_is_judged_by_age_and_not_by_pid(tmp_path):
     """The pid in it names a process on a machine this one cannot ask about."""
-    sidecar = tmp_path / ".okragged"
+    sidecar = tmp_path / ".okrag"
     write_lock(sidecar, host="another-machine")
     with pytest.raises(lock.LockHeld):
         with lock.hold(sidecar, "build"):
@@ -167,7 +167,7 @@ def test_a_lock_from_another_host_is_judged_by_age_and_not_by_pid(tmp_path):
 
 
 def test_the_lock_is_released_when_the_run_it_guards_raises(tmp_path):
-    sidecar = tmp_path / ".okragged"
+    sidecar = tmp_path / ".okrag"
     with pytest.raises(RuntimeError):
         with lock.hold(sidecar, "build"):
             raise RuntimeError("the provider went away")
@@ -177,7 +177,7 @@ def test_the_lock_is_released_when_the_run_it_guards_raises(tmp_path):
 def test_a_lock_another_run_reclaimed_is_not_deleted_on_release(tmp_path):
     """Otherwise a run judged dead deletes the live run's lock on its way out, and
     two writers proceed with no lock at all — worse than the state this prevents."""
-    sidecar = tmp_path / ".okragged"
+    sidecar = tmp_path / ".okrag"
     with lock.hold(sidecar, "build"):
         write_lock(sidecar, host="another-machine", operation="index", pid=os.getpid() + 1)
 
