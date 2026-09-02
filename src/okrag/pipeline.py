@@ -350,8 +350,9 @@ def _run(
             # after every concept for the run exists: a link can only point at
             # a concept that has been written
             _weave_run(config, area, ledger, summary, progress)
-            if selected is None:
-                # a partial run never looked at the other sources, so their
+            if selected is None and source.complete_snapshot:
+                # a partial run (--only) or a source that only saw a page,
+                # prefix, or partial listing never observed everything, so
                 # absence from `discovered` is not evidence that they are gone
                 _deprecate_vanished(config, area, ledger, discovered, summary, log_entries)
     finally:

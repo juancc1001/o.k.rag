@@ -657,12 +657,12 @@ random_state = 42          # fixed, or the layout reshuffles every run
 .\.venv\Scripts\python.exe -m pytest tests -q
 ```
 
-418 tests. No credentials and no network needed — the end-to-end test stubs the model and asserts the emitted bundle is conformant, so "one file in, one conformant concept out" is covered offline. The embedding provider is stubbed the same way, in a three-dimensional toy space, so what two concepts are "similar" is something the test states rather than something a model decides.
+419 tests. No credentials and no network needed — the end-to-end test stubs the model and asserts the emitted bundle is conformant, so "one file in, one conformant concept out" is covered offline. The embedding provider is stubbed the same way, in a three-dimensional toy space, so what two concepts are "similar" is something the test states rather than something a model decides.
 
 | File | Covers |
 |---|---|
 | `tests/test_okf.py` | render/parse round-trip, extension-key preservation, `E1`/`E2`/`E3`, link resolution (absolute and relative), log ordering and date merging |
-| `tests/test_reingest.py` | the ledger: a second build over unchanged sources making zero model calls, what invalidates a skip (edited source, deleted bundle, corrupt or future-version ledger, a section that failed last run), deprecation of vanished sources, stale-output removal after a rename, id reservation across a partial rebuild, and human-edit/`verified` protection |
+| `tests/test_reingest.py` | the ledger: a second build over unchanged sources making zero model calls, what invalidates a skip (edited source, deleted bundle, corrupt or future-version ledger, a section that failed last run), deprecation of vanished sources (and its refusal when a source's `complete_snapshot` is `False`), stale-output removal after a rename, id reservation across a partial rebuild, and human-edit/`verified` protection |
 | `tests/test_pipeline.py` | end-to-end with a stubbed model, dry run, extraction-failure isolation, non-2xx isolation, an interrupted run leaving a bundle of the sources that committed, id collisions, new-type reporting, footnote repair, and the segmented path: parent plus children, frontmatter-less child index, parents-only root index, one failed section vs all of them |
 | `tests/test_segment.py` | `cut` against text whose lines break mid-sentence, unfound and out-of-order markers, short-section folding, the split threshold, and the outline call's required fields |
 | `tests/test_index.py` | labels and descriptions taken from the target's frontmatter (accents intact), the bundle title from `[bundle].title`, the root marking a concept that owns a subtree, an index for every directory including one no concept owns, subtree counts, the deprecation marker, and indexes read off disk rather than accumulated |

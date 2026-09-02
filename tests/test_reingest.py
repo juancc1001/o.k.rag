@@ -12,6 +12,7 @@ import shutil
 from okrag import config as config_module
 from okrag import okf, pipeline
 from okrag.ledger import LEDGER_NAME, Ledger, body_hash
+from okrag.sources import LocalFileSource
 from okrag.synth import ProviderHTTPError
 
 # tests/ has no __init__.py, so pytest imports these as top-level modules
@@ -213,6 +214,30 @@ def test_a_source_is_deprecated_once_not_on_every_later_build(project, monkeypat
     monkeypatch.setattr(pipeline, "synthesize", no_model)
     third = pipeline.ingest(cfg, dry_run=False)
     assert third.deprecated == []
+
+
+class IncompleteLocalFileSource(LocalFileSource):
+    """A stand-in for a connector whose `discover()` only ever sees a page, a
+    prefix, or a partial listing - `LocalFileSource` itself is always
+    exhaustive, so this is the only way to exercise the other branch."""
+
+    complete_snapshot = False
+
+
+def test_an_incomplete_snapshot_never_deprecates_a_vanished_source(project, monkeypatch):
+    monkeypatch.setattr(pipeline, "synthesize", fake_synthesize)
+    cfg = config_module.load(project)
+    pipeline.ingest(cfg, dry_run=False)
+
+    (project / "sources" / "revenue-policy.md").unlink()
+    (project / "sources" / "other.md").write_text(SAMPLE, encoding="utf-8")
+
+    monkeypatch.setattr(pipeline, "LocalFileSource", IncompleteLocalFileSource)
+    second = pipeline.ingest(cfg, dry_run=False)
+
+    assert second.deprecated == []
+    path = cfg.bundle_root / "revenue-policy.md"
+    assert okf.parse(path.read_text(encoding="utf-8-sig"), "revenue-policy").status != "deprecated"
 
 
 # --- stale output ----------------------------------------------------------------

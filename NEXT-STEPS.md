@@ -2,7 +2,7 @@
 
 **Status: none of this is scheduled.** `DESIGN.md` §13 is the authority on what is committed to; this file is the staging area in front of it. An item here is an idea with a stated reason, not a plan. **Promoting an item means moving it into `DESIGN.md` §13 as a milestone item and deleting it from here** — an idea that lives in two places drifts in one of them.
 
-Numbers are identifiers, not an ordering: **2 (concurrency) and 8 (serving the contract over the protocol) were promoted into §13 M5**, and **12 (one command to build and serve the graph view) was promoted into §13 M7**; their numbers are not reused, so a reference to "item 5" means the same item it always did.
+Numbers are identifiers, not an ordering: **2 (concurrency) and 8 (serving the contract over the protocol) were promoted into §13 M5**, **12 (one command to build and serve the graph view) was promoted into §13 M7**, and **5 (connector snapshot semantics) was promoted into §9's `Source` protocol**; their numbers are not reused, so a reference to "item 9" means the same item it always did.
 
 Most of what follows came from reading [`@llm-wiki/sdk`](https://github.com/stellarlinkco/llm-wiki) (TypeScript, MIT, v0.1.0 unpublished, commit `7c85ee6` of 2026-07-20), the closest existing implementation of this pipeline. Where an item is already solved there, that is noted — a design validated by a second implementation is worth more than one reasoned about alone.
 
@@ -50,16 +50,6 @@ Risk 6 in §12 is about human edits versus LLM ownership. This is the same risk 
 okrag has `tests/test_encoding.py` walking the AST to enforce the I/O encoding policy. There is no equivalent guard on path construction, and the reasoning that justified the encoding test applies unchanged: the platform default is wrong, and a deviating call site should fail the suite rather than fail a user.
 
 **Cost.** Small and self-contained — one module in `okf/`, plus the AST-style test convention already established.
-
----
-
-## 5. Connector snapshot semantics (feeds M9 / §9)
-
-`syncSources` in `@llm-wiki/sdk` reconciles a caller-owned namespace against a list of observed sources, and **absence can only delete when the caller explicitly asserts `completeSnapshot: true`.**
-
-**Why to record it now.** The ledger already marks vanished sources `status: deprecated`. That is correct for `LocalFileSource`, where a full directory sweep genuinely observes everything. It is wrong the moment a connector returns a *page* of results, or fails halfway, or is scoped to a prefix — absence then means "not in this response", not "gone". §9 designs the `Source` protocol now and implements it later; this is a piece of that protocol that is cheap to get right up front and expensive to retrofit, because retrofitting it means auditing every existing `deprecated` mark.
-
-**Concretely:** `discover()` returning an iterator does not say whether exhausting it constitutes a complete observation. It should.
 
 ---
 
