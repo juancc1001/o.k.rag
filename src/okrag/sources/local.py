@@ -11,6 +11,9 @@ from .base import SourceItem
 class LocalFileSource:
     name = "local"
     family = "document"
+    complete_snapshot = True
+    """A directory glob is exhaustive by construction - no paging, no partial
+    failure - so absence from `discover()` always licenses deprecation."""
 
     def __init__(
         self,

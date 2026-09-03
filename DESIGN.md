@@ -536,6 +536,7 @@ They share an interface and diverge after `discover`:
 class Source(Protocol):
     name: str
     family: Literal["document", "asset"]
+    complete_snapshot: bool
 
     def discover(self) -> Iterator[SourceItem]:
         """Yield items with a stable uri and a content hash."""
@@ -544,7 +545,9 @@ class Source(Protocol):
         """Document family returns bytes; asset family returns structured metadata."""
 ```
 
-Phase 1 ships `LocalFileSource` only. `BigQuerySource` and `BlobSource` are stubs with tests asserting the protocol shape, so phase 2 is a plugin.
+**`complete_snapshot` says whether the `discover()` just exhausted saw everything that currently exists.** The pipeline's vanished-source sweep (§6.1) can only deprecate a concept whose source stopped appearing when the listing that stopped seeing it was exhaustive — `LocalFileSource.discover()` is a full directory glob every time, so `complete_snapshot` is unconditionally `True` there and absence there really does mean gone. A connector is not guaranteed that: BigQuery can page, a blob listing can fail halfway, either can be scoped to a prefix — and for any of those, absence from one `discover()` call means "not in this response," not "deleted." Getting this into the protocol now, before a connector exists, is cheap; discovering the gap after `BigQuerySource`/`BlobSource` have already been deprecating concepts on partial listings would mean auditing every `deprecated` mark they ever produced to find the false positives.
+
+Phase 1 ships `LocalFileSource` only. `BigQuerySource` and `BlobSource` (§13 M9) are designed but not yet implemented — no stub exists in `sources/` today.
 
 BigQuery specifically: `INFORMATION_SCHEMA.COLUMNS` + `TABLES` + table descriptions produce a deterministic `type: BigQuery Table` concept with a `# Schema` table and `resource: bq://project.dataset.table`, plus foreign-key-shaped cross-links inferred from column naming. That skeleton needs no model call. The web-enrichment pass (the second half of what the Google reference agent does) is a separate optional stage.
 

@@ -21,6 +21,11 @@ class SourceItem:
 class Source(Protocol):
     name: str
     family: Family
+    complete_snapshot: bool
+    """Whether the `discover()` just exhausted saw everything that currently
+    exists. `True` licenses treating an id absent from that call as deleted;
+    `False` (a paginated, prefix-scoped, or partially failed listing) means
+    absence says only "not in this response" and must never deprecate."""
 
     def discover(self) -> Iterator[SourceItem]: ...
 
