@@ -199,7 +199,8 @@ def render_agents_md(config: Config) -> str:
         "sentence around it says which. There is no \"Related\" section by design.",
         "",
         "`search` is a way in, not a substitute for the indexes: it returns pointers — "
-        "concept id, title, description, score — and never a body. You decide what to read.",
+        "concept id, title, description, score, confidence, status, trust — and never a "
+        "body. You decide what to read.",
         "",
         "## Structure",
         "",
@@ -235,7 +236,7 @@ def render_agents_md(config: Config) -> str:
         "",
         "## Operations",
         "",
-        "Three tools always, and a fourth — `add_source` — when the instance was started "
+        "Four tools always, and a fifth — `add_source` — when the instance was started "
         "to write. **What this instance offers is what its tool list shows**, and each "
         "tool's own description says which of the modes below you are talking to. This "
         "file cannot: how a server was started is not a fact about the knowledge it "
@@ -244,8 +245,10 @@ def render_agents_md(config: Config) -> str:
         "| tool | signature |",
         "|---|---|",
         "| `search` | `(query: str, k: int = 8)` → `path`, `note`, and pointers: "
-        "`concept_id`, `title`, `description`, `score` |",
+        "`concept_id`, `title`, `description`, `score`, `confidence`, `status`, `trust` |",
         "| `read_concept` | `(concept_id: str)` → the raw file, frontmatter included |",
+        "| `check_citations` | `(citations: [{concept_id, quote}])` → `ok`, `checked`, and "
+        "each rejection with its reason |",
         "| `lint` | `()` → conformance, ghost edges, stale concepts, orphans |",
         "| `add_source` | `(text: str, title: str \\| None)` → the source it wrote, and "
         "the concepts it authored where the instance authors them |",
@@ -272,7 +275,20 @@ def render_agents_md(config: Config) -> str:
         "the two are alternated by rank and their scores are not comparable — and `note` "
         "says what the ranking could not see. **Read `note` when it is not empty**: a "
         "concept written since the last `okrag index` has no vector, and it is ranked by "
-        "traversal instead rather than dropped.",
+        "traversal instead rather than dropped. **`score` is only rank within one result** "
+        "— the top traversal hit always scores 1 — while `confidence` is absolute: the "
+        "cosine, or the share of the query's distinguishing terms the concept contains. "
+        "When the best confidence is under the configured floor, `search` returns no "
+        "pointers and `note` says why: **the bundle likely does not answer the question, "
+        "so say that** rather than answering from what you already know. `status` and "
+        "`trust` say what an answer resting on a hit rests on — most of a fresh bundle is "
+        "a `draft` nobody has confirmed.",
+        "- **check_citations** — before presenting an answer that claims this bundle as its "
+        "source, pass every concept id it cites and every span it quotes. It checks, "
+        "offline and with no model call, that each id names a concept and that each quote "
+        "occurs in the concept it is attributed to — ignoring case, accents, line breaks "
+        "and markdown, never wording. Any rejection means that claim is not grounded in "
+        "the bundle.",
         "- **lint** — okflint conformance plus ghost edges (similar pairs nobody linked), "
         "stale concepts, and orphans (concepts nothing links to). Ghost edges are computed "
         "by `okrag index`, so run that if it reports having none to read.",

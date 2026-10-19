@@ -66,6 +66,15 @@ class VectorsConfig(BaseModel):
     ghost_threshold: float = 0.82
 
 
+class SearchConfig(BaseModel):
+    traversal_floor: float = 0.5
+    """Below this share of the query's distinguishing terms, traversal abstains.
+    Uncalibrated, like tau (DESIGN.md §12 Risk 9)."""
+    embedding_floor: float | None = None
+    """Below this cosine, the embedding path abstains. None -> never: what a cosine
+    means depends on the model, so there is no default worth guessing."""
+
+
 class ProjectionConfig(BaseModel):
     method: str = "umap"
     """umap | pca. UMAP falls back to PCA below 15 concepts or without umap-learn."""
@@ -104,6 +113,7 @@ class Config(BaseModel):
     synth: SynthConfig = Field(default_factory=SynthConfig)
     types: TypesConfig = Field(default_factory=TypesConfig)
     vectors: VectorsConfig = Field(default_factory=VectorsConfig)
+    search: SearchConfig = Field(default_factory=SearchConfig)
     projection: ProjectionConfig = Field(default_factory=ProjectionConfig)
     mcp: McpConfig = Field(default_factory=McpConfig)
 
@@ -141,6 +151,7 @@ def load(project_root: Path | None = None) -> Config:
         synth=SynthConfig(**raw.get("synth", {})),
         types=TypesConfig(**raw.get("types", {})),
         vectors=VectorsConfig(**raw.get("vectors", {})),
+        search=SearchConfig(**raw.get("search", {})),
         projection=ProjectionConfig(**raw.get("projection", {})),
         mcp=McpConfig(**raw.get("mcp", {})),
     )

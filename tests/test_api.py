@@ -212,7 +212,15 @@ def test_raw_html_in_a_body_is_escaped_rather_than_rendered(project):
 def test_search_over_http_returns_pointers_and_never_a_body(project):
     payload = client(project).get("/api/search", params={"q": "revenue"}).json()
     assert payload["results"]
-    assert set(payload["results"][0]) == {"concept_id", "title", "description", "score"}
+    assert set(payload["results"][0]) == {
+        "concept_id",
+        "title",
+        "description",
+        "score",
+        "confidence",
+        "status",
+        "trust",
+    }
     assert all("body" not in hit for hit in payload["results"])
 
 

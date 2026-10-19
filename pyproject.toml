@@ -8,7 +8,6 @@ authors = [{name = "juancc1001", email = "carvallojuanc@gmail.com"}]
 requires-python = ">=3.12"
 classifiers = [
     "Programming Language :: Python :: 3.12",
-    "License :: OSI Approved :: Apache Software License",
     "Development Status :: 3 - Alpha",
     "Operating System :: OS Independent",
 ]
@@ -78,3 +77,5 @@ artifacts = ["src/okrag/api/static/**"]
 # sdist-then-wheel build carries the view too, same as the wheel target above.
 [tool.hatch.build.targets.sdist]
 artifacts = ["src/okrag/api/static/**"]
+# the machine's MCP config: not gitignored, but never this package's to ship
+exclude = [".mcp.json"]
