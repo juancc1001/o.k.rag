@@ -1,7 +1,8 @@
 """The stdio MCP server (DESIGN.md §10).
 
 Tools over capability that already exists: `search` and `read_concept` from
-`agent/query.py`, `lint` from `agent/lint.py`, `add_source` from
+`agent/query.py`, `check_citations` from `agent/cite.py`, `lint` from
+`agent/lint.py`, `add_source` from
 `agent/write.py`, which writes one prose file into `sources/`, and
 `verify_concept` from `agent/verify.py`, offered only under `--transport http`
 with `[mcp].verify_scopes` set (DESIGN.md §13 M8, criterion 5) - stdio has no
@@ -58,6 +59,7 @@ from typing import Any
 from ..config import Config, McpConfig
 from ..config import load as load_config
 from .auth import SpendRateLimiter, authorize_spend, authorize_verify
+from .cite import check_citations as run_check_citations
 from .contract import CONTRACT_URI, INDEX_URI, render_agents_md
 from .lint import lint as run_lint
 from .query import read_concept as read_one
@@ -121,10 +123,18 @@ def build_server(
 
     @server.tool()
     def search(query: str, k: int = 8) -> dict[str, Any]:
-        """Find concepts. Returns pointers - id, title, description, score - never bodies.
+        """Find concepts. Returns pointers - id, title, description, score,
+        confidence, status, trust - never bodies.
 
         A way in, not a substitute for the indexes: read the `okrag://index`
         resource first, then read what either one points at.
+
+        **`confidence` is absolute; `score` is only rank within this result** -
+        the top traversal hit always scores 1.0, whether or not it answers.
+        **Empty `results` with a `note` means the bundle likely does not answer
+        the question**: say so, rather than answering from your own knowledge.
+        `status` (`draft` means nobody has confirmed it) and `trust` tell you
+        what an answer resting on that concept rests on.
 
         `path` says which ranking answered: `embeddings`, `index-traversal`, or
         `embeddings+index-traversal` when both did, where the two lists are
@@ -149,6 +159,20 @@ def build_server(
         a fragment of one.
         """
         return read_one(config, concept_id)
+
+    @server.tool()
+    def check_citations(citations: list[dict[str, str | None]]) -> dict[str, Any]:
+        """Check that an answer's citations are true of this bundle. Offline.
+
+        Each citation is `{"concept_id": ..., "quote": ...}`. **Before presenting
+        an answer that claims this bundle as its source, pass every concept id
+        it cites and every span it quotes.** Without a quote only the id is
+        checked; a quote must occur in the concept it is attributed to, ignoring
+        case, accents, line breaks and markdown, and be at least three words.
+        **Any rejection means that claim is not grounded in the bundle** - fix
+        or drop it rather than presenting it as sourced.
+        """
+        return asdict(run_check_citations(config, citations))
 
     # Two tools rather than one that branches, because the description is the
     # only channel every client shows a model and it has to be true of *this*
@@ -193,11 +217,13 @@ def build_server(
             refused outright for a token missing `[mcp].spend_scopes`, and
             rate-limited per identity at `[mcp].spend_rate_limit_per_hour` -
             refused before anything is written, never charged to a caller who
-            was refused.
+            was refused - and an accepted call records your identity as
+            `asserted_by` in the source file's frontmatter.
             """
-            if http_auth is not None:
-                authorize_spend(http_auth, spend_limiter)
-            return asdict(run_add_source(config, text, title, synthesize=True))
+            identity = authorize_spend(http_auth, spend_limiter) if http_auth is not None else None
+            return asdict(
+                run_add_source(config, text, title, synthesize=True, asserted_by=identity)
+            )
 
     elif write:
 

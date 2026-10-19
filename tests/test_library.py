@@ -133,8 +133,9 @@ def test_the_two_re_exported_names_resolve_and_nothing_else_does():
 
 def test_every_public_name_is_discoverable_and_nothing_else_is():
     """A name reached only through `__getattr__` is absent from `dir()` unless
-    `__dir__` says otherwise, so two of the twelve would not complete; and this
+    `__dir__` says otherwise, so two of the fourteen would not complete; and this
     module's own `Path`/`Any` imports would list as though they were surface."""
+    assert len(okrag.__all__) == 14
     assert dir(okrag) == sorted(okrag.__all__)
     for name in okrag.__all__:
         assert getattr(okrag, name) is not None
@@ -331,3 +332,16 @@ def test_the_agent_operations_take_a_path_or_a_config_interchangeably(project):
     assert okrag.read_concept(project, "revenue-policy").startswith("---")
     assert okrag.check(cfg).ok
     assert okrag.lint(project).conformant
+
+
+def test_citations_are_checked_through_the_package_with_no_model_call(project):
+    okrag.build(project)
+    report = okrag.check_citations(
+        project,
+        [
+            {"concept_id": "revenue-policy", "quote": "What Revenue Recognition Policy says."},
+            {"concept_id": "gravity-law", "quote": None},
+        ],
+    )
+    assert (report.ok, report.checked) == (False, 2)
+    assert [r.reason for r in report.rejected] == ["no such concept"]

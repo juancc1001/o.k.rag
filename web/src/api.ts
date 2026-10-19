@@ -54,6 +54,9 @@ export interface Hit {
   title: string;
   description: string;
   score: number;
+  confidence: number;
+  status: string | null;
+  trust: string;
 }
 
 export interface SearchResult {

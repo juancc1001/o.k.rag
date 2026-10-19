@@ -53,7 +53,7 @@ export function Controls(props: Props) {
                 <li key={hit.concept_id}>
                   <button onClick={() => props.onSelect(hit.concept_id)}>
                     <span className="hit-title">{hit.title}</span>
-                    <span className="hit-score">{hit.score.toFixed(3)}</span>
+                    <span className="hit-score">{hit.confidence.toFixed(3)}</span>
                   </button>
                 </li>
               ))}

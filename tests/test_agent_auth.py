@@ -25,9 +25,11 @@ from types import SimpleNamespace
 
 import jwt
 import pytest
+import yaml
 from cryptography.hazmat.primitives.asymmetric import rsa
 
 from okrag import config as config_module
+from okrag import okf
 from okrag.agent.auth import (
     JWKSTokenVerifier,
     SpendRateLimiter,
@@ -396,6 +398,63 @@ def test_an_authorized_spend_records_and_synthesizes_as_usual(ingestable, monkey
     assert not result.is_error, result.content[0].text
     assert result.structured_content["synthesized"]
     assert result.structured_content["concepts"]
+
+
+def asserted_by(path: Path) -> str | None:
+    fm, _ = okf.split(path.read_text(encoding="utf-8-sig"))
+    return None if fm is None else yaml.safe_load(fm)["asserted_by"]
+
+
+def test_an_authorized_spend_records_the_paying_identity_in_the_source_it_wrote(
+    ingestable, monkeypatch
+):
+    import anyio
+    from mcp import Client
+
+    from okrag.agent import server as server_module
+
+    monkeypatch.setattr(server_module, "authorize_spend", lambda config, limiter: "user-1")
+
+    async def go():
+        async with Client(synth_server(ingestable)) as client:
+            return await client.call_tool("add_source", {"text": "Two tables are related."})
+
+    result = anyio.run(go)
+    assert not result.is_error, result.content[0].text
+    path = ingestable / result.structured_content["uri"]
+    assert asserted_by(path) == "user-1"
+    assert okf.split(path.read_text(encoding="utf-8-sig"))[1] == "Two tables are related."
+    assert result.structured_content["concepts"]
+
+
+def test_a_stdio_spend_writes_the_prose_alone_with_no_identity(ingestable):
+    import anyio
+    from mcp import Client
+
+    from okrag.agent.server import build_server
+
+    async def go():
+        cfg = Config(project_root=ingestable)
+        async with Client(build_server(cfg, write=True, spend=True)) as client:
+            return await client.call_tool("add_source", {"text": "Two tables are related."})
+
+    result = anyio.run(go)
+    path = ingestable / result.structured_content["uri"]
+    assert path.read_text(encoding="utf-8-sig") == "Two tables are related.\n"
+
+
+def test_the_same_prose_from_two_identities_is_two_sources_each_naming_its_own(ingestable):
+    from okrag.agent.write import add_source
+
+    config = config_module.load(ingestable)
+    first = add_source(config, "Two tables are related.", asserted_by="user-1")
+    second = add_source(config, "Two tables are related.", asserted_by="auth0|x: #2")
+    again = add_source(config, "Two tables are related.", asserted_by="user-1")
+
+    assert first.uri != second.uri
+    assert asserted_by(ingestable / first.uri) == "user-1"
+    assert asserted_by(ingestable / second.uri) == "auth0|x: #2"
+    assert again.uri == first.uri and not again.recorded
 
 
 def test_the_stdio_path_never_calls_authorize_spend(ingestable, monkeypatch):
