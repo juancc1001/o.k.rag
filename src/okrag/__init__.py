@@ -32,6 +32,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:  # annotations only; importing these eagerly is the thing to avoid
     from collections.abc import Callable
 
+    from .agent.cite import CitationReport
     from .agent.lint import LintReport
     from .agent.query import SearchResult
     from .agent.write import AddedSource
@@ -59,6 +60,7 @@ __all__ = [
     "add_source",
     "build",
     "check",
+    "check_citations",
     "configure",
     "index",
     "lint",
@@ -138,6 +140,16 @@ def read_concept(project: str | Path | Config, concept_id: str) -> str:
     from .agent import read_concept as read
 
     return read(_config(project), concept_id)
+
+
+def check_citations(
+    project: str | Path | Config, citations: list[dict[str, Any]]
+) -> CitationReport:
+    """Checks each `{concept_id, quote}`: the id names a concept, and the quote
+    occurs in it. Offline, no model call."""
+    from .agent import check_citations as check_all
+
+    return check_all(_config(project), citations)
 
 
 def lint(project: str | Path | Config) -> LintReport:

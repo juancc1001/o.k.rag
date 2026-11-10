@@ -24,9 +24,13 @@ allow_new = true
 [vectors]
 provider = "gemini"          # gemini | fastembed (fastembed is an optional extra)
 # model = "gemini-embedding-001"   # omit for the provider default
-dim = 768                    # requested output width; fastembed's 384 is fixed
+dim = 768                    # requested output width; fastembed's model fixes its own
 knn_k = 8
 ghost_threshold = 0.82       # tau; uncalibrated, see DESIGN.md §12 Risk 1
+
+[search]
+traversal_floor = 0.5        # traversal abstains below this share of distinguishing terms; uncalibrated, Risk 9
+# embedding_floor = 0.6      # the embedding path abstains below this cosine; unset, it never does
 
 [projection]
 method = "umap"              # umap | pca; umap-learn is an optional extra

@@ -7,6 +7,7 @@ This module reads the bundle and generates the contract describing it.
 `pipeline` imports this package on every ingest just to regenerate the contract.
 """
 
+from .cite import CitationReport, Rejection, check_citations
 from .contract import (
     AGENTS_NAME,
     CONTRACT_URI,
@@ -23,6 +24,7 @@ from .query import EMBEDDING, MERGED, TRAVERSAL, Hit, SearchResult, read_concept
 
 __all__ = [
     "AGENTS_NAME",
+    "CitationReport",
     "CONTRACT_URI",
     "EMBEDDING",
     "GHOST_LIMIT",
@@ -31,8 +33,10 @@ __all__ = [
     "LintReport",
     "MCP_CONFIG_NAME",
     "MERGED",
+    "Rejection",
     "SearchResult",
     "TRAVERSAL",
+    "check_citations",
     "is_registered",
     "lint",
     "read_concept",

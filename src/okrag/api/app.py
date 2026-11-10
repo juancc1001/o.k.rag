@@ -89,7 +89,8 @@ def create_app(config: Config):
 
     @app.get("/api/search")
     def search(q: str, k: int = 8) -> dict[str, Any]:
-        """Pointers, never bodies — the same two paths as the MCP tool (DESIGN.md §10)."""
+        """Pointers, never bodies — the same paths, confidence and abstention as the
+        MCP tool (DESIGN.md §10, §13 M11)."""
         result = run_search(config, q, k)
         return {
             "path": result.path,

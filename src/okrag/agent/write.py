@@ -18,21 +18,20 @@ concept is authored later by `okrag build`, on the operator's machine
 with the operator's key. With it, reachable only via `--write --spend`, the
 same call ingests that one path and returns the concepts it authored.
 
-**The guard on the synthesizing mode is only that the operator launched the
-instance with both switches — nothing more, and that is still true here.**
-This module has no identity and no rate limit, and never will: a caller who
-owns the process could present any token it's asked for and delete any
-counter kept beside the bundle, so neither would mean anything at this layer.
-Under stdio that is the whole guard, and it holds exactly while the caller and
-the payer are the same person — a producer driving their own agent.
+**This module never authenticates and never rate-limits.** Under stdio the
+only guard on the synthesizing mode is that the operator launched the instance
+with both switches, which holds exactly while the caller and the payer are the
+same person — a producer driving their own agent.
 
 **Under `--transport http` the gate lives one layer up, in `agent/server.py`
-and `agent/auth.py`, not here** (DESIGN.md §13 M8, criterion 4): the caller's
-identity is a verified JWT claim `write.py` never sees, `authorize_spend`
-checks it against `[mcp].spend_scopes` and a `SpendRateLimiter` before this
-module's `add_source` is ever called, and a refused call never reaches this
-function at all. This module stays what it always was — recording and
-synthesizing, not attributing a call to whoever made it.
+and `agent/auth.py`** (DESIGN.md §13 M8, criterion 4): `authorize_spend`
+checks the verified JWT claim against `[mcp].spend_scopes` and a
+`SpendRateLimiter` before this is ever called, and passes the identity that
+cleared both in as `asserted_by`. That identity is written into the source file's
+frontmatter — whoever paid for the assertion is the one asserting it, and the
+source survives deleting `.okrag/` and regenerating `log.md` where a ledger
+entry or a log line would not. Under stdio there is no identity, and the file
+carries no frontmatter at all.
 
 The run is a partial one over the file just written, which safely skips the
 vanished-source sweep by construction rather than by a check (that sweep
@@ -71,6 +70,8 @@ import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+
+import yaml
 
 from .. import okf, vectors
 from ..config import Config
@@ -115,7 +116,11 @@ class AddedSource:
 
 
 def add_source(
-    config: Config, text: str, title: str | None = None, synthesize: bool = False
+    config: Config,
+    text: str,
+    title: str | None = None,
+    synthesize: bool = False,
+    asserted_by: str | None = None,
 ) -> AddedSource:
     """Record prose in the corpus as a source, and author its concept if asked.
 
@@ -141,6 +146,10 @@ def add_source(
         project_root=config.project_root,
     )
     content = body.strip() + "\n"
+    if asserted_by:
+        # part of the bytes, so the same prose from another identity is its own file
+        fm = yaml.safe_dump({"asserted_by": asserted_by}, allow_unicode=True).rstrip()
+        content = f"---\n{fm}\n---\n\n{content}"
     path, wrote = _write(config, _slug(title or body), content)
     if not source.matches(path):
         if wrote:

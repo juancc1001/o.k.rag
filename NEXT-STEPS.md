@@ -2,7 +2,7 @@
 
 **Status: none of this is scheduled.** `DESIGN.md` §13 is the authority on what is committed to; this file is the staging area in front of it. An item here is an idea with a stated reason, not a plan. **Promoting an item means moving it into `DESIGN.md` §13 as a milestone item and deleting it from here** — an idea that lives in two places drifts in one of them.
 
-Numbers are identifiers, not an ordering: **2 (concurrency) and 8 (serving the contract over the protocol) were promoted into §13 M5**, **12 (one command to build and serve the graph view) was promoted into §13 M7**, and **5 (connector snapshot semantics) was promoted into §9's `Source` protocol**; their numbers are not reused, so a reference to "item 9" means the same item it always did.
+Numbers are identifiers, not an ordering: **2 (concurrency) and 8 (serving the contract over the protocol) were promoted into §13 M5**, **12 (one command to build and serve the graph view) was promoted into §13 M7**, **5 (connector snapshot semantics) was promoted into §9's `Source` protocol**, and **11 (`okrag` on `PATH`) was closed by M7's publish**; their numbers are not reused, so a reference to "item 9" means the same item it always did.
 
 Most of what follows came from reading [`@llm-wiki/sdk`](https://github.com/stellarlinkco/llm-wiki) (TypeScript, MIT, v0.1.0 unpublished, commit `7c85ee6` of 2026-07-20), the closest existing implementation of this pipeline. Where an item is already solved there, that is noted — a design validated by a second implementation is worth more than one reasoned about alone.
 
@@ -61,17 +61,9 @@ The method is unchanged and depends on a human, not on code: promote a generated
 
 ---
 
-## 7. Operational — two accounts on one machine, and a 404 that means 403
+## 7. A backup story for the corpus
 
-Recorded because it cost an hour on 2026-08-08.
-
-`git` and `gh` were both authenticating to `github.com` as `JuancrCarvallo`, while `origin` is `juancc1001/ragged` — private, and invisible to that account. **GitHub answers with 404, not 403, for a private repository the caller cannot see**, so `git fetch` reported `Repository not found` and `gh repo view` reported `Could not resolve to a Repository`. Both readings say "deleted". Neither was true: `origin/main` was at `128b089`, PR #2 merged at 21:05:39Z the same day.
-
-The failure was diagnosed by `gh auth status` showing two logged-in accounts with the wrong one active, and confirmed by querying with the other account's token (`gh auth token --user juancc1001`). Fixed with `gh auth switch --user juancc1001`.
-
-**Worth keeping in mind:** on this machine a "repository not found" is an authentication result until proven otherwise. Check `gh api user --jq '.login'` against the remote's owner before concluding anything about the remote's existence.
-
-**Separately, and still true:** local `main` was 19 commits behind and a `git checkout main` emptied the working tree of every tracked file, which is how this started. That is normal git behaviour, but it is worth noting that `bundle/`, `sources/`, and `.okrag/` are gitignored by design (§13 — ids churn every rebuild, so the diff is unreadable), which means git protects the code and none of the corpus. **The corpus needs its own backup story, separate from the repository.** `HANDOFF-M2.md` was untracked, was never committed, and did not survive.
+`bundle/`, `sources/` and `.okrag/` are gitignored by design (§13 — ids churn every rebuild, so the diff is unreadable), which means git protects the code and none of the corpus. **The corpus needs its own backup story, separate from the repository.** Nothing provides one yet.
 
 ---
 
@@ -115,18 +107,29 @@ Considered while planning the hosted server and **deliberately left here.** §13
 
 **The trap to avoid.** Do not let (1) become an `access:`-style key or a registry the bundle depends on to be readable. The sidecar rule's logic applies: a bundle must stay something you can `tar` and `cat`. An id is a *fact about* the bundle written into it; a lookup a reader must perform to understand it is not.
 
-**Gate.** (1) before M8 ships anything anyone registers against. (2) with M8. (3) not scheduled, and possibly never here.
+**Gate.** M8 shipped without answering (1) or (2), so both are now due before anyone registers against a hosted bundle. (3) not scheduled, and possibly never here.
 
 **Note on the intermittent case.** "Exposed when I feel like it" is usually a tunnel, and a tunnel URL is public the instant it exists — which means M6's authentication is not optional even for a bundle its owner thinks of as temporarily shared. That is worth stating because intermittent hosting *feels* lower-stakes than permanent hosting and is not.
 
 ---
 
-## 11. `okrag` on `PATH` before publication
+## 13. Vectors at tens of thousands of concepts
 
-**The problem.** The console script exists only inside `.venv/Scripts`. A client spawning `okrag mcp` from `.mcp.json` does not activate a venv, so the bare name does not resolve and the server dies at spawn. `agent/contract.py::_command` now falls back to the script beside `sys.executable`, which makes it work — the entry is then absolute, and `.mcp.json` is not gitignored. Every other command still has to be spelled `.\.venv\Scripts\okrag`.
+The query side is already the right shape: `vectors/knn.py::nearest` is one `matrix @ query` over L2-normalized rows, which NumPy does in milliseconds even at 100k concepts. Two things around it are not, and both are invisible at today's 18 concepts.
 
-**Interim answer.** A tool install of the checkout: `pipx install --editable <root>`, or `uv tool install --editable .`. Both expose the console script without putting okrag's dependency tree into a shared site-packages. `pip install --user -e .` does **not** solve it on this machine: the script lands in `%APPDATA%\Python\Python312\Scripts`, which is not on `PATH` either — tried on 2026-08-17.
+1. **`okrag index` builds the full `n x n` similarity matrix.** `knn.py::similarities` is `matrix @ matrix.T`, kept whole for `top_k` and the ghost rule. At 100k concepts that is 100k² float32, about 40 GB. This is the real ceiling, not search. The fix is to compute it in row blocks and keep only each block's top-k, so memory is `block x n` instead of `n x n`.
+2. **`search` reads `embeddings.npy` from disk on every call.** `agent/query.py::_by_embeddings` calls `load_store` each time, so at 100k x 768 float32 every query reads ~300 MB before the milliseconds of math. `np.load(..., mmap_mode="r")`, or holding the matrix for the life of the server process, removes it. Holding it means the server must notice when `okrag index` rewrites the file.
 
-**Why it is staged rather than scheduled.** §13 M7 makes `pip install okrag` real and supersedes this entirely. Until then the producer cannot run M5's own exit criterion, which opens with that command.
+**Gate.** A corpus large enough to feel either one. Until then this is twenty lines of NumPy that work.
 
-**Gate.** Superseded by M7. Worth doing before then only if the absolute entry becomes a nuisance.
+---
+
+## 14. A concept body that arrives on one line
+
+Found by M5's exit session. The concept `add_source` authored came back with its whole body on one line: `### Sujeto Activo` and the list items sat mid-line, joined by double spaces, so they render as text. No okrag code collapses newlines — `agent/write.py::_normalized` only converts `\r\n` — so the model returned it that way.
+
+**Why it belongs here.** It is the same class as a footnote definition left mid-line, which `synth/base.py::anchor_footnote_defs` repairs offline. A repair is testable and a prompt rule is not.
+
+**Why it is not obviously easy.** Breaking before a mid-line `#` or `* ` guesses at structure: a `#` inside prose or a `*` used for emphasis would be broken too. The repair has to be narrow enough to be right — a heading marker after a run of two spaces, say — or it is a new defect.
+
+**Gate.** A second occurrence, or one on a build rather than on `add_source`, which says whether it is one model call misbehaving or a pattern.

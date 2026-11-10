@@ -1,8 +1,12 @@
-"""Local ONNX embeddings (fastembed, `bge-small-en-v1.5`).
+"""Local ONNX embeddings (fastembed, `jina-embeddings-v2-base-es`).
 
-Registered but behind an optional extra: onnxruntime and the model weights are
-~150 MB, which is not something a default install should pay for before the
-provider question (DESIGN.md §12 Risk 4) has been settled by measurement.
+Spanish and English in one vector space, reading 8192 tokens: the corpus this was
+first run on is Spanish, and an English-only model embeds it badly.
+
+Registered but behind an optional extra: onnxruntime is ~150 MB and the default
+model weights another ~640 MB on first use, which is not something a default
+install should pay for before the provider question (DESIGN.md §12 Risk 4) has
+been settled by measurement.
 
     pip install -e ".[fastembed]"
 """
@@ -12,11 +16,12 @@ from __future__ import annotations
 from ..base import EmbedError
 
 NAME = "fastembed"
-DEFAULT_MODEL = "BAAI/bge-small-en-v1.5"
+DEFAULT_MODEL = "jinaai/jina-embeddings-v2-base-es"
 ENV_VARS: tuple[str, ...] = ()
 
-WINDOW_CHARS = 1500
-"""512-token window, at a pessimistic chars-per-token ratio."""
+WINDOW_CHARS = 24000
+"""The default model's 8192-token window, at the same pessimistic ratio as gemini's.
+A `[vectors].model` with a shorter window is truncated by fastembed past it."""
 
 _MODELS: dict[str, object] = {}
 
@@ -26,7 +31,7 @@ def credential_present() -> bool:
 
 
 def embed(chunks: list[str], *, model: str, dim: int) -> list[list[float]]:
-    """`dim` is ignored — the model fixes it at 384."""
+    """`dim` is ignored — the model fixes it (768 for the default)."""
     return [list(v) for v in _model(model).embed(list(chunks))]
 
 

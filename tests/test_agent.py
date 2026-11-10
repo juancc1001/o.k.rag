@@ -1,6 +1,6 @@
-"""The agent contract (DESIGN §10): the four tools, and the generated AGENTS.md.
+"""The agent contract (DESIGN §10): the five tools, and the generated AGENTS.md.
 
-Three of the four tools must work with no credential at all — that is the M4 exit
+The read tools must work with no credential at all — that is the M4 exit
 criterion — so nothing here sets one except where the embedding path is the thing
 under test, and the embedding provider is stubbed in a toy space either way.
 
@@ -316,6 +316,176 @@ def test_a_query_matching_none_of_the_unvectored_concepts_still_says_they_exist(
     assert "1 concept(s) have no stored vector" in result.note
 
 
+# --- search: confidence and abstention (M11) -------------------------------------
+
+
+def with_toml(project: Path, extra: str) -> None:
+    path = project / "okrag.toml"
+    path.write_text(path.read_text(encoding="utf-8-sig") + extra, encoding="utf-8", newline="\n")
+
+
+def mention_everywhere(project: Path, word: str) -> None:
+    for fields in CONCEPTS:
+        okf.write_concept(
+            project / "bundle",
+            okf.Concept(status="draft", **{**fields, "body": f"{fields['body']} {word}."}),
+        )
+
+
+def test_a_question_the_bundle_cannot_answer_abstains_instead_of_returning_a_perfect_score(
+    project,
+):
+    """The M11 exit criterion. `holidays` shares one incidental word with the
+    question, which used to be enough for a top score of 1.0."""
+    question = "holiday gravity law newton"
+    with_toml(project, "\n[search]\ntraversal_floor = 0.0\n")
+    assert agent.search(cfg(project), question).hits[0].score == 1.0
+
+    (project / "okrag.toml").write_text(TOML, encoding="utf-8", newline="\n")
+    result = agent.search(cfg(project), question)
+    assert result.hits == []
+    assert "'holidays'" in result.note and "0.25" in result.note and "0.5" in result.note
+
+
+def test_confidence_is_reported_alongside_the_rank_score(project):
+    hits = {hit.concept_id: hit for hit in agent.search(cfg(project), "revenue prepayments").hits}
+    assert (hits["revenue-policy"].score, hits["revenue-policy"].confidence) == (1.0, 1.0)
+    assert hits["holidays"].confidence == 0.5
+    assert hits["holidays"].score < 1.0
+
+
+def test_a_linked_neighbour_matching_no_term_is_kept_when_the_top_hit_clears_the_floor(project):
+    hits = {hit.concept_id: hit for hit in agent.search(cfg(project), "revenue recognition").hits}
+    assert hits["pricing"].confidence == 0.0
+    assert hits["pricing"].score > 0
+
+
+def test_a_term_every_concept_contains_does_not_count_toward_a_match(project):
+    mention_everywhere(project, "Acme")
+    hits = {hit.concept_id: hit for hit in agent.search(cfg(project), "acme prepayments").hits}
+    assert hits["revenue-policy"].confidence == 1.0
+    assert "holidays" not in hits
+
+
+def test_a_query_made_only_of_words_every_concept_contains_abstains(project):
+    mention_everywhere(project, "Acme")
+    result = agent.search(cfg(project), "acme")
+    assert result.hits == []
+    assert "every concept" in result.note
+
+
+def test_the_traversal_floor_is_read_from_the_project_toml(project):
+    question = "revenue delivery holiday"
+    assert agent.search(cfg(project), question).hits
+
+    with_toml(project, "\n[search]\ntraversal_floor = 0.9\n")
+    assert cfg(project).search.traversal_floor == 0.9
+    result = agent.search(cfg(project), question)
+    assert result.hits == []
+    assert "0.9" in result.note
+
+
+def indexed(project: Path, monkeypatch) -> None:
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key-not-used")
+    monkeypatch.setattr(gemini, "embed", fake_embed)
+    from okrag import vectors
+
+    vectors.index(cfg(project))
+
+
+def halfway(chunks, *, model, dim):
+    """A query 0.6 of the way towards prepayments and nowhere near anything else."""
+    return [[0.6, 0.0, 0.8] for _ in chunks]
+
+
+def test_on_the_embedding_path_confidence_is_the_cosine(project, monkeypatch):
+    indexed(project, monkeypatch)
+    monkeypatch.setattr(gemini, "embed", halfway)
+    result = agent.search(cfg(project), "prepayments")
+    assert result.path == agent.EMBEDDING
+    assert result.hits[0].concept_id == "revenue-policy"
+    assert result.hits[0].confidence == pytest.approx(0.6, abs=1e-3)
+    assert all(hit.confidence == hit.score for hit in result.hits)
+
+
+def test_an_embedding_floor_abstains_below_it(project, monkeypatch):
+    indexed(project, monkeypatch)
+    with_toml(project, "\n[search]\nembedding_floor = 0.7\n")
+    monkeypatch.setattr(gemini, "embed", halfway)
+    result = agent.search(cfg(project), "prepayments")
+    assert result.path == agent.EMBEDDING
+    assert result.hits == []
+    assert "'revenue-policy'" in result.note and "0.7" in result.note
+
+
+def test_with_no_embedding_floor_configured_the_embedding_path_never_abstains(
+    project, monkeypatch
+):
+    indexed(project, monkeypatch)
+    monkeypatch.setattr(gemini, "embed", lambda chunks, *, model, dim: [[0.0, 0.0, 1.0]])
+    result = agent.search(cfg(project), "prepayments")
+    assert cfg(project).search.embedding_floor is None
+    assert result.hits and result.note == ""
+
+
+def write_grooming(project: Path) -> None:
+    okf.write_concept(
+        project / "bundle",
+        okf.Concept(
+            concept_id="grooming",
+            type="Reference",
+            title="Grooming Statute",
+            description="What the grooming article covers.",
+            body="The article reaches contact made through an electronic medium.",
+            status="draft",
+        ),
+    )
+    okf.write_indexes(project / "bundle", "0.2", "Test Bundle")
+
+
+def test_a_merged_result_drops_the_group_whose_best_is_under_its_own_floor(
+    project, monkeypatch
+):
+    """A cosine cannot vouch for a term coverage, so each group answers to its own
+    floor and the one that clears it is kept."""
+    indexed(project, monkeypatch)
+    write_grooming(project)
+    result = agent.search(cfg(project), "grooming hydroelectric turbine")
+    assert result.path == agent.MERGED
+    assert result.hits and "grooming" not in [hit.concept_id for hit in result.hits]
+    assert "1 concept(s) have no stored vector" in result.note
+    assert "'grooming'" in result.note and "floor" in result.note
+
+
+def test_a_merged_result_abstains_when_both_groups_are_under_their_floors(project, monkeypatch):
+    indexed(project, monkeypatch)
+    write_grooming(project)
+    with_toml(project, "\n[search]\nembedding_floor = 1.5\n")
+    result = agent.search(cfg(project), "grooming hydroelectric turbine")
+    assert result.hits == []
+    assert "1.5" in result.note and "0.5" in result.note
+
+
+def test_a_hit_carries_the_status_and_trust_tier_its_concept_has(project):
+    okf.write_concept(
+        project / "bundle",
+        okf.Concept(
+            **{**CONCEPTS[1], "status": "stable"},
+            verified=[{"by": "human:ana", "at": "2026-10-01"}],
+        ),
+    )
+    hits = {hit.concept_id: hit for hit in agent.search(cfg(project), "revenue price").hits}
+    assert (hits["pricing"].status, hits["pricing"].trust) == ("stable", "human-reviewed")
+    assert (hits["revenue-policy"].status, hits["revenue-policy"].trust) == ("draft", "unverified")
+
+
+def test_a_concept_that_states_no_status_is_not_given_one(project):
+    okf.write_concept(project / "bundle", okf.Concept(**CONCEPTS[0]))
+    hit = agent.search(cfg(project), "revenue recognition").hits[0]
+    assert hit.concept_id == "revenue-policy"
+    assert hit.status is None
+
+
 # --- read_concept ----------------------------------------------------------------
 
 
@@ -337,6 +507,90 @@ def test_read_concept_refuses_a_path_that_escapes_the_bundle(project):
     (project / "secrets.md").write_text("nope", encoding="utf-8", newline="\n")
     with pytest.raises(LookupError):
         agent.read_concept(cfg(project), "../secrets")
+
+
+# --- check_citations (M11) -------------------------------------------------------
+
+
+def cited(project: Path, concept_id: str, quote: str | None = None):
+    return agent.check_citations(cfg(project), [{"concept_id": concept_id, "quote": quote}])
+
+
+def reasons(report) -> list[str]:
+    return [rejection.reason for rejection in report.rejected]
+
+
+def test_citing_a_concept_that_does_not_exist_is_rejected(project):
+    report = cited(project, "gravity-law", "Every body attracts every other body.")
+    assert not report.ok
+    assert report.checked == 1
+    assert reasons(report) == ["no such concept"]
+    assert report.rejected[0].concept_id == "gravity-law"
+
+
+def test_a_quote_absent_from_the_cited_concept_is_rejected(project):
+    report = cited(project, "revenue-policy", "Revenue is recognized on invoicing.")
+    assert reasons(report) == ["quote not found in the cited concept"]
+
+
+def test_a_citation_without_a_quote_checks_only_that_the_concept_exists(project):
+    assert cited(project, "pricing").ok
+
+
+def test_a_verbatim_quote_is_accepted(project):
+    assert cited(project, "revenue-policy", "Revenue is recognized on delivery.").ok
+
+
+def test_a_quote_differing_in_line_breaks_case_and_accents_is_accepted(project):
+    assert cited(project, "reembolsos", "el REEMBOLSO procede\nen treinta dias").ok
+
+
+def test_a_quote_across_a_markdown_link_matches_the_links_label(project):
+    assert cited(project, "revenue-policy", "See the Price List.").ok
+
+
+def test_the_title_and_the_description_can_be_quoted(project):
+    report = agent.check_citations(
+        cfg(project),
+        [
+            {"concept_id": "revenue-policy", "quote": "Revenue Recognition Policy"},
+            {"concept_id": "revenue-policy", "quote": "how prepayments are deferred"},
+        ],
+    )
+    assert report.ok and report.checked == 2
+
+
+def test_an_index_cannot_be_cited_as_a_concept(project):
+    assert reasons(cited(project, "index")) == ["not a concept"]
+
+
+def test_a_quote_from_a_different_concept_is_still_rejected(project):
+    report = cited(project, "pricing", "Revenue is recognized on delivery.")
+    assert reasons(report) == ["quote not found in the cited concept"]
+
+
+def test_a_quote_too_short_to_prove_anything_is_rejected(project):
+    assert reasons(cited(project, "revenue-policy", "Revenue is")) == ["quote too short"]
+
+
+def test_checking_citations_calls_no_model(project, monkeypatch):
+    from okrag.synth.providers import claude as synth_claude
+    from okrag.synth.providers import gemini as synth_gemini
+
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key-not-used")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key-not-used")
+    monkeypatch.setattr(gemini, "embed", _explode("embedded"))
+    monkeypatch.setattr(synth_gemini, "call", _explode("synthesized"))
+    monkeypatch.setattr(synth_claude, "call", _explode("synthesized"))
+
+    report = agent.check_citations(
+        cfg(project),
+        [
+            {"concept_id": "revenue-policy", "quote": "Revenue is recognized on delivery."},
+            {"concept_id": "pricing", "quote": "Revenue is recognized on delivery."},
+        ],
+    )
+    assert reasons(report) == ["quote not found in the cited concept"]
 
 
 # --- lint ------------------------------------------------------------------------
@@ -501,6 +755,13 @@ def test_the_contract_describes_the_instance_modes_instead_of_asserting_one(proj
         "**Synthesis is not on this surface**",
     ):
         assert asserted not in text
+
+
+def test_the_contract_tells_an_agent_to_abstain_and_to_check_its_citations(project):
+    text = agent.render_agents_md(cfg(project))
+    assert "`confidence`" in text and "rank" in text
+    assert "likely does not answer" in text
+    assert "`check_citations`" in text
 
 
 def test_the_contract_says_a_recorded_source_is_not_yet_a_concept(project):
@@ -1273,7 +1534,7 @@ def server_for(project: Path, *, write: bool = False, spend: bool = False):
     return build_server(cfg(project), write=write, spend=spend)
 
 
-def test_an_instance_with_writes_on_exposes_exactly_the_four_tools_the_contract_names(
+def test_an_instance_with_writes_on_exposes_exactly_the_five_tools_the_contract_names(
     project,
 ):
     pytest.importorskip("mcp", reason='the MCP SDK is an optional extra: pip install -e ".[mcp]"')
@@ -1284,7 +1545,7 @@ def test_an_instance_with_writes_on_exposes_exactly_the_four_tools_the_contract_
         async with Client(server_for(project, write=True)) as client:
             return sorted(tool.name for tool in (await client.list_tools()).tools)
 
-    assert anyio.run(go) == ["add_source", "lint", "read_concept", "search"]
+    assert anyio.run(go) == ["add_source", "check_citations", "lint", "read_concept", "search"]
 
 
 def test_no_tool_on_the_surface_can_sweep_the_corpus(project):
@@ -1378,7 +1639,64 @@ def test_a_read_only_instance_does_not_offer_the_tool_that_writes(project):
         async with Client(server_for(project)) as client:
             return sorted(tool.name for tool in (await client.list_tools()).tools)
 
-    assert anyio.run(go) == ["lint", "read_concept", "search"]
+    assert anyio.run(go) == ["check_citations", "lint", "read_concept", "search"]
+
+
+def test_a_read_only_instance_offers_the_citation_check(project):
+    pytest.importorskip("mcp", reason='the MCP SDK is an optional extra: pip install -e ".[mcp]"')
+    import anyio
+    from mcp import Client
+
+    async def go():
+        async with Client(server_for(project)) as client:
+            return {tool.name: tool.description or "" for tool in (await client.list_tools()).tools}
+
+    described = anyio.run(go)
+    assert "check_citations" in described
+    assert "not grounded" in described["check_citations"]
+
+
+def test_a_search_over_the_protocol_carries_confidence_status_and_trust(project):
+    pytest.importorskip("mcp", reason='the MCP SDK is an optional extra: pip install -e ".[mcp]"')
+    import anyio
+    from mcp import Client
+
+    async def go():
+        async with Client(server_for(project)) as client:
+            found = await client.call_tool("search", {"query": "revenue recognition"})
+            return found.structured_content["results"][0]
+
+    top = anyio.run(go)
+    assert top["concept_id"] == "revenue-policy"
+    assert (top["confidence"], top["status"], top["trust"]) == (1.0, "draft", "unverified")
+
+
+def test_a_citation_rejected_over_the_protocol_names_no_path_in_the_producers_tree(project):
+    pytest.importorskip("mcp", reason='the MCP SDK is an optional extra: pip install -e ".[mcp]"')
+    import anyio
+    from mcp import Client
+
+    async def go():
+        async with Client(server_for(project)) as client:
+            return await client.call_tool(
+                "check_citations",
+                {
+                    "citations": [
+                        {"concept_id": "gravity-law", "quote": None},
+                        {"concept_id": "pricing", "quote": "Revenue is recognized on delivery."},
+                    ]
+                },
+            )
+
+    checked = anyio.run(go)
+    assert not checked.is_error, checked.content[0].text
+    assert checked.structured_content["ok"] is False
+    assert [r["reason"] for r in checked.structured_content["rejected"]] == [
+        "no such concept",
+        "quote not found in the cited concept",
+    ]
+    assert producer_paths(json.dumps(checked.structured_content)) == []
+    assert str(project) not in checked.content[0].text
 
 
 def test_an_instance_started_with_writes_on_offers_the_tool_that_writes(project):

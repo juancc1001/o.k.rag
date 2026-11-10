@@ -117,7 +117,7 @@ def test_the_local_provider_reports_its_optional_extra_rather_than_an_import_err
     monkeypatch.setattr(fastembed, "_MODELS", {})
     monkeypatch.setitem(sys.modules, "fastembed", None)  # as if it were not installed
     with pytest.raises(EmbedError, match="optional extra"):
-        fastembed.embed(["x"], model=fastembed.DEFAULT_MODEL, dim=384)
+        fastembed.embed(["x"], model=fastembed.DEFAULT_MODEL, dim=768)
 
 
 # --- embed -----------------------------------------------------------------------
